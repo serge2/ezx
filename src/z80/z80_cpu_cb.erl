@@ -405,7 +405,7 @@ execute_cb_indexed_opcode(Opcode, Reg, State = #machine_state{cpu = Cpu}) ->
     Addr = (BaseAddr + Disp) band 16#FFFF,
     
     %% Read byte from memory at (IX/IY+d)
-    Byte = z80_mem:read_byte(State#machine_state.memory, Addr),
+    Byte = ezx_mem:read_byte(State#machine_state.memory, Addr),
     
     %% Execute operation based on x and z
     {NewByte, Cpu1, CopyToReg} = case X of
@@ -433,7 +433,7 @@ execute_cb_indexed_opcode(Opcode, Reg, State = #machine_state{cpu = Cpu}) ->
     end,
     
     %% Write result back to memory at (IX+d)
-    Mem1 = z80_mem:write_byte(State#machine_state.memory, Addr, NewByte),
+    Mem1 = ezx_mem:write_byte(State#machine_state.memory, Addr, NewByte),
     
     %% Copy to register r[z] if needed (z != 6)
     Cpu2 = case CopyToReg of

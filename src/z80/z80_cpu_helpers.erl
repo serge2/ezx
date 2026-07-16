@@ -76,10 +76,10 @@ fetch_word(State) ->
     {?MAKE_PAIR(Hi, Lo), State2}.
 
 read_byte(Address, Mem) ->
-    z80_mem:read_byte(Mem, Address band 16#ffff).
+    ezx_mem:read_byte(Mem, Address band 16#ffff).
 
 write_byte(Address, Byte, Mem) ->
-    z80_mem:write_byte(Mem, Address band 16#ffff, Byte band 16#ff).
+    ezx_mem:write_byte(Mem, Address band 16#ffff, Byte band 16#ff).
 
 read_word(Address, Mem) ->
     read_byte(Address, Mem) + (read_byte(Address + 1, Mem) bsl 8).
@@ -238,7 +238,7 @@ read_hl_mem(State) ->
     State1 = fetch_indexed_displacement(State),
     Cpu = State1#machine_state.cpu,
     Addr = get_hl_mem_addr(Cpu, State1#machine_state.memory),
-    Byte = z80_mem:read_byte(State1#machine_state.memory, Addr),
+    Byte = ezx_mem:read_byte(State1#machine_state.memory, Addr),
     {Byte, State1}.
 
 write_hl_mem(State, Val) ->

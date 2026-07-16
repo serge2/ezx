@@ -1,4 +1,4 @@
--module(z80_mem).
+-module(ezx_mem).
 
 -export([
     new/1,
