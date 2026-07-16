@@ -1,0 +1,587 @@
+-module(z80_cpu_ed).
+
+-include("z80_records.hrl").
+
+-export([
+    execute_ed_opcode/2
+]).
+
+%% @doc Execute an ED prefix opcode.
+%% 8 T-states accumulated so far (4 from prefix + 4 from inner opcode fetch).
+%% Returns updated machine_state.
+execute_ed_opcode(Opcode, State = #machine_state{}) ->
+    case Opcode of
+        %% LD I, A: 9 T-states total (8 + 1)
+        16#47 ->
+            execute_ed_ld_i_a(State);
+
+        %% LD R, A: 9 T-states total (8 + 1)
+        16#4F ->
+            execute_ed_ld_r_a(State);
+
+        %% LD A, I: 9 T-states total (8 + 1)
+        16#57 ->
+            execute_ed_ld_a_i(State);
+
+        %% LD A, R: 9 T-states total (8 + 1)
+        16#5F ->
+            execute_ed_ld_a_r(State);
+
+        %% NEG: 8 T-states total (8 + 0)
+        16#44 ->
+            execute_ed_neg(State);
+
+        %% RETN: 14 T-states total (8 + 6)
+        16#45 ->
+            execute_ed_retn(State);
+
+        %% RETI: 14 T-states total (8 + 6)
+        16#4D ->
+            execute_ed_reti(State);
+
+        %% IM 0: 8 T-states total (8 + 0)
+        16#46 ->
+            execute_ed_im(State, 0);
+
+        %% IM 1: 8 T-states total (8 + 0)
+        16#56 ->
+            execute_ed_im(State, 1);
+
+        %% IM 2: 8 T-states total (8 + 0)
+        16#5E ->
+            execute_ed_im(State, 2);
+
+        %% Undocumented ED NOPs (2-byte NOPs): 8 T-states total (8 + 0)
+        Op when Op =:= 16#4C; Op =:= 16#54; Op =:= 16#5C; Op =:= 16#64;
+             Op =:= 16#6C; Op =:= 16#74; Op =:= 16#7C ->
+            State;  %% 8 T-states already counted in prefix+fetch
+
+        %% RRD: 18 T-states total (8 + 10)
+        16#67 ->
+            execute_ed_rrd(State);
+
+        %% RLD: 18 T-states total (8 + 10)
+        16#6F ->
+            execute_ed_rld(State);
+
+        %% LD (nn),rr / LD rr,(nn) - 20T total (8 + 12) - specific opcodes only
+        Op when Op =:= 16#43; Op =:= 16#4B; Op =:= 16#53; Op =:= 16#5B;
+             Op =:= 16#63; Op =:= 16#6B; Op =:= 16#73; Op =:= 16#7B ->
+            execute_ed_ld_mem_reg(Op, State);
+
+        %% IN/OUT r,(C) - specific opcodes
+        Op when Op =:= 16#40; Op =:= 16#41; Op =:= 16#48; Op =:= 16#49;
+             Op =:= 16#50; Op =:= 16#51; Op =:= 16#58; Op =:= 16#59;
+             Op =:= 16#60; Op =:= 16#61; Op =:= 16#68; Op =:= 16#69;
+             Op =:= 16#70; Op =:= 16#71; Op =:= 16#78; Op =:= 16#79 ->
+            execute_ed_in_out(Op, State);
+
+        %% ADC HL,rr / SBC HL,rr / NEG / RETN / RETI / IM
+        Op when Op =:= 16#42; Op =:= 16#44; Op =:= 16#45; Op =:= 16#46; Op =:= 16#4A;
+             Op =:= 16#4D; Op =:= 16#52; Op =:= 16#56; Op =:= 16#5A; Op =:= 16#5E;
+             Op =:= 16#62; Op =:= 16#66; Op =:= 16#6A; Op =:= 16#6E; Op =:= 16#72;
+             Op =:= 16#76; Op =:= 16#7A; Op =:= 16#7E ->
+            execute_ed_adc_sbc_hl(Op, State);
+
+        %% Block transfer/search/I/O - 0xA0-0xAF, 0xB0-0xBF
+        Op when Op >= 16#A0, Op =< 16#AF ->
+            execute_ed_block(Op, State);
+        Op when Op >= 16#B0, Op =< 16#BF ->
+            execute_ed_block(Op, State);
+
+        _ ->
+            %% General baseline alignment for basic ED instructions (normally 12 cycles total, so add remaining 4)
+            z80_cpu_helpers:advance_tstates(State, 4)
+    end.
+
+%% --- Individual ED Instruction Implementations ---
+
+%% NEG: A = 0 - A (8 T-states total = 8 base + 0 added)
+execute_ed_neg(State = #machine_state{cpu = Cpu}) ->
+    A = Cpu#cpu_state.a,
+    Diff = 0 - A,
+    Res = Diff band 16#FF,
+    F_S = Res band 16#80,
+    F_Z = if Res =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = if (0 band 16#0F) < (A band 16#0F) -> ?FLAG_H; true -> 0 end,
+    F_V = if A =:= 16#80 -> ?FLAG_V; true -> 0 end,
+    F_N = ?FLAG_N,
+    F_C = if A =:= 0 -> 0; true -> ?FLAG_C end,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    State#machine_state{cpu = Cpu#cpu_state{a = Res, f = NewFlags}}.
+
+%% IM 0/1/2: Set interrupt mode (8 T-states total = 8 base + 0 added)
+execute_ed_im(State = #machine_state{cpu = Cpu}, Mode) ->
+    State#machine_state{cpu = Cpu#cpu_state{im = Mode}}.
+
+%% RETI: Return from interrupt (14 T-states total = 8 base + 6 added)
+execute_ed_reti(State) ->
+    {PC, State1} = z80_cpu_helpers:pop_word(State),
+    Cpu = State1#machine_state.cpu,
+    Cpu1 = Cpu#cpu_state{pc = PC, iff1 = Cpu#cpu_state.iff2},
+    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu1}, 6).
+
+%% RETN: Return from NMI (14 T-states total = 8 base + 6 added)
+execute_ed_retn(State) ->
+    {PC, State1} = z80_cpu_helpers:pop_word(State),
+    Cpu = State1#machine_state.cpu,
+    Cpu1 = Cpu#cpu_state{pc = PC, iff1 = Cpu#cpu_state.iff2},
+    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu1}, 6).
+
+%% LD I,A (ED 47): 9 T-states total (8 base + 1 added)
+execute_ed_ld_i_a(State = #machine_state{cpu = Cpu}) ->
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu#cpu_state{i = Cpu#cpu_state.a}}, 1).
+
+%% LD R,A (ED 4F): 9 T-states total (8 base + 1 added)
+execute_ed_ld_r_a(State = #machine_state{cpu = Cpu}) ->
+    Val = Cpu#cpu_state.a,
+    Val2 = Val band 16#80 bor z80_cpu_helpers:inc_byte(Val band 16#7F) band 16#7F, %% It's a hack to save the real behavior of z80.
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu#cpu_state{r = Val2}}, 1).
+
+%% LD A,I (ED 57): 9 T-states total (8 base + 1 added)
+execute_ed_ld_a_i(State = #machine_state{cpu = Cpu}) ->
+    Val = Cpu#cpu_state.i,
+    F_S = Val band 16#80,
+    F_Z = if Val =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = 0,
+    F_V = if Cpu#cpu_state.iff2 =/= 0 -> ?FLAG_V; true -> 0 end,
+    F_N = 0,
+    F_C = Cpu#cpu_state.f band ?FLAG_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu#cpu_state{a = Val, f = NewFlags}}, 1).
+
+%% LD A,R (ED 5F): 9 T-states total (8 base + 1 added)
+execute_ed_ld_a_r(State = #machine_state{cpu = Cpu}) ->
+    Val = Cpu#cpu_state.r,
+    F_S = Val band 16#80,
+    F_Z = if Val =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = 0,
+    F_V = if Cpu#cpu_state.iff2 =/= 0 -> ?FLAG_V; true -> 0 end,
+    F_N = 0,
+    F_C = Cpu#cpu_state.f band ?FLAG_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    Val2 = Val band 16#80 bor z80_cpu_helpers:dec_byte(Val band 16#7F) band 16#7F, %% It's a hack to save the real behavior of z80.
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu#cpu_state{a = Val2, f = NewFlags}}, 1).
+
+%% RRD: Rotate Right Digit (ED 67) - 18 T-states total (8 base + 10 added)
+execute_ed_rrd(State = #machine_state{cpu = Cpu, memory = Mem}) ->
+    Addr = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    Byte = z80_cpu_helpers:read_byte(Addr, Mem),
+    LowNibble = Byte band 16#0F,
+    HighNibble = (Byte bsr 4) band 16#0F,
+    OldALow = Cpu#cpu_state.a band 16#0F,
+    NewA = (Cpu#cpu_state.a band 16#F0) bor LowNibble,
+    NewMemByte = (OldALow bsl 4) bor HighNibble,
+    Mem1 = z80_cpu_helpers:write_byte(Addr, NewMemByte, Mem),
+    Flags = Cpu#cpu_state.f band 16#E7,
+    F_S = NewA band 16#80,
+    F_Z = if NewA =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = 0,
+    F_V = z80_cpu_helpers:parity(NewA),
+    F_N = 0,
+    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu#cpu_state{a = NewA, f = NewFlags}, memory = Mem1}, 10).
+
+%% RLD: Rotate Left Digit (ED 6F) - 18 T-states total (8 base + 10 added)
+execute_ed_rld(State = #machine_state{cpu = Cpu, memory = Mem}) ->
+    Addr = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    Byte = z80_cpu_helpers:read_byte(Addr, Mem),
+    LowNibble = Byte band 16#0F,
+    HighNibble = (Byte bsr 4) band 16#0F,
+    OldALow = Cpu#cpu_state.a band 16#0F,
+    NewA = (Cpu#cpu_state.a band 16#F0) bor HighNibble,
+    NewMemByte = (LowNibble bsl 4) bor OldALow,
+    Mem1 = z80_cpu_helpers:write_byte(Addr, NewMemByte, Mem),
+    Flags = Cpu#cpu_state.f band 16#E7,
+    F_S = NewA band 16#80,
+    F_Z = if NewA =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = 0,
+    F_V = z80_cpu_helpers:parity(NewA),
+    F_N = 0,
+    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu#cpu_state{a = NewA, f = NewFlags}, memory = Mem1}, 10).
+
+%% ADC HL, rr (ED 4A, 5A, 6A, 7A) - 15 T-states total (8 base + 7 added)
+execute_ed_adc_hl_rr(State, rr_bc) -> execute_adc_hl_rr(State, bc);
+execute_ed_adc_hl_rr(State, rr_de) -> execute_adc_hl_rr(State, de);
+execute_ed_adc_hl_rr(State, rr_hl) -> execute_adc_hl_rr(State, hl);
+execute_ed_adc_hl_rr(State, rr_sp) -> execute_adc_hl_rr(State, sp).
+
+execute_adc_hl_rr(State = #machine_state{cpu = Cpu}, RegPair) ->
+    HL = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    RR = z80_cpu_helpers:get_reg_pair(RegPair, Cpu),
+    Carry = Cpu#cpu_state.f band ?FLAG_C,
+    Res = HL + RR + Carry,
+    NewVal = Res band 16#FFFF,
+    Cpu1 = Cpu#cpu_state{
+        h = (NewVal bsr 8) band 16#FF,
+        l = NewVal band 16#FF
+    },
+    F_S = if (NewVal band 16#8000) =/= 0 -> ?FLAG_S; true -> 0 end,
+    F_Z = if NewVal =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = if ((HL band 16#FFF) + (RR band 16#FFF) + Carry) > 16#FFF -> ?FLAG_H; true -> 0 end,
+    F_V = if ((HL bxor NewVal) band (RR bxor NewVal) band 16#8000) =/= 0 -> ?FLAG_V; true -> 0 end,
+    F_N = 0,
+    F_C = if Res > 16#FFFF -> ?FLAG_C; true -> 0 end,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    Cpu2 = Cpu1#cpu_state{f = NewFlags},
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu2}, 7).
+
+%% SBC HL, rr (ED 42, 52, 62, 72) - 15 T-states total (8 base + 7 added)
+execute_ed_sbc_hl_rr(State, rr_bc) -> execute_sbc_hl_rr(State, bc);
+execute_ed_sbc_hl_rr(State, rr_de) -> execute_sbc_hl_rr(State, de);
+execute_ed_sbc_hl_rr(State, rr_hl) -> execute_sbc_hl_rr(State, hl);
+execute_ed_sbc_hl_rr(State, rr_sp) -> execute_sbc_hl_rr(State, sp).
+
+execute_sbc_hl_rr(State = #machine_state{cpu = Cpu}, RegPair) ->
+    HL = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    RR = z80_cpu_helpers:get_reg_pair(RegPair, Cpu),
+    Carry = Cpu#cpu_state.f band ?FLAG_C,
+    Res = HL - RR - Carry,
+    NewVal = Res band 16#FFFF,
+    Cpu1 = Cpu#cpu_state{
+        h = (NewVal bsr 8) band 16#FF,
+        l = NewVal band 16#FF
+    },
+    F_S = if (NewVal band 16#8000) =/= 0 -> ?FLAG_S; true -> 0 end,
+    F_Z = if NewVal =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = if ((HL band 16#FFF) - (RR band 16#FFF) - Carry) < 0 -> ?FLAG_H; true -> 0 end,
+    F_V = if ((HL bxor NewVal) band (HL bxor RR) band 16#8000) =/= 0 -> ?FLAG_V; true -> 0 end,
+    F_N = ?FLAG_N,
+    F_C = if Res < 0 -> ?FLAG_C; true -> 0 end,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    Cpu2 = Cpu1#cpu_state{f = NewFlags},
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu2}, 7).
+
+%% LD (nn), rr / LD rr, (nn) dispatcher (0x40-0x7F range)
+execute_ed_ld_mem_reg(Opcode, State) ->
+    case Opcode of
+        16#43 -> execute_ld_mem_nn_rr(State, bc);   %% LD (nn),BC
+        16#4B -> execute_ld_rr_mem_nn(State, bc);   %% LD BC,(nn)
+        16#53 -> execute_ld_mem_nn_rr(State, de);   %% LD (nn),DE
+        16#5B -> execute_ld_rr_mem_nn(State, de);   %% LD DE,(nn)
+        16#63 -> execute_ld_mem_nn_rr(State, hl);   %% LD (nn),HL
+        16#6B -> execute_ld_rr_mem_nn(State, hl);   %% LD HL,(nn)
+        16#73 -> execute_ld_mem_nn_rr(State, sp);   %% LD (nn),SP
+        16#7B -> execute_ld_rr_mem_nn(State, sp);   %% LD SP,(nn)
+        _ ->
+            z80_cpu_helpers:advance_tstates(State, 4)
+    end.
+
+%% LD (nn), rr - 20 T-states total (8 base + 6 fetch + 6 mem write)
+execute_ld_mem_nn_rr(State, RegPair) ->
+    {Addr, State1} = z80_cpu_helpers:fetch_word(State),
+    Val = z80_cpu_helpers:get_reg_pair(RegPair, State1#machine_state.cpu),
+    Mem1 = z80_cpu_helpers:write_word(Addr, Val, State1#machine_state.memory),
+    z80_cpu_helpers:advance_tstates(State1#machine_state{memory = Mem1}, 6).
+
+%% LD rr, (nn) - 20 T-states total (8 base + 6 fetch + 6 mem read)
+execute_ld_rr_mem_nn(State, RegPair) ->
+    {Addr, State1} = z80_cpu_helpers:fetch_word(State),
+    Val = z80_cpu_helpers:read_word(Addr, State1#machine_state.memory),
+    Cpu = State1#machine_state.cpu,
+    Cpu1 = z80_cpu_helpers:set_reg_pair(RegPair, Val, Cpu),
+    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu1}, 6).
+
+%% Block transfer/search dispatcher (0xA0-0xAF, 0xB0-0xBF)
+execute_ed_block(Opcode, State) ->
+    case Opcode of
+        16#A0 -> execute_ed_ldi(State);
+        16#A1 -> execute_ed_cpi(State);
+        16#A2 -> execute_ed_ini(State);
+        16#A3 -> execute_ed_outi(State);
+        16#A8 -> execute_ed_ldd(State);
+        16#A9 -> execute_ed_cpd(State);
+        16#AA -> execute_ed_ind(State);
+        16#AB -> execute_ed_outd(State);
+        16#B0 -> execute_ed_ldir(State);
+        16#B1 -> execute_ed_cpir(State);
+        16#B2 -> execute_ed_inir(State);
+        16#B3 -> execute_ed_otir(State);
+        16#B8 -> execute_ed_lddr(State);
+        16#B9 -> execute_ed_cpdr(State);
+        16#BA -> execute_ed_indr(State);
+        16#BB -> execute_ed_otdr(State);
+        _ -> z80_cpu_helpers:advance_tstates(State, 4)
+    end.
+
+%% Block Transfer: LDI/LDD/LDIR/LDDR
+execute_ed_ldi(State) -> execute_ldi(State, false).
+execute_ed_ldir(State) -> execute_ldi(State, true).
+execute_ed_ldd(State) -> execute_ldd(State, false).
+execute_ed_lddr(State) -> execute_ldd(State, true).
+
+execute_ldi(State = #machine_state{cpu = Cpu, memory = Mem}, Repeat) ->
+    HL = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    DE = z80_cpu_helpers:pair(Cpu#cpu_state.d, Cpu#cpu_state.e),
+    BC = z80_cpu_helpers:pair(Cpu#cpu_state.b, Cpu#cpu_state.c),
+    Byte = z80_cpu_helpers:read_byte(HL, Mem),
+    Mem1 = z80_cpu_helpers:write_byte(DE, Byte, Mem),
+    NewHL = (HL + 1) band 16#FFFF,
+    NewDE = (DE + 1) band 16#FFFF,
+    NewBC = (BC - 1) band 16#FFFF,
+    Cpu1 = Cpu#cpu_state{
+        h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        d = (NewDE bsr 8) band 16#FF, e = (NewDE band 16#FF),
+        b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF)
+    },
+    Flags = Cpu1#cpu_state.f band 16#E9, %% Сбрасываем H (16#10), V (16#04) и N (16#02)
+    F_H = 0,
+    F_V = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_N = 0,
+    NewFlags = Flags bor F_H bor F_V bor F_N,
+    TAdd = if Repeat andalso NewBC =/= 0 -> 13; true -> 8 end,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1#cpu_state{f = NewFlags}, memory = Mem1}, TAdd).
+
+execute_ldd(State = #machine_state{cpu = Cpu, memory = Mem}, Repeat) ->
+    HL = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    DE = z80_cpu_helpers:pair(Cpu#cpu_state.d, Cpu#cpu_state.e),
+    BC = z80_cpu_helpers:pair(Cpu#cpu_state.b, Cpu#cpu_state.c),
+    Byte = z80_cpu_helpers:read_byte(HL, Mem),
+    Mem1 = z80_cpu_helpers:write_byte(DE, Byte, Mem),
+    NewHL = (HL - 1) band 16#FFFF,
+    NewDE = (DE - 1) band 16#FFFF,
+    NewBC = (BC - 1) band 16#FFFF,
+    Cpu1 = Cpu#cpu_state{
+        h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        d = (NewDE bsr 8) band 16#FF, e = (NewDE band 16#FF),
+        b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF)
+    },
+    Flags = Cpu1#cpu_state.f band 16#E9, %% Сбрасываем H, V, N
+    F_H = 0,
+    F_V = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_N = 0,
+    NewFlags = Flags bor F_H bor F_V bor F_N,
+    TAdd = if Repeat andalso NewBC =/= 0 -> 13; true -> 8 end,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1#cpu_state{f = NewFlags}, memory = Mem1}, TAdd).
+
+%% Block Search: CPI/CPD/CPIR/CPDR
+execute_ed_cpi(State) -> execute_cpi(State, false).
+execute_ed_cpir(State) -> execute_cpi(State, true).
+execute_ed_cpd(State) -> execute_cpd(State, false).
+execute_ed_cpdr(State) -> execute_cpd(State, true).
+
+execute_cpi(State = #machine_state{cpu = Cpu, memory = Mem}, Repeat) ->
+    HL = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    BC = z80_cpu_helpers:pair(Cpu#cpu_state.b, Cpu#cpu_state.c),
+    Byte = z80_cpu_helpers:read_byte(HL, Mem),
+    A = Cpu#cpu_state.a,
+    Diff = A - Byte,
+    Res = Diff band 16#FF,
+    NewHL = (HL + 1) band 16#FFFF,
+    NewBC = (BC - 1) band 16#FFFF,
+    F_S = Res band 16#80,
+    F_Z = if Res =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = if (A band 16#0F) < (Byte band 16#0F) -> ?FLAG_H; true -> 0 end,
+    F_V = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_N = ?FLAG_N,
+    F_C = Cpu#cpu_state.f band ?FLAG_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    Cpu1 = Cpu#cpu_state{
+        h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
+        f = NewFlags
+    },
+    Match = (Res =:= 0),
+    TAdd = if Repeat andalso NewBC =/= 0 andalso not Match -> 13; true -> 8 end,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, TAdd).
+
+execute_cpd(State = #machine_state{cpu = Cpu, memory = Mem}, Repeat) ->
+    HL = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    BC = z80_cpu_helpers:pair(Cpu#cpu_state.b, Cpu#cpu_state.c),
+    Byte = z80_cpu_helpers:read_byte(HL, Mem),
+    A = Cpu#cpu_state.a,
+    Diff = A - Byte,
+    Res = Diff band 16#FF,
+    NewHL = (HL - 1) band 16#FFFF,
+    NewBC = (BC - 1) band 16#FFFF,
+    F_S = Res band 16#80,
+    F_Z = if Res =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = if (A band 16#0F) < (Byte band 16#0F) -> ?FLAG_H; true -> 0 end,
+    F_V = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_N = ?FLAG_N,
+    F_C = Cpu#cpu_state.f band ?FLAG_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    Cpu1 = Cpu#cpu_state{
+        h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
+        f = NewFlags
+    },
+    Match = (Res =:= 0),
+    TAdd = if Repeat andalso NewBC =/= 0 andalso not Match -> 13; true -> 8 end,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, TAdd).
+
+%% Block I/O: INI/IND/INIR/INDR
+execute_ed_ini(State) -> execute_ini(State, false).
+execute_ed_inir(State) -> execute_ini(State, true).
+execute_ed_ind(State) -> execute_ind(State, false).
+execute_ed_indr(State) -> execute_ind(State, true).
+
+execute_ini(State = #machine_state{cpu = Cpu, memory = Mem}, Repeat) ->
+    B = Cpu#cpu_state.b,
+    _C = Cpu#cpu_state.c,
+    HL = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    NewB = (B - 1) band 16#FF,
+    _Port = _C,
+    Val = 16#FF,
+    Mem1 = z80_cpu_helpers:write_byte(HL, Val, Mem),
+    NewHL = (HL + 1) band 16#FFFF,
+    F_S = Val band 16#80,
+    F_Z = if NewB =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = 0,
+    F_V = if ((Val bor NewB) band 16#07) =/= 0 -> 0; true -> ?FLAG_V end,
+    F_N = 1,
+    F_C = Cpu#cpu_state.f band ?FLAG_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    Cpu1 = Cpu#cpu_state{
+        b = NewB, h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        f = NewFlags
+    },
+    TAdd = if Repeat andalso NewB =/= 0 -> 13; true -> 8 end,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1, memory = Mem1}, TAdd).
+
+execute_ind(State = #machine_state{cpu = Cpu, memory = Mem}, Repeat) ->
+    B = Cpu#cpu_state.b,
+    _C = Cpu#cpu_state.c,
+    HL = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    NewB = (B - 1) band 16#FF,
+    _Port = _C,
+    Val = 16#FF,
+    Mem1 = z80_cpu_helpers:write_byte(HL, Val, Mem),
+    NewHL = (HL - 1) band 16#FFFF,
+    F_S = Val band 16#80,
+    F_Z = if NewB =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = 0,
+    F_V = if ((Val bor NewB) band 16#07) =/= 0 -> 0; true -> ?FLAG_V end,
+    F_N = 1,
+    F_C = Cpu#cpu_state.f band ?FLAG_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    Cpu1 = Cpu#cpu_state{
+        b = NewB, h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        f = NewFlags
+    },
+    TAdd = if Repeat andalso NewB =/= 0 -> 13; true -> 8 end,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1, memory = Mem1}, TAdd).
+
+%% Block I/O: OUTI/OUTD/OTIR/OTDR
+execute_ed_outi(State) -> execute_outi(State, false).
+execute_ed_otir(State) -> execute_outi(State, true).
+execute_ed_outd(State) -> execute_outd(State, false).
+execute_ed_otdr(State) -> execute_outd(State, true).
+
+execute_outi(State = #machine_state{cpu = Cpu, memory = Mem}, Repeat) ->
+    B = Cpu#cpu_state.b,
+    _C = Cpu#cpu_state.c,
+    HL = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    NewB = (B - 1) band 16#FF,
+    Val = z80_cpu_helpers:read_byte(HL, Mem),
+    NewHL = (HL + 1) band 16#FFFF,
+    F_S = Val band 16#80,
+    F_Z = if NewB =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = 0,
+    F_V = if ((Val bor NewB) band 16#07) =/= 0 -> 0; true -> ?FLAG_V end,
+    F_N = 1,
+    F_C = Cpu#cpu_state.f band ?FLAG_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    Cpu1 = Cpu#cpu_state{
+        b = NewB, h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        f = NewFlags
+    },
+    TAdd = if Repeat andalso NewB =/= 0 -> 13; true -> 8 end,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, TAdd).
+
+execute_outd(State = #machine_state{cpu = Cpu, memory = Mem}, Repeat) ->
+    B = Cpu#cpu_state.b,
+    _C = Cpu#cpu_state.c,
+    HL = z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l),
+    NewB = (B - 1) band 16#FF,
+    Val = z80_cpu_helpers:read_byte(HL, Mem),
+    NewHL = (HL - 1) band 16#FFFF,
+    F_S = Val band 16#80,
+    F_Z = if NewB =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = 0,
+    F_V = if ((Val bor NewB) band 16#07) =/= 0 -> 0; true -> ?FLAG_V end,
+    F_N = 1,
+    F_C = Cpu#cpu_state.f band ?FLAG_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    Cpu1 = Cpu#cpu_state{
+        b = NewB, h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        f = NewFlags
+    },
+    TAdd = if Repeat andalso NewB =/= 0 -> 13; true -> 8 end,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, TAdd).
+
+%% IN/OUT r,(C) dispatcher (0x40-0x7F range)
+execute_ed_in_out(Opcode, State) ->
+    case Opcode of
+        %% IN r,(C)
+        16#40 -> execute_ed_in_r_c(State, b);
+        16#48 -> execute_ed_in_r_c(State, c);
+        16#50 -> execute_ed_in_r_c(State, d);
+        16#58 -> execute_ed_in_r_c(State, e);
+        16#60 -> execute_ed_in_r_c(State, h);
+        16#68 -> execute_ed_in_r_c(State, l);
+        16#70 -> execute_ed_in_f_c(State);
+        16#78 -> execute_ed_in_r_c(State, a);
+        %% OUT (C),r
+        16#41 -> execute_ed_out_c_r(State, b);
+        16#49 -> execute_ed_out_c_r(State, c);
+        16#51 -> execute_ed_out_c_r(State, d);
+        16#59 -> execute_ed_out_c_r(State, e);
+        16#61 -> execute_ed_out_c_r(State, h);
+        16#69 -> execute_ed_out_c_r(State, l);
+        16#71 -> execute_ed_out_c_0(State);
+        16#79 -> execute_ed_out_c_r(State, a);
+        _ ->
+            z80_cpu_helpers:advance_tstates(State, 4)
+    end.
+
+%% IN r,(C): read from port C, store in r - 12 T-states total (8 base + 4 added)
+execute_ed_in_r_c(State = #machine_state{cpu = Cpu}, Reg) ->
+    _Port = Cpu#cpu_state.c,
+    Val = 16#FF,
+    Cpu1 = z80_cpu_helpers:set_reg_byte(Reg, Val, Cpu),
+    Flags = Cpu1#cpu_state.f band 16#E7,
+    F_S = Val band 16#80,
+    F_Z = if Val =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = 0,
+    F_V = z80_cpu_helpers:parity(Val),
+    F_N = 0,
+    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1#cpu_state{f = NewFlags}}, 4).
+
+%% IN (C) / IN F,(C): 12 T-states (flags affected, result discarded)
+execute_ed_in_f_c(State = #machine_state{cpu = Cpu}) ->
+    _Port = Cpu#cpu_state.c,
+    Val = 16#FF,
+    Flags = Cpu#cpu_state.f band 16#E7,
+    F_S = Val band 16#80,
+    F_Z = if Val =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = 0,
+    F_V = z80_cpu_helpers:parity(Val),
+    F_N = 0,
+    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N,
+    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu#cpu_state{f = NewFlags}}, 4).
+
+%% OUT (C),r implementation
+execute_ed_out_c_r(State, _Reg) ->
+    z80_cpu_helpers:advance_tstates(State, 4).
+
+%% OUT (C),0: 12 T-states total (8 base + 4 added)
+execute_ed_out_c_0(State) ->
+    z80_cpu_helpers:advance_tstates(State, 4).
+
+%% ADC HL,rr / SBC HL,rr dispatcher
+execute_ed_adc_sbc_hl(Opcode, State) ->
+    case Opcode of
+        16#42 -> execute_ed_sbc_hl_rr(State, rr_bc);
+        16#4A -> execute_ed_adc_hl_rr(State, rr_bc);
+        16#52 -> execute_ed_sbc_hl_rr(State, rr_de);
+        16#5A -> execute_ed_adc_hl_rr(State, rr_de);
+        16#62 -> execute_ed_sbc_hl_rr(State, rr_hl);
+        16#6A -> execute_ed_adc_hl_rr(State, rr_hl);
+        16#72 -> execute_ed_sbc_hl_rr(State, rr_sp);
+        16#7A -> execute_ed_adc_hl_rr(State, rr_sp);
+        _ ->
+            z80_cpu_helpers:advance_tstates(State, 4)
+    end.
