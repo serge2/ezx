@@ -8,448 +8,358 @@
 %% ADD A, r / n / (HL)
 
 add_a_b_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10, b = 16#20},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#80),  %% ADD A,B
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.a),
-    ?assertEqual(0, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_C).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, b = 16#20},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#80),  %% ADD A,B
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#30, Cpu3#cpu_state.a),
+    ?assertEqual(0, Cpu3#cpu_state.f band ?FLAG_C).
 
 add_a_c_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10, c = 16#20},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#81),  %% ADD A,C
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, c = 16#20},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#81),  %% ADD A,C
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#30, Cpu3#cpu_state.a).
 
 add_a_d_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10, d = 16#20},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#82),  %% ADD A,D
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, d = 16#20},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#82),  %% ADD A,D
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#30, Cpu3#cpu_state.a).
 
 add_a_e_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10, e = 16#20},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#83),  %% ADD A,E
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, e = 16#20},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#83),  %% ADD A,E
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#30, Cpu3#cpu_state.a).
 
 add_a_h_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10, h = 16#20},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#84),  %% ADD A,H
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, h = 16#20},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#84),  %% ADD A,H
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#30, Cpu3#cpu_state.a).
 
 add_a_l_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10, l = 16#20},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#85),  %% ADD A,L
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, l = 16#20},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#85),  %% ADD A,L
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#30, Cpu3#cpu_state.a).
 
 add_a_a_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#40},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#87),  %% ADD A,A
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#80, Machine2#machine_state.cpu#cpu_state.a),
-    ?assertEqual(0, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_C).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#40},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#87),  %% ADD A,A
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#80, Cpu3#cpu_state.a),
+    ?assertEqual(0, Cpu3#cpu_state.f band ?FLAG_C).
 
 add_a_n_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#C6),  %% ADD A,n
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#20),
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.a),
-    ?assertEqual(2, z80_cpu:pc(Machine2)).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#C6),  %% ADD A,n
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#20),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#30, Cpu4#cpu_state.a),
+    ?assertEqual(2, z80_cpu:pc(Cpu4)).
 
 add_a_mem_hl_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10, h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#20),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#86),  %% ADD A,(HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#20),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#86),  %% ADD A,(HL)
+    Cpu3 = Cpu2#cpu_state{a = 16#10, h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#30, Cpu4#cpu_state.a).
 
 add_a_mem_hl_carry_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#FF, h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#01),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#86),  %% ADD A,(HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#00, Machine2#machine_state.cpu#cpu_state.a),
-    ?assertEqual(?FLAG_C, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_C),
-    ?assertEqual(?FLAG_Z, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_Z).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#01),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#86),  %% ADD A,(HL)
+    Cpu3 = Cpu2#cpu_state{a = 16#FF, h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#00, Cpu4#cpu_state.a),
+    ?assertEqual(?FLAG_C, Cpu4#cpu_state.f band ?FLAG_C),
+    ?assertEqual(?FLAG_Z, Cpu4#cpu_state.f band ?FLAG_Z).
 
 add_a_mem_hl_half_carry_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#0F, h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#01),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#86),  %% ADD A,(HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#10, Machine2#machine_state.cpu#cpu_state.a),
-    ?assertEqual(?FLAG_H, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_H).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#01),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#86),  %% ADD A,(HL)
+    Cpu3 = Cpu2#cpu_state{a = 16#0F, h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#10, Cpu4#cpu_state.a),
+    ?assertEqual(?FLAG_H, Cpu4#cpu_state.f band ?FLAG_H).
 
 %% ADC A, r / n / (HL)
 
 adc_a_b_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10, b = 16#20, f = ?FLAG_C},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#88),  %% ADC A,B
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#31, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, b = 16#20, f = ?FLAG_C},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#88),  %% ADC A,B
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#31, Cpu3#cpu_state.a).
 
 adc_a_n_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10, f = ?FLAG_C},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CE),  %% ADC A,n
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#20),
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#31, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, f = ?FLAG_C},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#CE),  %% ADC A,n
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#20),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#31, Cpu4#cpu_state.a).
 
 adc_a_mem_hl_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10, f = ?FLAG_C, h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#20),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#8E),  %% ADC A,(HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#31, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#20),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#8E),  %% ADC A,(HL)
+    Cpu3 = Cpu2#cpu_state{a = 16#10, f = ?FLAG_C, h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#31, Cpu4#cpu_state.a).
 
 %% SUB r / n / (HL)
 
 sub_b_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#30, b = 16#10},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#90),  %% SUB B
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#20, Machine2#machine_state.cpu#cpu_state.a),
-    ?assertEqual(?FLAG_N, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_N).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#30, b = 16#10},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#90),  %% SUB B
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#20, Cpu3#cpu_state.a),
+    ?assertEqual(?FLAG_N, Cpu3#cpu_state.f band ?FLAG_N).
 
 sub_a_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#30},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#97),  %% SUB A
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#00, Machine2#machine_state.cpu#cpu_state.a),
-    ?assertEqual(?FLAG_Z, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_Z).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#30},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#97),  %% SUB A
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#00, Cpu3#cpu_state.a),
+    ?assertEqual(?FLAG_Z, Cpu3#cpu_state.f band ?FLAG_Z).
 
 sub_n_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#30},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#D6),  %% SUB n
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#10),
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#20, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#30},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#D6),  %% SUB n
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#10),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#20, Cpu4#cpu_state.a).
 
 sub_mem_hl_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#30, h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#10),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#96),  %% SUB (HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#20, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#10),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#96),  %% SUB (HL)
+    Cpu3 = Cpu2#cpu_state{a = 16#30, h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#20, Cpu4#cpu_state.a).
 
 sub_mem_hl_borrow_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#00, h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#01),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#96),  %% SUB (HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#FF, Machine2#machine_state.cpu#cpu_state.a),
-    ?assertEqual(?FLAG_C, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_C).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#01),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#96),  %% SUB (HL)
+    Cpu3 = Cpu2#cpu_state{a = 16#00, h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#FF, Cpu4#cpu_state.a),
+    ?assertEqual(?FLAG_C, Cpu4#cpu_state.f band ?FLAG_C).
 
 %% SBC A, r / n / (HL)
 
 sbc_a_b_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#30, b = 16#10, f = ?FLAG_C},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#98),  %% SBC A,B
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1F, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#30, b = 16#10, f = ?FLAG_C},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#98),  %% SBC A,B
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#1F, Cpu3#cpu_state.a).
 
 sbc_a_n_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#30, f = ?FLAG_C},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#DE),  %% SBC A,n
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#10),
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1F, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#30, f = ?FLAG_C},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DE),  %% SBC A,n
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#10),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#1F, Cpu4#cpu_state.a).
 
 sbc_a_mem_hl_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#30, f = ?FLAG_C, h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#10),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#9E),  %% SBC A,(HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1F, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#10),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#9E),  %% SBC A,(HL)
+    Cpu3 = Cpu2#cpu_state{a = 16#30, f = ?FLAG_C, h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#1F, Cpu4#cpu_state.a).
 
 %% INC r / (HL) / rp
 
 inc_b_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{b = 16#10},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#04),  %% INC B
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#11, Machine2#machine_state.cpu#cpu_state.b),
-    ?assertEqual(0, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_N).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{b = 16#10},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#04),  %% INC B
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#11, Cpu3#cpu_state.b),
+    ?assertEqual(0, Cpu3#cpu_state.f band ?FLAG_N).
 
 inc_c_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{c = 16#10},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#0C),  %% INC C
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#11, Machine2#machine_state.cpu#cpu_state.c).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{c = 16#10},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#0C),  %% INC C
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#11, Cpu3#cpu_state.c).
 
 inc_a_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#3C),  %% INC A
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#11, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#3C),  %% INC A
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#11, Cpu3#cpu_state.a).
 
 inc_mem_hl_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#10),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#34),  %% INC (HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#11, ezx_emulator:read_byte(Machine2, 16#4000)).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#10),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#34),  %% INC (HL)
+    Cpu3 = Cpu2#cpu_state{h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#11, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#4000)).
 
 inc_mem_hl_zero_flag_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#FF),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#34),  %% INC (HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#00, ezx_emulator:read_byte(Machine2, 16#4000)),
-    ?assertEqual(?FLAG_Z, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_Z).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#FF),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#34),  %% INC (HL)
+    Cpu3 = Cpu2#cpu_state{h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#00, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(?FLAG_Z, Cpu4#cpu_state.f band ?FLAG_Z).
 
 inc_bc_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{b = 16#12, c = 16#34},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#03),  %% INC BC
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1235, z80_cpu:get_reg_pair(bc, Machine2#machine_state.cpu)).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{b = 16#12, c = 16#34},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#03),  %% INC BC
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#1235, z80_cpu:get_reg_pair(bc, Cpu3)).
 
 inc_de_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{d = 16#12, e = 16#34},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#13),  %% INC DE
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1235, z80_cpu:get_reg_pair(de, Machine2#machine_state.cpu)).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{d = 16#12, e = 16#34},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#13),  %% INC DE
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#1235, z80_cpu:get_reg_pair(de, Cpu3)).
 
 inc_hl_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#12, l = 16#34},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#23),  %% INC HL
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1235, z80_cpu:get_reg_pair(hl, Machine2#machine_state.cpu)).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#12, l = 16#34},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#23),  %% INC HL
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#1235, z80_cpu:get_reg_pair(hl, Cpu3)).
 
 inc_sp_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{sp = 16#1234},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#33),  %% INC SP
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1235, Machine2#machine_state.cpu#cpu_state.sp).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{sp = 16#1234},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#33),  %% INC SP
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#1235, Cpu3#cpu_state.sp).
 
 %% DEC r / (HL) / rp
 
 dec_b_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{b = 16#10},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#05),  %% DEC B
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#0F, Machine2#machine_state.cpu#cpu_state.b),
-    ?assertEqual(?FLAG_N, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_N).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{b = 16#10},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#05),  %% DEC B
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#0F, Cpu3#cpu_state.b),
+    ?assertEqual(?FLAG_N, Cpu3#cpu_state.f band ?FLAG_N).
 
 dec_a_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{a = 16#10},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#3D),  %% DEC A
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#0F, Machine2#machine_state.cpu#cpu_state.a).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#3D),  %% DEC A
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#0F, Cpu3#cpu_state.a).
 
 dec_mem_hl_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#10),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#35),  %% DEC (HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#0F, ezx_emulator:read_byte(Machine2, 16#4000)).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#10),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#35),  %% DEC (HL)
+    Cpu3 = Cpu2#cpu_state{h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#0F, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#4000)).
 
 dec_mem_hl_half_carry_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 16#4000, 16#10),
-    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 0, 16#35),  %% DEC (HL)
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem2},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(?FLAG_H, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_H).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#10),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#35),  %% DEC (HL)
+    Cpu3 = Cpu2#cpu_state{h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(?FLAG_H, Cpu4#cpu_state.f band ?FLAG_H).
 
 dec_bc_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{b = 16#12, c = 16#35},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#0B),  %% DEC BC
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1234, z80_cpu:get_reg_pair(bc, Machine2#machine_state.cpu)).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{b = 16#12, c = 16#35},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#0B),  %% DEC BC
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#1234, z80_cpu:get_reg_pair(bc, Cpu3)).
 
 dec_de_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{d = 16#12, e = 16#35},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#1B),  %% DEC DE
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1234, z80_cpu:get_reg_pair(de, Machine2#machine_state.cpu)).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{d = 16#12, e = 16#35},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#1B),  %% DEC DE
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#1234, z80_cpu:get_reg_pair(de, Cpu3)).
 
 dec_hl_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#12, l = 16#35},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#2B),  %% DEC HL
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1234, z80_cpu:get_reg_pair(hl, Machine2#machine_state.cpu)).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#12, l = 16#35},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#2B),  %% DEC HL
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#1234, z80_cpu:get_reg_pair(hl, Cpu3)).
 
 dec_sp_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{sp = 16#1235},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#3B),  %% DEC SP
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#1234, Machine2#machine_state.cpu#cpu_state.sp).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{sp = 16#1235},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#3B),  %% DEC SP
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#1234, Cpu3#cpu_state.sp).
 
 %% ADD HL, rp
 
 add_hl_bc_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#10, l = 16#00, b = 16#20, c = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#09),  %% ADD HL,BC
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.h),
-    ?assertEqual(16#00, Machine2#machine_state.cpu#cpu_state.l).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#10, l = 16#00, b = 16#20, c = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#09),  %% ADD HL,BC
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#30, Cpu3#cpu_state.h),
+    ?assertEqual(16#00, Cpu3#cpu_state.l).
 
 add_hl_de_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#10, l = 16#00, d = 16#20, e = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#19),  %% ADD HL,DE
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.h).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#10, l = 16#00, d = 16#20, e = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#19),  %% ADD HL,DE
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#30, Cpu3#cpu_state.h).
 
 add_hl_hl_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#20, l = 16#00},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#29),  %% ADD HL,HL
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#40, Machine2#machine_state.cpu#cpu_state.h).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#20, l = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#29),  %% ADD HL,HL
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#40, Cpu3#cpu_state.h).
 
 add_hl_sp_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#10, l = 16#00, sp = 16#2000},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#39),  %% ADD HL,SP
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#30, Machine2#machine_state.cpu#cpu_state.h).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#10, l = 16#00, sp = 16#2000},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#39),  %% ADD HL,SP
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#30, Cpu3#cpu_state.h).
 
 add_hl_carry_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#FF, l = 16#FF, b = 16#00, c = 16#01},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#09),  %% ADD HL,BC
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(16#00, Machine2#machine_state.cpu#cpu_state.h),
-    ?assertEqual(16#00, Machine2#machine_state.cpu#cpu_state.l),
-    ?assertEqual(?FLAG_C, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_C).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#FF, l = 16#FF, b = 16#00, c = 16#01},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#09),  %% ADD HL,BC
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#00, Cpu3#cpu_state.h),
+    ?assertEqual(16#00, Cpu3#cpu_state.l),
+    ?assertEqual(?FLAG_C, Cpu3#cpu_state.f band ?FLAG_C).
 
 add_hl_half_carry_test() ->
-    Machine0 = ezx_emulator:init(),
-    Cpu0 = Machine0#machine_state.cpu#cpu_state{h = 16#0F, l = 16#FF, b = 16#00, c = 16#01},
-    Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#09),  %% ADD HL,BC
-    Machine1 = Machine0#machine_state{cpu = Cpu0, memory = Mem1},
-    Machine2 = z80_cpu:step(Machine1),
-    ?assertEqual(?FLAG_H, Machine2#machine_state.cpu#cpu_state.f band ?FLAG_H).
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#0F, l = 16#FF, b = 16#00, c = 16#01},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#09),  %% ADD HL,BC
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(?FLAG_H, Cpu3#cpu_state.f band ?FLAG_H).

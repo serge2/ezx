@@ -22,13 +22,13 @@ init() ->
 -spec init(module(), binary()) -> #machine_state{}.
 init(Mem, Rom) ->
     MemReadFun =
-        fun(Addr, ExtContext) ->
+        fun(ExtContext, Addr) ->
             Memory = ExtContext#ext_context.memory,
             Byte = Mem:read_byte(Memory, Addr band 16#ffff),
             {Byte, ExtContext}
         end,
     MemWriteFun =
-        fun(Addr, Byte, ExtContext) ->
+        fun(ExtContext, Addr, Byte) ->
             Memory = ExtContext#ext_context.memory,
             NewMem = Mem:write_byte(Memory, Addr band 16#ffff, Byte band 16#ff),
             ExtContext#ext_context{memory = NewMem}
@@ -83,10 +83,10 @@ step(Machine) ->
     Memory0 = Machine#machine_state.memory,
     ExtContext0 = #ext_context{memory = Memory0},
     Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = 0}),
-    Ticks = Cpu1#cpu_state.t_states - Cpu0#cpu_state.t_states,
+    Ticks = Cpu1#cpu_state.t_states,
     Memory1 = Cpu1#cpu_state.ext_context#ext_context.memory,
     Machine#machine_state{
-        cpu = Cpu1,
+        cpu = Cpu1#cpu_state{t_states = Machine#machine_state.t_states + Ticks},
         memory = Memory1,
         t_states = Machine#machine_state.t_states + Ticks
     }.
