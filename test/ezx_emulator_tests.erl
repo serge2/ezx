@@ -39,17 +39,17 @@ machine_state_keeps_cpu_and_memory_separate_test() ->
     Machine0 = ezx_emulator:init(),
     Machine1 = ezx_emulator:load_program(Machine0, [16#3E, 16#41]),
     ?assertEqual(0, z80_cpu:pc(Machine1)),
-    ?assertEqual(16#3E, ezx_mem:read_byte(Machine1#machine_state.memory, 0)),
-    ?assertEqual(16#41, ezx_mem:read_byte(Machine1#machine_state.memory, 1)).
+    ?assertEqual(16#3E, ezx_memory_48:cpu_read_byte(Machine1#machine_state.memory, 0)),
+    ?assertEqual(16#41, ezx_memory_48:cpu_read_byte(Machine1#machine_state.memory, 1)).
 
 memory_reset_restores_initial_configuration_test() ->
-    State0 = ezx_mem:new(65536),
-    State1 = ezx_mem:write_byte(State0, 10, 42),
-    State2 = ezx_mem:reset(State1),
-    ?assertEqual(0, ezx_mem:read_byte(State2, 10)).
+    State0 = ezx_memory_48:new(<<0:65536/unit:8>>),
+    State1 = ezx_memory_48:cpu_write_byte(State0, 10, 42),
+    State2 = ezx_memory_48:new(<<0:65536/unit:8>>),
+    ?assertEqual(0, ezx_memory_48:cpu_read_byte(State2, 10)).
 
 memory_reset_to_zero_test() ->
-    Memory0 = ezx_mem:new(8),
-    Memory1 = ezx_mem:write_byte(Memory0, 4, 16#99),
-    Memory2 = ezx_mem:reset(Memory1),
-    ?assertEqual(0, ezx_mem:read_byte(Memory2, 4)).
+    Memory0 = ezx_memory_48:new(<<0:8/unit:8>>),
+    Memory1 = ezx_memory_48:cpu_write_byte(Memory0, 4, 16#99),
+    Memory2 = ezx_memory_48:new(<<0:8/unit:8>>),
+    ?assertEqual(0, ezx_memory_48:cpu_read_byte(Memory2, 4)).

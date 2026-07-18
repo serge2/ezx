@@ -3,7 +3,7 @@
 -include("z80_records.hrl").
 
 -export([
-    init_state/0,
+    init_state/2,
     step/1,
     run/2,
     request_interrupt/2,
@@ -17,35 +17,34 @@
 ]).
 
 %% @doc Create a fresh CPU state.
--spec init_state() -> #cpu_state{}.
-init_state() ->
-    #cpu_state{}.
+-spec init_state(function(), function()) -> #cpu_state{}.
+init_state(MemReadFun, MemWriteFun) ->
+    #cpu_state{mem_read_fun = MemReadFun, mem_write_fun = MemWriteFun}.
 
 %% @doc Return the current program counter from the machine state.
--spec pc(#machine_state{}) -> non_neg_integer().
-pc(#machine_state{cpu = Cpu}) ->
-    Cpu#cpu_state.pc.
+-spec pc(#cpu_state{}) -> non_neg_integer().
+pc(#cpu_state{pc = Pc}) ->
+    Pc.
 
 %% @doc Return the accumulated T-state count from the machine state.
--spec t_states(#machine_state{}) -> non_neg_integer().
-t_states(#machine_state{cpu = Cpu}) ->
-    Cpu#cpu_state.t_states.
+-spec t_states(#cpu_state{}) -> non_neg_integer().
+t_states(#cpu_state{t_states = TStates}) ->
+    TStates.
 
 %% @doc Run a fixed number of CPU steps sequentially.
--spec run(#machine_state{}, non_neg_integer()) -> #machine_state{}.
+-spec run(#cpu_state{}, non_neg_integer()) -> #cpu_state{}.
 run(State, 0) ->
     State;
 run(State, N) ->
     run(step(State), N - 1).
 
 %% @doc Queue an interrupt request for the next CPU step.
--spec request_interrupt(#machine_state{}, irq | nmi) -> #machine_state{}.
-request_interrupt(#machine_state{} = State, Type) ->
-    State#machine_state{pending_interrupt = Type}.
+-spec request_interrupt(#cpu_state{}, irq | nmi) -> #cpu_state{}.
+request_interrupt(#cpu_state{} = State, Type) ->
+    State#cpu_state{pending_interrupt = Type}.
 
-%% @doc Execute one Z80 instruction and return the updated machine state.
--spec step(#machine_state{}) -> #machine_state{}.
-step(#machine_state{} = State) ->
+
+step(#cpu_state{} = State) ->
     case maybe_handle_interrupt(State) of
         {handled, State1} -> State1;
         {not_handled, State1} ->
@@ -53,42 +52,44 @@ step(#machine_state{} = State) ->
     end.
 
 %% @doc Logic to handle pending interrupts.
-maybe_handle_interrupt(State = #machine_state{pending_interrupt = none}) ->
+maybe_handle_interrupt(State = #cpu_state{pending_interrupt = none}) ->
     {not_handled, State};
 
-maybe_handle_interrupt(State = #machine_state{pending_interrupt = irq, cpu = Cpu})
-  when Cpu#cpu_state.iff1 =:= 0 ->
+maybe_handle_interrupt(State = #cpu_state{pending_interrupt = irq, iff1 = Iff1})
+  when Iff1 =:= 0 ->
     {not_handled, State};
 
-maybe_handle_interrupt(State = #machine_state{pending_interrupt = irq, cpu = Cpu})
-  when Cpu#cpu_state.ei_block > 0 ->
-    {not_handled, State#machine_state{cpu = Cpu#cpu_state{ei_block = Cpu#cpu_state.ei_block - 1}}};
+maybe_handle_interrupt(State = #cpu_state{pending_interrupt = irq, ei_block = EiBlock})
+  when EiBlock > 0 ->
+    {not_handled, State#cpu_state{ei_block = EiBlock - 1}}; 
 
-maybe_handle_interrupt(State = #machine_state{pending_interrupt = irq, cpu = Cpu}) ->
-    State1 = z80_cpu_helpers:push_word(State, Cpu#cpu_state.pc),
-    Cpu1 = Cpu#cpu_state{
+maybe_handle_interrupt(State = #cpu_state{pending_interrupt = irq}) ->
+    State1 = z80_cpu_helpers:push_word(State, State#cpu_state.pc),
+    State2 = State1#cpu_state{
         pc = 16#0038,
         iff1 = 0,
         iff2 = 0,
         halted = false,
         prefix = none,
         displacement = 0,
-        t_states = Cpu#cpu_state.t_states + 13
+        t_states = State1#cpu_state.t_states + 13,
+        pending_interrupt = none
     },
-    {handled, State1#machine_state{cpu = Cpu1, pending_interrupt = none}};
+    {handled, State2};
 
-maybe_handle_interrupt(State = #machine_state{pending_interrupt = nmi, cpu = Cpu}) ->
-    State1 = z80_cpu_helpers:push_word(State, Cpu#cpu_state.pc),
-    Cpu1 = Cpu#cpu_state{
+maybe_handle_interrupt(State = #cpu_state{pending_interrupt = nmi}) ->
+    State1 = z80_cpu_helpers:push_word(State, State#cpu_state.pc),
+    State2 = State1#cpu_state{
         pc = 16#0066,
-        iff2 = Cpu#cpu_state.iff1,
+        iff2 = State1#cpu_state.iff1,
         iff1 = 0,
         halted = false,
         prefix = none,
         displacement = 0,
-        t_states = Cpu#cpu_state.t_states + 11
+        t_states = State1#cpu_state.t_states + 11,
+        pending_interrupt = none
     },
-    {handled, State1#machine_state{cpu = Cpu1, pending_interrupt = none}}.
+    {handled, State2}.
 
 
 execute_next_instruction(State) ->
@@ -97,7 +98,7 @@ execute_next_instruction(State) ->
     case Opcode of
          16#DD -> State2;
          16#FD -> State2;
-        _     -> State2#machine_state{cpu = State2#machine_state.cpu#cpu_state{prefix = none}}
+        _     -> State2#cpu_state{prefix = none}
     end.
  
 
@@ -106,7 +107,7 @@ execute_opcode_base(Opcode, State) ->
     case Opcode of
         16#00 -> State;                             % NOP: total 4
         16#01 -> execute_ld_rr_nn(State, bc);       % LD BC,nn: total 10
-        16#02 -> execute_ld_mem_bc_a(State);        % LD (BC),A: total 7
+        16#02 -> execute_ld_mem_rr_a(State, bc);    % LD (BC),A: total 7
         16#03 -> execute_inc_rr(State, bc);         % INC BC: total 6
         16#04 -> execute_inc_r(State, b);           % INC B: total 4
         16#05 -> execute_dec_r(State, b);           % DEC B: total 4
@@ -360,31 +361,33 @@ execute_opcode_base(Opcode, State) ->
         %% Prefixes
         16#DD ->
             % DD prefix: set prefix, fetch next opcode, execute it with prefix active
-            State1 = State#machine_state{cpu = State#machine_state.cpu#cpu_state{prefix = dd}},
+            State1 = State#cpu_state{prefix = dd},
             execute_next_instruction(State1);
 
         16#FD ->
             % FD prefix: set prefix, fetch next opcode, execute it with prefix active
-            State1 = State#machine_state{cpu = State#machine_state.cpu#cpu_state{prefix = fd}},
+            State1 = State#cpu_state{prefix = fd},
             execute_next_instruction(State1);
 
         16#CB ->
-            Prefix = State#machine_state.cpu#cpu_state.prefix,
+            Prefix = State#cpu_state.prefix,
             case Prefix of
                 dd ->
                     % DD prefix active: execute with prefix, then clear it
                     {Disp, State1} = z80_cpu_helpers:fetch_byte(State),
-                    Cpu1 = State1#machine_state.cpu#cpu_state{prefix = dd_cb, displacement = z80_cpu_helpers:signed_byte(Disp)},
-                    {Opcode2, State2} = z80_cpu_helpers:fetch_opcode(State1#machine_state{cpu = Cpu1}),
-                    z80_cpu_cb:execute_cb_indexed_opcode(Opcode2, ix, State2#machine_state{cpu = State2#machine_state.cpu#cpu_state{prefix = none}});
+                    State2 = State1#cpu_state{prefix = dd_cb, displacement = z80_cpu_helpers:signed_byte(Disp)},
+                    {Opcode2, State3} = z80_cpu_helpers:fetch_opcode(State2),
+                    State4 = State3#cpu_state{prefix = none},
+                    z80_cpu_cb:execute_cb_indexed_opcode(Opcode2, ix, State4);
                 fd ->
                     % FD prefix active: execute with prefix, then clear it
                     {Disp, State1} = z80_cpu_helpers:fetch_byte(State),
-                    Cpu1 = State1#machine_state.cpu#cpu_state{prefix = fd_cb, displacement = z80_cpu_helpers:signed_byte(Disp)},
-                    {Opcode2, State2} = z80_cpu_helpers:fetch_opcode(State1#machine_state{cpu = Cpu1}),
-                    z80_cpu_cb:execute_cb_indexed_opcode(Opcode2, iy, State2#machine_state{cpu = State2#machine_state.cpu#cpu_state{prefix = none}});
+                    State2 = State1#cpu_state{prefix = fd_cb, displacement = z80_cpu_helpers:signed_byte(Disp)},
+                    {Opcode2, State3} = z80_cpu_helpers:fetch_opcode(State2),
+                    State4 = State3#cpu_state{prefix = none},
+                    z80_cpu_cb:execute_cb_indexed_opcode(Opcode2, iy, State4);
                 _ ->
-                                                    % CB prefix: 4 T-states already counted, fetch next opcode
+                    % CB prefix: 4 T-states already counted, fetch next opcode
                     {Opcode1, State1} = z80_cpu_helpers:fetch_opcode(State),
                     z80_cpu_cb:execute_cb_opcode(Opcode1, State1) 
             end;
@@ -395,101 +398,91 @@ execute_opcode_base(Opcode, State) ->
             z80_cpu_ed:execute_ed_opcode(Opcode1, State1)
     end.
 
+
 %% --- Base Instruction Implementations ---
 
 execute_ld_rr_nn(State, Reg) ->
     {Word, State1} = z80_cpu_helpers:fetch_word(State),
-    Cpu = State1#machine_state.cpu,
     case Reg of
         bc ->
-            Cpu1 = Cpu#cpu_state{b = (Word bsr 8) band 16#ff, c = Word band 16#ff};
+            State1#cpu_state{b = (Word bsr 8) band 16#ff, c = Word band 16#ff};
         de ->
-            Cpu1 = Cpu#cpu_state{d = (Word bsr 8) band 16#ff, e = Word band 16#ff};
+            State1#cpu_state{d = (Word bsr 8) band 16#ff, e = Word band 16#ff};
         hl ->
-            Cpu1 = z80_cpu_helpers:set_hl_pair(Word, Cpu)
-    end,
-    State1#machine_state{cpu = Cpu1}.
+            z80_cpu_helpers:set_hl_pair(Word, State1)
+    end.
 
 execute_inc_rr(State, Reg) ->
     case Reg of
         hl ->
-            Cpu = State#machine_state.cpu,
-            Val = z80_cpu_helpers:get_hl_pair(Cpu),
+            Val = z80_cpu_helpers:get_hl_pair(State),
             NewVal = (Val + 1) band 16#ffff,
-            Cpu1 = z80_cpu_helpers:set_hl_pair(NewVal, Cpu),
-            z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, 2);
+            State1 = z80_cpu_helpers:set_hl_pair(NewVal, State),
+            z80_cpu_helpers:advance_tstates(State1, 2);
         bc ->
-            Cpu = State#machine_state.cpu,
-            Val = z80_cpu_helpers:pair(Cpu#cpu_state.b, Cpu#cpu_state.c),
+            Val = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
             NewVal = (Val + 1) band 16#ffff,
-            Cpu1 = Cpu#cpu_state{b = (NewVal bsr 8) band 16#ff, c = NewVal band 16#ff},
-            z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, 2);
+            State1 = State#cpu_state{b = (NewVal bsr 8) band 16#ff, c = NewVal band 16#ff},
+            z80_cpu_helpers:advance_tstates(State1, 2);
         de ->
-            Cpu = State#machine_state.cpu,
-            Val = z80_cpu_helpers:pair(Cpu#cpu_state.d, Cpu#cpu_state.e),
+            Val = z80_cpu_helpers:pair(State#cpu_state.d, State#cpu_state.e),
             NewVal = (Val + 1) band 16#ffff,
-            Cpu1 = Cpu#cpu_state{d = (NewVal bsr 8) band 16#ff, e = NewVal band 16#ff},
-            z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, 2);
+            State1 = State#cpu_state{d = (NewVal bsr 8) band 16#ff, e = NewVal band 16#ff},
+            z80_cpu_helpers:advance_tstates(State1, 2);
         sp ->
-            Cpu = State#machine_state.cpu,
-            Val = ?GET_SP(Cpu),
+            Val = ?GET_SP(State),
             NewVal = (Val + 1) band 16#FFFF,
-            Cpu1 = ?SET_SP(Cpu, NewVal),
-            z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, 2)
+            State1 = ?SET_SP(State, NewVal),
+            z80_cpu_helpers:advance_tstates(State1, 2)
     end.
 
 execute_dec_rr(State, Reg) ->
     case Reg of
         hl ->
-            Cpu = State#machine_state.cpu,
-            Val = z80_cpu_helpers:get_hl_pair(Cpu),
+            Val = z80_cpu_helpers:get_hl_pair(State),
             NewVal = (Val - 1) band 16#FFFF,
-            Cpu1 = z80_cpu_helpers:set_hl_pair(NewVal, Cpu),
-            z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, 2);
+            State1 = z80_cpu_helpers:set_hl_pair(NewVal, State),
+            z80_cpu_helpers:advance_tstates(State1, 2);
         bc ->
-            Cpu = State#machine_state.cpu,
-            Val = z80_cpu_helpers:pair(Cpu#cpu_state.b, Cpu#cpu_state.c),
+            Val = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
             NewVal = (Val - 1) band 16#FFFF,
-            Cpu1 = Cpu#cpu_state{b = (NewVal bsr 8) band 16#ff, c = NewVal band 16#ff},
-            z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, 2);
+            State1 = State#cpu_state{b = (NewVal bsr 8) band 16#ff, c = NewVal band 16#ff},
+            z80_cpu_helpers:advance_tstates(State1, 2);
         de ->
-            Cpu = State#machine_state.cpu,
-            Val = z80_cpu_helpers:pair(Cpu#cpu_state.d, Cpu#cpu_state.e),
+            Val = z80_cpu_helpers:pair(State#cpu_state.d, State#cpu_state.e),
             NewVal = (Val - 1) band 16#FFFF,
-            Cpu1 = Cpu#cpu_state{d = (NewVal bsr 8) band 16#ff, e = NewVal band 16#ff},
-            z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, 2);
+            State1 = State#cpu_state{d = (NewVal bsr 8) band 16#ff, e = NewVal band 16#ff},
+            z80_cpu_helpers:advance_tstates(State1, 2);
         sp ->
-            Cpu = State#machine_state.cpu,
-            Val = ?GET_SP(Cpu),
+            Val = ?GET_SP(State),
             NewVal = (Val - 1) band 16#FFFF,
-            Cpu1 = ?SET_SP(Cpu, NewVal),
-            z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, 2)
+            State1 = ?SET_SP(State, NewVal),
+            z80_cpu_helpers:advance_tstates(State1, 2)
     end.
 
 %% INC/DEC r and LD r,n helpers (used by main dispatch table)
 %% These use prefix-aware register access for H/L registers when prefix is DD/FD
 
-get_reg_byte_prefixed(Reg, Cpu) ->
+get_reg_byte_prefixed(Reg, State) ->
     case Reg of
-        h -> z80_cpu_helpers:get_hl_reg(h, Cpu);
-        l -> z80_cpu_helpers:get_hl_reg(l, Cpu);
-        _ -> z80_cpu_helpers:get_reg_byte(Reg, Cpu)
+        h -> z80_cpu_helpers:get_hl_reg(h, State);
+        l -> z80_cpu_helpers:get_hl_reg(l, State);
+        _ -> z80_cpu_helpers:get_reg_byte(Reg, State)
     end.
 
-set_reg_byte_prefixed(Reg, Value, Cpu) ->
+set_reg_byte_prefixed(Reg, Value, State) ->
     case Reg of
-        h -> z80_cpu_helpers:set_hl_reg(h, Value, Cpu);
-        l -> z80_cpu_helpers:set_hl_reg(l, Value, Cpu);
-        _ -> z80_cpu_helpers:set_reg_byte(Reg, Value, Cpu)
+        h -> z80_cpu_helpers:set_hl_reg(h, Value, State);
+        l -> z80_cpu_helpers:set_hl_reg(l, Value, State);
+        _ -> z80_cpu_helpers:set_reg_byte(Reg, Value, State)
     end.
 
 %% INC/DEC r and LD r,n helpers (used by main dispatch table)
 execute_inc_r(State, Reg) ->
-    Cpu = State#machine_state.cpu,
-    OldVal = get_reg_byte_prefixed(Reg, Cpu),
+    OldVal = get_reg_byte_prefixed(Reg, State),
     NewVal = (OldVal + 1) band 16#ff,
 
-    Flags = Cpu#cpu_state.f,
+    Flags = State#cpu_state.f,
     F_N = 0,
     F_Z = if NewVal =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_S = NewVal band 16#80,
@@ -498,16 +491,14 @@ execute_inc_r(State, Reg) ->
 
     NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V,
 
-    Cpu1 = set_reg_byte_prefixed(Reg, NewVal, Cpu),
-    Cpu2 = Cpu1#cpu_state{f = NewFlags},
-    State#machine_state{cpu = Cpu2}.
+    set_reg_byte_prefixed(Reg, NewVal, State#cpu_state{f = NewFlags}).
+    
 
 execute_dec_r(State, Reg) ->
-    Cpu = State#machine_state.cpu,
-    OldVal = get_reg_byte_prefixed(Reg, Cpu),
+    OldVal = get_reg_byte_prefixed(Reg, State),
     NewVal = (OldVal - 1) band 16#ff,
 
-    Flags = Cpu#cpu_state.f,
+    Flags = State#cpu_state.f,
     F_N = ?FLAG_N,
     F_Z = if NewVal =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_S = NewVal band 16#80,
@@ -516,86 +507,80 @@ execute_dec_r(State, Reg) ->
 
     NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V,
 
-    Cpu1 = set_reg_byte_prefixed(Reg, NewVal, Cpu),
-    Cpu2 = Cpu1#cpu_state{f = NewFlags},
-    State#machine_state{cpu = Cpu2}.
+    set_reg_byte_prefixed(Reg, NewVal, State#cpu_state{f = NewFlags}).
 
 execute_ld_r_n(State, Reg) ->
     {Value, State1} = z80_cpu_helpers:fetch_byte(State),
-    Cpu = State1#machine_state.cpu,
-    Cpu1 = set_reg_byte_prefixed(Reg, Value, Cpu),
-    State1#machine_state{cpu = Cpu1}.
+    set_reg_byte_prefixed(Reg, Value, State1).
 
 execute_ld_a_mem_rr(State, Reg) ->
-    Cpu = State#machine_state.cpu,
     Addr = case Reg of
-        bc -> z80_cpu_helpers:pair(Cpu#cpu_state.b, Cpu#cpu_state.c);
-        de -> z80_cpu_helpers:pair(Cpu#cpu_state.d, Cpu#cpu_state.e)
+        bc -> z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c);
+        de -> z80_cpu_helpers:pair(State#cpu_state.d, State#cpu_state.e)
     end,
-    Byte = z80_cpu_helpers:read_byte(Addr, State#machine_state.memory),
-    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu#cpu_state{a = Byte}}, 3).
+    {Byte, State1} = z80_cpu_helpers:read_byte(State, Addr),
+    z80_cpu_helpers:advance_tstates(State1#cpu_state{a = Byte}, 3).
 
 execute_ld_mem_rr_a(State, Reg) ->
-    Cpu = State#machine_state.cpu,
-    Addr = case Reg of de -> z80_cpu_helpers:pair(Cpu#cpu_state.d, Cpu#cpu_state.e) end,
-    Mem1 = z80_cpu_helpers:write_byte(Addr, Cpu#cpu_state.a, State#machine_state.memory),
-    z80_cpu_helpers:advance_tstates(State#machine_state{memory = Mem1}, 3).
+    Addr = case Reg of
+        bc -> z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c);
+        de -> z80_cpu_helpers:pair(State#cpu_state.d, State#cpu_state.e)
+    end,
+    State1 = z80_cpu_helpers:write_byte(State, Addr, State#cpu_state.a),
+    z80_cpu_helpers:advance_tstates(State1, 3).
 
 execute_ld_mem_nn_hl(State) ->
     {Addr, State1} = z80_cpu_helpers:fetch_word(State),
-    Mem1 = z80_cpu_helpers:write_word(Addr, z80_cpu_helpers:get_hl_pair(State1#machine_state.cpu), State1#machine_state.memory),
-    z80_cpu_helpers:advance_tstates(State1#machine_state{memory = Mem1}, 6).
+    State2 = z80_cpu_helpers:write_word(State1, Addr, z80_cpu_helpers:get_hl_pair(State1)),
+    z80_cpu_helpers:advance_tstates(State2, 6).
 
 execute_ld_sp_nn(State) ->
     {Word, State1} = z80_cpu_helpers:fetch_word(State),
-    State1#machine_state{cpu = State1#machine_state.cpu#cpu_state{sp = Word}}.
+    State1#cpu_state{sp = Word}.
 
 execute_ld_mem_nn_a(State) ->
     {Addr, State1} = z80_cpu_helpers:fetch_word(State),
-    Mem1 = z80_cpu_helpers:write_byte(Addr, State1#machine_state.cpu#cpu_state.a, State1#machine_state.memory),
-    z80_cpu_helpers:advance_tstates(State1#machine_state{memory = Mem1}, 3).
+    State2 = z80_cpu_helpers:write_byte(State1, Addr, State1#cpu_state.a),
+    z80_cpu_helpers:advance_tstates(State2, 3).
 
 execute_ld_a_mem_nn(State) ->
     {Addr, State1} = z80_cpu_helpers:fetch_word(State),
-    Byte = z80_cpu_helpers:read_byte(Addr, State1#machine_state.memory),
-    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = State1#machine_state.cpu#cpu_state{a = Byte}}, 3).
+    {Byte, State2} = z80_cpu_helpers:read_byte(State1, Addr),
+    z80_cpu_helpers:advance_tstates(State2#cpu_state{a = Byte}, 3).
 
 execute_ld_a_n(State) ->
     {Value, State1} = z80_cpu_helpers:fetch_byte(State),
-    State1#machine_state{cpu = State1#machine_state.cpu#cpu_state{a = Value}}.
+    State1#cpu_state{a = Value}.
 
 execute_ld_r_r(State, RegDst, RegSrc) ->
-    Cpu = State#machine_state.cpu,
-    Value = get_reg_byte_prefixed(RegSrc, Cpu),
-    Cpu1 = set_reg_byte_prefixed(RegDst, Value, Cpu),
-    State#machine_state{cpu = Cpu1}.
+    Value = get_reg_byte_prefixed(RegSrc, State),
+    set_reg_byte_prefixed(RegDst, Value, State).
 
 execute_ld_r_mem_hl(State, Reg) ->
     {Byte, State1} = z80_cpu_helpers:read_hl_mem(State),
-    Cpu1 = set_reg_byte_prefixed(Reg, Byte, State1#machine_state.cpu),
-    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu1}, 3).
+    State2 = set_reg_byte_prefixed(Reg, Byte, State1),
+    z80_cpu_helpers:advance_tstates(State2, 3).
 
 execute_ld_mem_hl_r(State, Reg) ->
-    Byte = get_reg_byte_prefixed(Reg, State#machine_state.cpu),
+    Byte = get_reg_byte_prefixed(Reg, State),
     State1 = z80_cpu_helpers:write_hl_mem(State, Byte),
     z80_cpu_helpers:advance_tstates(State1, 3).
 
 execute_ld_mem_hl_a(State) ->
-    State1 = z80_cpu_helpers:write_hl_mem(State, State#machine_state.cpu#cpu_state.a),
+    State1 = z80_cpu_helpers:write_hl_mem(State, State#cpu_state.a),
     z80_cpu_helpers:advance_tstates(State1, 3).
 
 execute_ld_a_mem_hl(State) ->
     {Byte, State1} = z80_cpu_helpers:read_hl_mem(State),
-    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = State1#machine_state.cpu#cpu_state{a = Byte}}, 3).
+    z80_cpu_helpers:advance_tstates(State1#cpu_state{a = Byte}, 3).
 
 execute_halt(State) ->
-    State#machine_state{cpu = State#machine_state.cpu#cpu_state{halted = true}}.
+    State#cpu_state{halted = true}.
 
 execute_rst(State, Vector) ->
-    State1 = z80_cpu_helpers:push_word(State, State#machine_state.cpu#cpu_state.pc),
-    Cpu = State1#machine_state.cpu,
-    Cpu1 = Cpu#cpu_state{pc = Vector},
-    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu1}, 7).
+    State1 = z80_cpu_helpers:push_word(State, State#cpu_state.pc),
+    State2 = State1#cpu_state{pc = Vector},
+    z80_cpu_helpers:advance_tstates(State2, 7).
 
 %% Immediate value instructions (fetch byte then operate)
 execute_add_a_n(State) ->
@@ -631,138 +616,132 @@ execute_cp_n(State) ->
     z80_cpu_helpers:do_cp(State1, Val).
 
 execute_exx(State) ->
-    Cpu = State#machine_state.cpu,
-    Cpu1 = Cpu#cpu_state{
-        b = Cpu#cpu_state.b_alt,
-        c = Cpu#cpu_state.c_alt,
-        d = Cpu#cpu_state.d_alt,
-        e = Cpu#cpu_state.e_alt,
-        h = Cpu#cpu_state.h_alt,
-        l = Cpu#cpu_state.l_alt,
-        b_alt = Cpu#cpu_state.b,
-        c_alt = Cpu#cpu_state.c,
-        d_alt = Cpu#cpu_state.d,
-        e_alt = Cpu#cpu_state.e,
-        h_alt = Cpu#cpu_state.h,
-        l_alt = Cpu#cpu_state.l
+    State1 = State#cpu_state{
+        b = State#cpu_state.b_alt,
+        c = State#cpu_state.c_alt,
+        d = State#cpu_state.d_alt,
+        e = State#cpu_state.e_alt,
+        h = State#cpu_state.h_alt,
+        l = State#cpu_state.l_alt,
+        b_alt = State#cpu_state.b,
+        c_alt = State#cpu_state.c,
+        d_alt = State#cpu_state.d,
+        e_alt = State#cpu_state.e,
+        h_alt = State#cpu_state.h,
+        l_alt = State#cpu_state.l
     },
-    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, 0).
+    z80_cpu_helpers:advance_tstates(State1, 0).
 
 execute_di(State) ->
-    Cpu = State#machine_state.cpu,
-    State#machine_state{cpu = Cpu#cpu_state{iff1 = 0, iff2 = 0}}.
+    State#cpu_state{iff1 = 0, iff2 = 0}.
 
 execute_ei(State) ->
-    Cpu = State#machine_state.cpu,
-    State#machine_state{cpu = Cpu#cpu_state{iff1 = 1, iff2 = 1, ei_block = 1}}.
+    State#cpu_state{iff1 = 1, iff2 = 1, ei_block = 1}.
 
 execute_jr(State) ->
     {Offset, State1} = z80_cpu_helpers:fetch_byte(State),
     Signed = z80_cpu_helpers:signed_byte(Offset),
-    Cpu = State1#machine_state.cpu,
-    NewPc = (Cpu#cpu_state.pc + Signed) band 16#ffff,
-    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu#cpu_state{pc = NewPc}}, 5).
+    PC = State1#cpu_state.pc,
+    State2 = State1#cpu_state{pc = (PC + Signed) band 16#ffff},
+    z80_cpu_helpers:advance_tstates(State2, 5).
 
 execute_djnz(State) ->
     {Offset, State1} = z80_cpu_helpers:fetch_byte(State),
-    Cpu = State1#machine_state.cpu,
-    NewB = (Cpu#cpu_state.b - 1) band 16#ff,
-    Cpu1 = Cpu#cpu_state{b = NewB},
+    NewB = (State1#cpu_state.b - 1) band 16#ff,
+    State2 = State1#cpu_state{b = NewB},
     if
         NewB =:= 0 ->
-            z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu1}, 1);
+            z80_cpu_helpers:advance_tstates(State2, 1);
         true ->
-            NewPc = (Cpu1#cpu_state.pc + z80_cpu_helpers:signed_byte(Offset)) band 16#ffff,
-            z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu1#cpu_state{pc = NewPc}}, 6)
+            PC = State2#cpu_state.pc,
+            State3 = State2#cpu_state{pc = (PC + z80_cpu_helpers:signed_byte(Offset)) band 16#ffff},
+            z80_cpu_helpers:advance_tstates(State3, 6)
     end.
 
 execute_jp_nn(State) ->
     {Addr, State1} = z80_cpu_helpers:fetch_word(State),
-    State1#machine_state{cpu = State1#machine_state.cpu#cpu_state{pc = Addr}}.
+    State1#cpu_state{pc = Addr}.
 
 execute_jp_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    HL = z80_cpu_helpers:get_hl_pair(Cpu),
-    State#machine_state{cpu = Cpu#cpu_state{pc = HL}}.
+    HL = z80_cpu_helpers:get_hl_pair(State),
+    State#cpu_state{pc = HL}.
 
 execute_ld_hl_mem_nn(State) ->
     {Addr, State1} = z80_cpu_helpers:fetch_word(State),
-    Cpu = State1#machine_state.cpu,
-    HL = z80_cpu_helpers:read_word(Addr, State1#machine_state.memory),
-    Cpu1 = z80_cpu_helpers:set_hl_pair(HL, Cpu),
-    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu1}, 6).
+    {HL, State2} = z80_cpu_helpers:read_word(State1, Addr),
+    State3 = z80_cpu_helpers:set_hl_pair(HL, State2),
+    z80_cpu_helpers:advance_tstates(State3, 6).
 
 execute_call_nn(State) ->
     {Addr, State1} = z80_cpu_helpers:fetch_word(State),
-    State2 = z80_cpu_helpers:push_word(State1, State1#machine_state.cpu#cpu_state.pc),
-    z80_cpu_helpers:advance_tstates(State2#machine_state{cpu = State2#machine_state.cpu#cpu_state{pc = Addr}}, 7).
+    State2 = z80_cpu_helpers:push_word(State1, State1#cpu_state.pc),
+    State3 = State2#cpu_state{pc = Addr},
+    z80_cpu_helpers:advance_tstates(State3, 7).
 
 execute_ret(State) ->
     {Value, State1} = z80_cpu_helpers:pop_word(State),
-    Cpu = State1#machine_state.cpu,
-    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu#cpu_state{pc = Value}}, 6).
+    State2 = State1#cpu_state{pc = Value},
+    z80_cpu_helpers:advance_tstates(State2, 6).
 
 execute_push(State, RegPair) ->
     Val = case RegPair of
-        hl -> z80_cpu_helpers:get_hl_pair(State#machine_state.cpu);
-        _ -> z80_cpu_helpers:get_reg_pair(RegPair, State#machine_state.cpu)
+        hl -> z80_cpu_helpers:get_hl_pair(State);
+        _ -> z80_cpu_helpers:get_reg_pair(RegPair, State)
     end,
-    z80_cpu_helpers:advance_tstates(z80_cpu_helpers:push_word(State, Val), 7).
+    State2 = z80_cpu_helpers:push_word(State, Val),
+    z80_cpu_helpers:advance_tstates(State2, 7).
 
 execute_pop(State, RegPair) ->
     {Val, State1} = z80_cpu_helpers:pop_word(State),
-    Cpu = State1#machine_state.cpu,
-    Cpu1 = case RegPair of
-        hl -> z80_cpu_helpers:set_hl_pair(Val, Cpu);
-        _ -> z80_cpu_helpers:set_reg_pair(RegPair, Val, Cpu)
+    State2 = case RegPair of
+        hl -> z80_cpu_helpers:set_hl_pair(Val, State1);
+        _ -> z80_cpu_helpers:set_reg_pair(RegPair, Val, State1)
     end,
-    z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu1}, 6).
+    z80_cpu_helpers:advance_tstates(State2, 6).
 
 execute_ld_sp_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    HL = z80_cpu_helpers:get_hl_pair(Cpu),
-    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu#cpu_state{sp = HL}}, 2).
+    HL = z80_cpu_helpers:get_hl_pair(State),
+    State1 = State#cpu_state{sp = HL},
+    z80_cpu_helpers:advance_tstates(State1, 2).
 
 execute_cpl(State) ->
-    Cpu = State#machine_state.cpu,
-    NewA = Cpu#cpu_state.a bxor 16#FF,
-    NewF = (Cpu#cpu_state.f band (?FLAG_C bor ?FLAG_V bor ?FLAG_Z bor ?FLAG_S)) bor ?FLAG_H bor ?FLAG_N,
-    State#machine_state{cpu = Cpu#cpu_state{a = NewA, f = NewF}}.
+    NewA = State#cpu_state.a bxor 16#FF,
+    NewF = (State#cpu_state.f band (?FLAG_C bor ?FLAG_V bor ?FLAG_Z bor ?FLAG_S)) bor ?FLAG_H bor ?FLAG_N,
+    State#cpu_state{a = NewA, f = NewF}.
 
 execute_ccf(State) ->
-    Cpu = State#machine_state.cpu,
-    Carry = Cpu#cpu_state.f band ?FLAG_C,
+    Carry = State#cpu_state.f band ?FLAG_C,
     NewCarry = Carry bxor ?FLAG_C,
-    NewF = (Cpu#cpu_state.f band 16#F0) bor NewCarry bor ?FLAG_H,
-    State#machine_state{cpu = Cpu#cpu_state{f = NewF}}.
+    NewF = (State#cpu_state.f band 16#F0) bor NewCarry bor ?FLAG_H,
+    State#cpu_state{f = NewF}.
 
 execute_inc_mem_hl(State) ->
     {Byte, State1} = z80_cpu_helpers:read_hl_mem(State),
     NewByte = (Byte + 1) band 16#ff,
     State2 = z80_cpu_helpers:write_hl_mem(State1, NewByte),
-    Flags = State1#machine_state.cpu#cpu_state.f,
+    Flags = State2#cpu_state.f,
     F_N = 0,
     F_Z = if NewByte =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_S = NewByte band 16#80,
     F_H = if (Byte band 16#0F) =:= 16#0F -> ?FLAG_H; true -> 0 end,
     F_V = if Byte =:= 16#7F -> ?FLAG_V; true -> 0 end,
-    NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V,
-    Cpu1 = State1#machine_state.cpu#cpu_state{f = NewFlags},
-    z80_cpu_helpers:advance_tstates(State2#machine_state{cpu = Cpu1}, 11).
+    NewF = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V,
+    State3 = State2#cpu_state{f = NewF},
+    z80_cpu_helpers:advance_tstates(State3, 11).
 
 execute_dec_mem_hl(State) ->
     {Byte, State1} = z80_cpu_helpers:read_hl_mem(State),
     NewByte = (Byte - 1) band 16#ff,
     State2 = z80_cpu_helpers:write_hl_mem(State1, NewByte),
-    Flags = State1#machine_state.cpu#cpu_state.f,
+    Flags = State2#cpu_state.f,
     F_N = ?FLAG_N,
     F_Z = if NewByte =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_S = NewByte band 16#80,
     F_H = if (Byte band 16#0F) =:= 0 -> ?FLAG_H; true -> 0 end,
     F_V = if Byte =:= 16#80 -> ?FLAG_V; true -> 0 end,
     NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V,
-    Cpu1 = State1#machine_state.cpu#cpu_state{f = NewFlags},
-    z80_cpu_helpers:advance_tstates(State2#machine_state{cpu = Cpu1}, 11).
+    State3 = State2#cpu_state{f = NewFlags},
+    z80_cpu_helpers:advance_tstates(State3, 11).
 
 execute_ld_mem_hl_n(State) ->
     {Value, State1} = z80_cpu_helpers:fetch_byte(State),
@@ -770,67 +749,55 @@ execute_ld_mem_hl_n(State) ->
     z80_cpu_helpers:advance_tstates(State2, 10).
 
 execute_rla(State) ->
-    Cpu = State#machine_state.cpu,
-    A = Cpu#cpu_state.a,
-    OldCarry = Cpu#cpu_state.f band ?FLAG_C,
+    A = State#cpu_state.a,
+    F = State#cpu_state.f,
+    OldCarry = F band ?FLAG_C,
     NewCarry = (A band 16#80) bsr 7,
     NewA = ((A bsl 1) band 16#ff) bor OldCarry,
-    NewF = (Cpu#cpu_state.f band 16#28) bor NewCarry,
-    State#machine_state{cpu = Cpu#cpu_state{a = NewA, f = NewF}}.
-
-execute_ld_mem_bc_a(State) ->
-    Cpu = State#machine_state.cpu,
-    Addr = z80_cpu_helpers:pair(Cpu#cpu_state.b, Cpu#cpu_state.c),
-    Mem1 = z80_cpu_helpers:write_byte(Addr, Cpu#cpu_state.a, State#machine_state.memory),
-    z80_cpu_helpers:advance_tstates(State#machine_state{memory = Mem1}, 3).
+    NewF = (F band 16#28) bor NewCarry,
+    State#cpu_state{a = NewA, f = NewF}.
 
 execute_scf(State) ->
-    Cpu = State#machine_state.cpu,
-    NewF = (Cpu#cpu_state.f band 16#F0) bor ?FLAG_C,
-    State#machine_state{cpu = Cpu#cpu_state{f = NewF}}.
+    NewF = (State#cpu_state.f band 16#F0) bor ?FLAG_C,
+    State#cpu_state{f = NewF}.
 
 execute_ex_af_af(State) ->
-    Cpu = State#machine_state.cpu,
-    NewCpu = Cpu#cpu_state{
-        a = Cpu#cpu_state.a_alt,
-        f = Cpu#cpu_state.f_alt,
-        a_alt = Cpu#cpu_state.a,
-        f_alt = Cpu#cpu_state.f
-    },
-    State#machine_state{cpu = NewCpu}.
+    State#cpu_state{
+        a = State#cpu_state.a_alt,
+        f = State#cpu_state.f_alt,
+        a_alt = State#cpu_state.a,
+        f_alt = State#cpu_state.f
+    }.
 
 execute_add_hl_rr(State, RegPair) ->
-    Cpu = State#machine_state.cpu,
-    HL = z80_cpu_helpers:get_hl_pair(Cpu),
-    RR = z80_cpu_helpers:get_reg_pair_prefixed(RegPair, Cpu),
+    HL = z80_cpu_helpers:get_hl_pair(State),
+    RR = z80_cpu_helpers:get_reg_pair_prefixed(RegPair, State),
     Sum = HL + RR,
     Res = Sum band 16#FFFF,
     Carry = if Sum > 16#FFFF -> ?FLAG_C; true -> 0 end,
     HalfCarry = if ((HL band 16#0FFF) + (RR band 16#0FFF)) > 16#0FFF -> ?FLAG_H; true -> 0 end,
-    Cpu1 = z80_cpu_helpers:set_hl_pair(Res, Cpu#cpu_state{
-        f = (Cpu#cpu_state.f band 16#38) bor Carry bor HalfCarry
-    }),
-    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1}, 7).
+    State1 = State#cpu_state{f = (State#cpu_state.f band 16#38) bor Carry bor HalfCarry},
+    State2 = z80_cpu_helpers:set_hl_pair(Res, State1),
+    z80_cpu_helpers:advance_tstates(State2, 7).
 
 execute_rrca(State) ->
-    Cpu = State#machine_state.cpu,
-    A = Cpu#cpu_state.a,
+    A = State#cpu_state.a,
+    F = State#cpu_state.f,
     NewA = ((A band 1) bsl 7) bor (A bsr 1),
-    NewF = (Cpu#cpu_state.f band 16#28) bor (A band 1),
-    State#machine_state{cpu = Cpu#cpu_state{a = NewA, f = NewF}}.
+    NewF = (F band 16#28) bor (A band 1),
+    State#cpu_state{a = NewA, f = NewF}.
 
 execute_rra(State) ->
-    Cpu = State#machine_state.cpu,
-    A = Cpu#cpu_state.a,
-    Carry = Cpu#cpu_state.f band ?FLAG_C,
+    A = State#cpu_state.a,
+    F = State#cpu_state.f,
+    Carry = F band ?FLAG_C,
     NewA = (Carry bsl 7) bor (A bsr 1),
-    NewF = (Cpu#cpu_state.f band 16#28) bor (A band 1),
-    State#machine_state{cpu = Cpu#cpu_state{a = NewA, f = NewF}}.
+    NewF = (F band 16#28) bor (A band 1),
+    State#cpu_state{a = NewA, f = NewF}.
 
 execute_daa(State) ->
-    Cpu = State#machine_state.cpu,
-    A = Cpu#cpu_state.a,
-    F = Cpu#cpu_state.f,
+    A = State#cpu_state.a,
+    F = State#cpu_state.f,
     N = F band ?FLAG_N,
     H = F band ?FLAG_H,
     C = F band ?FLAG_C,
@@ -861,305 +828,237 @@ execute_daa(State) ->
             (if NewA =:= 0 -> ?FLAG_Z; true -> 0 end) bor
             (if NewA band 16#80 =/= 0 -> ?FLAG_S; true -> 0 end) bor
             (if Parity =/= 0 -> ?FLAG_V; true -> 0 end),
-    State#machine_state{cpu = Cpu#cpu_state{a = NewA, f = NewF2}}.
+    State#cpu_state{a = NewA, f = NewF2}.
 
 execute_ex_de_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    HL = z80_cpu_helpers:get_hl_pair(Cpu),
-    DE = z80_cpu_helpers:get_reg_pair(de, Cpu),
-    Cpu1 = Cpu#cpu_state{d = (HL bsr 8) band 16#ff, e = HL band 16#ff},
-    Cpu2 = z80_cpu_helpers:set_hl_pair(DE, Cpu1),
-    State#machine_state{cpu = Cpu2}.
+    HL = z80_cpu_helpers:get_hl_pair(State),
+    DE = z80_cpu_helpers:get_reg_pair(de, State),
+    State1 = State#cpu_state{d = (HL bsr 8) band 16#ff, e = HL band 16#ff},
+    z80_cpu_helpers:set_hl_pair(DE, State1).
 
 execute_ex_sp_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    SP = Cpu#cpu_state.sp,
-    Mem = State#machine_state.memory,
-    HL = z80_cpu_helpers:get_hl_pair(Cpu),
-    Val = z80_cpu_helpers:read_word(SP, Mem),
-    Mem1 = z80_cpu_helpers:write_word(SP, HL, Mem),
-    Cpu1 = z80_cpu_helpers:set_hl_pair(Val, Cpu),
-    z80_cpu_helpers:advance_tstates(State#machine_state{cpu = Cpu1, memory = Mem1}, 15).
+    SP = State#cpu_state.sp,
+    HL = z80_cpu_helpers:get_hl_pair(State),
+    {Val, State2} = z80_cpu_helpers:read_word(State, SP),
+    State3 = z80_cpu_helpers:write_word(State2, SP, HL),
+    State4 = z80_cpu_helpers:set_hl_pair(Val, State3),
+    z80_cpu_helpers:advance_tstates(State4, 15).
 
 execute_rlca(State) ->
-    Cpu = State#machine_state.cpu,
-    A = Cpu#cpu_state.a,
+    A = State#cpu_state.a,
+    F = State#cpu_state.f,
     Carry = A bsr 7,
     NewA = ((A bsl 1) band 16#FF) bor Carry,
-    NewF = (Cpu#cpu_state.f band 16#28) bor Carry,
-    State#machine_state{cpu = Cpu#cpu_state{a = NewA, f = NewF}}.
+    NewF = (F band 16#28) bor Carry,
+    State#cpu_state{a = NewA, f = NewF}.
 
 %% ADD A, r / (HL) group (0x80-0x87)
 execute_add_a_b(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(b, Cpu)).
+    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(b, State)).
 
 execute_add_a_c(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(c, Cpu)).
+    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(c, State)).
 
 execute_add_a_d(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(d, Cpu)).
+    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(d, State)).
 
 execute_add_a_e(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(e, Cpu)).
+    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_add_a_h(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(h, Cpu)).
+    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(h, State)).
 
 execute_add_a_l(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(l, Cpu)).
+    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(l, State)).
 
 execute_add_a_mem_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    Val = z80_cpu_helpers:read_byte(z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l), State#machine_state.memory),
+    Val = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
     z80_cpu_helpers:do_add(State, Val).
 
 execute_add_a_a(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(a, Cpu)).
+    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(a, State)).
 
 %% ADC A, r / (HL) group (0x88-0x8F)
 execute_adc_a_b(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(b, Cpu)).
+    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(b, State)).
 
 execute_adc_a_c(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(c, Cpu)).
+    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(c, State)).
 
 execute_adc_a_d(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(d, Cpu)).
+    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(d, State)).
 
 execute_adc_a_e(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(e, Cpu)).
+    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_adc_a_h(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(h, Cpu)).
+    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(h, State)).
 
 execute_adc_a_l(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(l, Cpu)).
+    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(l, State)).
 
 execute_adc_a_mem_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    Val = z80_cpu_helpers:read_byte(z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l), State#machine_state.memory),
+    Val = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
     z80_cpu_helpers:do_adc(State, Val).
 
 execute_adc_a_a(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(a, Cpu)).
+    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(a, State)).
 
 %% SUB r / (HL) group (0x90-0x97)
 execute_sub_b(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(b, Cpu)).
+    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(b, State)).
 
 execute_sub_c(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(c, Cpu)).
+    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(c, State)).
 
 execute_sub_d(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(d, Cpu)).
+    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(d, State)).
 
 execute_sub_e(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(e, Cpu)).
+    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_sub_h(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(h, Cpu)).
+    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(h, State)).
 
 execute_sub_l(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(l, Cpu)).
+    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(l, State)).
 
 execute_sub_mem_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    Val = z80_cpu_helpers:read_byte(z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l), State#machine_state.memory),
+    Val = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
     z80_cpu_helpers:do_sub(State, Val).
 
 execute_sub_a(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(a, Cpu)).
+    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(a, State)).
 
 %% SBC A, r / (HL) group (0x98-0x9F)
 execute_sbc_a_b(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(b, Cpu)).
+    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(b, State)).
 
 execute_sbc_a_c(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(c, Cpu)).
+    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(c, State)).
 
 execute_sbc_a_d(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(d, Cpu)).
+    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(d, State)).
 
 execute_sbc_a_e(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(e, Cpu)).
+    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_sbc_a_h(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(h, Cpu)).
+    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(h, State)).
 
 execute_sbc_a_l(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(l, Cpu)).
+    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(l, State)).
 
 execute_sbc_a_mem_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    Val = z80_cpu_helpers:read_byte(z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l), State#machine_state.memory),
+    Val = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
     z80_cpu_helpers:do_sbc(State, Val).
 
 execute_sbc_a_a(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(a, Cpu)).
+    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(a, State)).
 
 %% AND r / (HL) group (0xA0-0xA7)
 execute_and_b(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(b, Cpu)).
+    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(b, State)).
 
 execute_and_c(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(c, Cpu)).
+    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(c, State)).
 
 execute_and_d(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(d, Cpu)).
+    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(d, State)).
 
 execute_and_e(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(e, Cpu)).
+    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_and_h(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(h, Cpu)).
+    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(h, State)).
 
 execute_and_l(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(l, Cpu)).
+    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(l, State)).
 
 execute_and_mem_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    Val = z80_cpu_helpers:read_byte(z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l), State#machine_state.memory),
+    Val = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
     z80_cpu_helpers:do_and(State, Val).
 
 execute_and_a(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(a, Cpu)).
+    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(a, State)).
 
 %% XOR r / (HL) group (0xA8-0xAF)
 execute_xor_b(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(b, Cpu)).
+    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(b, State)).
 
 execute_xor_c(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(c, Cpu)).
+    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(c, State)).
 
 execute_xor_d(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(d, Cpu)).
+    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(d, State)).
 
 execute_xor_e(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(e, Cpu)).
+    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_xor_h(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(h, Cpu)).
+    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(h, State)).
 
 execute_xor_l(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(l, Cpu)).
+    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(l, State)).
 
 execute_xor_mem_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    Val = z80_cpu_helpers:read_byte(z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l), State#machine_state.memory),
+    Val = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
     z80_cpu_helpers:do_xor(State, Val).
 
 execute_xor_a(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(a, Cpu)).
+    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(a, State)).
 
 %% OR r / (HL) group (0xB0-0xB7)
 execute_or_b(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(b, Cpu)).
+    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(b, State)).
 
 execute_or_c(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(c, Cpu)).
+    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(c, State)).
 
 execute_or_d(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(d, Cpu)).
+    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(d, State)).
 
 execute_or_e(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(e, Cpu)).
+    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_or_h(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(h, Cpu)).
+    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(h, State)).
 
 execute_or_l(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(l, Cpu)).
+    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(l, State)).
 
 execute_or_mem_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    Val = z80_cpu_helpers:read_byte(z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l), State#machine_state.memory),
+    Val = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
     z80_cpu_helpers:do_or(State, Val).
 
 execute_or_a(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(a, Cpu)).
+    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(a, State)).
 
 %% CP r / (HL) group (0xB8-0xBF)
 execute_cp_b(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(b, Cpu)).
+    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(b, State)).
 
 execute_cp_c(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(c, Cpu)).
+    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(c, State)).
 
 execute_cp_d(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(d, Cpu)).
+    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(d, State)).
 
 execute_cp_e(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(e, Cpu)).
+    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_cp_h(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(h, Cpu)).
+    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(h, State)).
 
 execute_cp_l(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(l, Cpu)).
+    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(l, State)).
 
 execute_cp_mem_hl(State) ->
-    Cpu = State#machine_state.cpu,
-    Val = z80_cpu_helpers:read_byte(z80_cpu_helpers:pair(Cpu#cpu_state.h, Cpu#cpu_state.l), State#machine_state.memory),
+    Val = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
     z80_cpu_helpers:do_cp(State, Val).
 
 execute_cp_a(State) ->
-    Cpu = State#machine_state.cpu,
-    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(a, Cpu)).
+    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(a, State)).
 
 execute_out_n_a(State) ->
     {_, State1} = z80_cpu_helpers:fetch_byte(State),
@@ -1173,62 +1072,50 @@ execute_in_a_n(State) ->
 
 execute_jp_cc(State, Cond) ->
     {Addr, State1} = z80_cpu_helpers:fetch_word(State),
-    Cpu = State1#machine_state.cpu,
-    case z80_cpu_helpers:check_condition(Cond, Cpu#cpu_state.f) of
-        true -> State1#machine_state{cpu = Cpu#cpu_state{pc = Addr}};
+    case z80_cpu_helpers:check_condition(Cond, State1#cpu_state.f) of
+        true -> State1#cpu_state{pc = Addr};
         false -> State1
     end.
 
 execute_jr_cc(State, Cond) ->
     {Offset, State1} = z80_cpu_helpers:fetch_byte(State),
-    Cpu = State1#machine_state.cpu,
-    case z80_cpu_helpers:check_condition(Cond, Cpu#cpu_state.f) of
+    case z80_cpu_helpers:check_condition(Cond, State1#cpu_state.f) of
         true ->
             Signed = z80_cpu_helpers:signed_byte(Offset),
-            NewPc = (Cpu#cpu_state.pc + Signed) band 16#ffff,
-            z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = Cpu#cpu_state{pc = NewPc}}, 5);
+            NewPc = (State1#cpu_state.pc + Signed) band 16#ffff,
+            z80_cpu_helpers:advance_tstates(State1#cpu_state{pc = NewPc}, 5);
         false ->
             State1
     end.
 
 execute_call_cc(State, Cond) ->
     {Addr, State1} = z80_cpu_helpers:fetch_word(State),
-    Cpu = State1#machine_state.cpu,
-    case z80_cpu_helpers:check_condition(Cond, Cpu#cpu_state.f) of
+    case z80_cpu_helpers:check_condition(Cond, State1#cpu_state.f) of
         true ->
-            State2 = z80_cpu_helpers:push_word(State1, Cpu#cpu_state.pc),
-            z80_cpu_helpers:advance_tstates(State2#machine_state{cpu = (State2#machine_state.cpu)#cpu_state{pc = Addr}}, 7);
+            State2 = z80_cpu_helpers:push_word(State1, State1#cpu_state.pc),
+            z80_cpu_helpers:advance_tstates(State2#cpu_state{pc = Addr}, 7);
         false ->
             State1
     end.
 
 execute_ret_cc(State, Cond) ->
-    Cpu = State#machine_state.cpu,
-    case z80_cpu_helpers:check_condition(Cond, Cpu#cpu_state.f) of
+    case z80_cpu_helpers:check_condition(Cond, State#cpu_state.f) of
         true ->
             {Value, State1} = z80_cpu_helpers:pop_word(State),
-            z80_cpu_helpers:advance_tstates(State1#machine_state{cpu = (State1#machine_state.cpu)#cpu_state{pc = Value}}, 7);
+            z80_cpu_helpers:advance_tstates(State1#cpu_state{pc = Value}, 7);
         false ->
             z80_cpu_helpers:advance_tstates(State, 1)
     end.
 
 %% Register access wrappers (delegate to helpers) - accept CPU record directly
-get_reg_byte(Reg, Cpu) when is_record(Cpu, cpu_state) ->
-    z80_cpu_helpers:get_reg_byte(Reg, Cpu);
 get_reg_byte(Reg, State) ->
-    z80_cpu_helpers:get_reg_byte(Reg, State#machine_state.cpu).
+    z80_cpu_helpers:get_reg_byte(Reg, State).
 
-set_reg_byte(Reg, Value, Cpu) when is_record(Cpu, cpu_state) ->
-    z80_cpu_helpers:set_reg_byte(Reg, Value, Cpu);
 set_reg_byte(Reg, Value, State) ->
-    State#machine_state{cpu = z80_cpu_helpers:set_reg_byte(Reg, Value, State#machine_state.cpu)}.
+    z80_cpu_helpers:set_reg_byte(Reg, Value, State).
 
-get_reg_pair(RegPair, Cpu) when is_record(Cpu, cpu_state) ->
-    z80_cpu_helpers:get_reg_pair(RegPair, Cpu);
 get_reg_pair(RegPair, State) ->
-    z80_cpu_helpers:get_reg_pair(RegPair, State#machine_state.cpu).
+    z80_cpu_helpers:get_reg_pair(RegPair, State).
 
-set_reg_pair(RegPair, Value, Cpu) when is_record(Cpu, cpu_state) ->
-    z80_cpu_helpers:set_reg_pair(RegPair, Value, Cpu);
 set_reg_pair(RegPair, Value, State) ->
-    State#machine_state{cpu = z80_cpu_helpers:set_reg_pair(RegPair, Value, State#machine_state.cpu)}.
+    z80_cpu_helpers:set_reg_pair(RegPair, Value, State).

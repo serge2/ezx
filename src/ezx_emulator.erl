@@ -1,11 +1,13 @@
 -module(ezx_emulator).
 
 -include("z80_records.hrl").
+-include("ezx_emulator.hrl").
 
 -export([
     init/0,
-    load_program/2,
+    init/2,
     step/1,
+    load_program/2,
     run_until_tstates/2,
     read_byte/2,
     write_byte/3,
@@ -13,35 +15,59 @@
     write_word/3
 ]).
 
-%% @doc Create a new machine state with initialized CPU and memory components.
--spec init() -> #machine_state{}.
 init() ->
+    init(ezx_memory_48, <<0:65536/unit:8>>).
+
+%% @doc Create a new machine state with initialized CPU and memory components.
+-spec init(module(), binary()) -> #machine_state{}.
+init(Mem, Rom) ->
+    MemReadFun =
+        fun(Addr, ExtContext) ->
+            Memory = ExtContext#ext_context.memory,
+            Byte = Mem:read_byte(Memory, Addr band 16#ffff),
+            {Byte, ExtContext}
+        end,
+    MemWriteFun =
+        fun(Addr, Byte, ExtContext) ->
+            Memory = ExtContext#ext_context.memory,
+            NewMem = Mem:write_byte(Memory, Addr band 16#ffff, Byte band 16#ff),
+            ExtContext#ext_context{memory = NewMem}
+        end,
     #machine_state{
-        cpu = z80_cpu:init_state(),
-        memory = ezx_mem:new(65536)
+        cpu = z80_cpu:init_state(MemReadFun, MemWriteFun),
+        memory = Mem:new(Rom),
+        mem_read_fun = MemReadFun,
+        mem_write_fun = MemWriteFun
     }.
 
-%% @doc Load a program into the machine memory so the emulator can execute it.
--spec load_program(#machine_state{}, map() | [byte()] | binary()) -> #machine_state{}.
-load_program(Machine, Program) ->
-    Memory = normalize_program(Program),
-    Machine#machine_state{memory = Memory}.
+%% @doc Load a program into memory starting at address 0.
+-spec load_program(#machine_state{}, [byte()] | map()) -> #machine_state{}.
+load_program(Machine, Program) when is_list(Program) ->
+    load_program(Machine, maps:from_list(lists:enumerate(0, Program)));
+load_program(Machine, Program) when is_map(Program) ->
+    maps:fold(fun(Addr, Byte, M) ->
+        write_byte(M, Addr, Byte)
+    end, Machine, Program).
 
-%% @doc Read a byte from the machine memory.
--spec read_byte(#machine_state{}, non_neg_integer()) -> byte().
-read_byte(Machine, Addr) ->
-    ezx_mem:read_byte(Machine#machine_state.memory, Addr band 16#ffff).
+-spec read_byte(#machine_state{}, non_neg_integer()) -> {byte(), #machine_state{}}.
+read_byte(#machine_state{memory = Mem, mem_read_fun = MemReadFun} = Machine, Addr) ->
+    ExtContext = #ext_context{memory = Mem},
+    {Byte, ExtContext2} = MemReadFun(ExtContext, Addr),
+    {Byte, Machine#machine_state{memory = ExtContext2#ext_context.memory}}.
 
 %% @doc Write a byte into the machine memory.
 -spec write_byte(#machine_state{}, non_neg_integer(), byte()) -> #machine_state{}.
-write_byte(Machine, Addr, Byte) ->
-    Memory1 = ezx_mem:write_byte(Machine#machine_state.memory, Addr band 16#ffff, Byte band 16#ff),
-    Machine#machine_state{memory = Memory1}.
+write_byte(#machine_state{memory = Mem, mem_write_fun = MemWriteFun} = Machine, Addr, Byte) ->
+    ExtContext = #ext_context{memory = Mem},
+    ExtContext2 = MemWriteFun(ExtContext, Addr, Byte),
+    Machine#machine_state{memory = ExtContext2#ext_context.memory}.
 
 %% @doc Read a 16-bit word from the machine memory.
--spec read_word(#machine_state{}, non_neg_integer()) -> non_neg_integer().
+-spec read_word(#machine_state{}, non_neg_integer()) -> {non_neg_integer(), #machine_state{}}.
 read_word(Machine, Addr) ->
-    read_byte(Machine, Addr) + (read_byte(Machine, Addr + 1) bsl 8).
+    {ByteL, Machine1} = read_byte(Machine, Addr),
+    {ByteH, Machine2} = read_byte(Machine1, Addr + 1),
+    {ByteL + (ByteH bsl 8), Machine2}.
 
 %% @doc Write a 16-bit word into the machine memory.
 -spec write_word(#machine_state{}, non_neg_integer(), non_neg_integer()) -> #machine_state{}.
@@ -49,45 +75,20 @@ write_word(Machine, Addr, Word) ->
     Machine1 = write_byte(Machine, Addr, Word band 16#ff),
     write_byte(Machine1, Addr + 1, (Word bsr 8) band 16#ff).
 
-normalize_program(Program) when is_map(Program) ->
-    lists:foldl(
-        fun({Addr, Value}, Acc) ->
-            ezx_mem:write_byte(Acc, Addr, Value)
-        end,
-        ezx_mem:new(65536),
-        maps:to_list(Program)
-    );
-normalize_program(Program) when is_list(Program) ->
-    Bytes = [Byte band 16#ff ||
-        Byte <- Program],
-    lists:foldl(
-        fun({Addr, Value}, Acc) ->
-            ezx_mem:write_byte(Acc, Addr, Value)
-        end,
-        ezx_mem:new(65536),
-        lists:zip(lists:seq(0, length(Bytes) - 1), Bytes)
-    );
-normalize_program(Program) when is_binary(Program) ->
-    Bytes = binary_to_list(Program),
-    lists:foldl(
-        fun({Addr, Value}, Acc) ->
-            ezx_mem:write_byte(Acc, Addr, Value)
-        end,
-        ezx_mem:new(65536),
-        lists:zip(lists:seq(0, length(Bytes) - 1), Bytes)
-    ).
 
 %% @doc Execute one machine step by advancing the CPU once and updating machine time.
 -spec step(#machine_state{}) -> #machine_state{}.
 step(Machine) ->
     Cpu0 = Machine#machine_state.cpu,
-    %% Directly invoke z80_cpu:step/1 with the full machine state
-    Machine1 = z80_cpu:step(Machine),
-    Cpu1 = Machine1#machine_state.cpu,
+    Memory0 = Machine#machine_state.memory,
+    ExtContext0 = #ext_context{memory = Memory0},
+    Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = 0}),
     Ticks = Cpu1#cpu_state.t_states - Cpu0#cpu_state.t_states,
-    %% Synchronize global system T-states counter
-    Machine1#machine_state{
-        t_states = Machine1#machine_state.t_states + Ticks
+    Memory1 = Cpu1#cpu_state.ext_context#ext_context.memory,
+    Machine#machine_state{
+        cpu = Cpu1,
+        memory = Memory1,
+        t_states = Machine#machine_state.t_states + Ticks
     }.
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.

@@ -19,7 +19,7 @@ nop_timing_test() ->
 halt_instruction_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#76),
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#76),
     Machine1 = Machine0#machine_state{memory = Mem1},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(4, z80_cpu:t_states(Machine2)),
@@ -28,7 +28,7 @@ halt_instruction_test() ->
 halt_timing_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#76),
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#76),
     Machine1 = Machine0#machine_state{memory = Mem1},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(4, z80_cpu:t_states(Machine2)),

@@ -32,16 +32,13 @@
     iff2 = 0,   %% Interrupt flip-flops 2
     im = 0,     %% Interrupt mode (0, 1, or 2)
     halted = false,
-    t_states = 0
+    t_states = 0,
+    ext_context = undefined,
+    mem_read_fun = undefined,
+    mem_write_fun = undefined,
+    pending_interrupt = none :: none | nmi | int
 }).
 
-%% Machine-level runtime state that keeps CPU, memory, and timing separate.
--record(machine_state, {
-    cpu = #cpu_state{},
-    memory = undefined,
-    pending_interrupt = none,
-    t_states = 0
-}).
 
 %% Flag bitmasks inside the F register
 -define(FLAG_C, 16#01). % Carry

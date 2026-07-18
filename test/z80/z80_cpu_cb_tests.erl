@@ -12,8 +12,8 @@
 cb_rlc_b_timing_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#00),  %% RLC B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#00),  %% RLC B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(8, z80_cpu:t_states(Machine2)).
@@ -21,8 +21,8 @@ cb_rlc_b_timing_test() ->
 cb_rlc_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#00),  %% RLC B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#00),  %% RLC B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#81, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -36,8 +36,8 @@ cb_rlc_b_test() ->
 cb_rlc_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#01),  %% RLC C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#01),  %% RLC C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#40, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -51,8 +51,8 @@ cb_rlc_c_test() ->
 cb_rlc_d_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#02),  %% RLC D
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#02),  %% RLC D
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{d = 16#FF, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -65,8 +65,8 @@ cb_rlc_d_test() ->
 cb_rlc_e_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#03),  %% RLC E
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#03),  %% RLC E
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{e = 16#01, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -78,8 +78,8 @@ cb_rlc_e_test() ->
 cb_rlc_h_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#04),  %% RLC H
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#04),  %% RLC H
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{h = 16#80, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -92,8 +92,8 @@ cb_rlc_h_test() ->
 cb_rlc_l_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#05),  %% RLC L
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#05),  %% RLC L
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{l = 16#55, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -106,8 +106,8 @@ cb_rlc_l_test() ->
 cb_rlc_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#07),  %% RLC A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#07),  %% RLC A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#C0, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -121,9 +121,9 @@ cb_rlc_hl_test() ->
     %% RLC (HL) - 0x06: read (HL), RLC, write back, 15 T-states
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#06),  %% RLC (HL)
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#80),  %% value at HL
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#06),  %% RLC (HL)
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#80),  %% value at HL
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#01, ezx_emulator:read_byte(Machine2, 16#4000)),  %% 10000000 -> 00000001
@@ -133,9 +133,9 @@ cb_rlc_hl_test() ->
 cb_rlc_hl_zero_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#06),
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#00),  %% 0x00 -> 0x00, Z=1
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#06),
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#00),  %% 0x00 -> 0x00, Z=1
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#00, ezx_emulator:read_byte(Machine2, 16#4000)),
@@ -149,8 +149,8 @@ cb_rlc_hl_zero_test() ->
 cb_rrc_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#08),  %% RRC B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#08),  %% RRC B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#01, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -164,8 +164,8 @@ cb_rrc_b_test() ->
 cb_rrc_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#09),  %% RRC C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#09),  %% RRC C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#02, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -178,8 +178,8 @@ cb_rrc_c_test() ->
 cb_rrc_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#0F),  %% RRC A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#0F),  %% RRC A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#80, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -192,9 +192,9 @@ cb_rrc_a_test() ->
 cb_rrc_hl_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#0E),  %% RRC (HL)
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#01),  %% Memory at HL = 0x01
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#0E),  %% RRC (HL)
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#01),  %% Memory at HL = 0x01
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#80, ezx_emulator:read_byte(Machine2, 16#4000)),  %% RRC 0x01 = 0x80, carry=1
@@ -209,8 +209,8 @@ cb_rrc_hl_test() ->
 cb_rl_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#10),  %% RL B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#10),  %% RL B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#81, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -223,8 +223,8 @@ cb_rl_b_test() ->
 cb_rl_b_carry_set_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#10),  %% RL B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#10),  %% RL B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#40, f = 16#01},  %% Carry=1
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -237,8 +237,8 @@ cb_rl_b_carry_set_test() ->
 cb_rl_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#11),  %% RL C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#11),  %% RL C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#80, f = 16#01},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -251,8 +251,8 @@ cb_rl_c_test() ->
 cb_rl_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#17),  %% RL A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#17),  %% RL A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#FF, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -266,9 +266,9 @@ cb_rl_hl_test() ->
     %% RL (HL) - 0x16: read (HL), RL, write back, 15 T-states
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#16),  %% RL (HL)
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#7F),  %% 01111111
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#16),  %% RL (HL)
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#7F),  %% 01111111
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00, f = 16#01}},  %% carry=1
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#FF, ezx_emulator:read_byte(Machine2, 16#4000)),  %% 01111111 + carry=1 = 11111111
@@ -278,9 +278,9 @@ cb_rl_hl_test() ->
 cb_rl_hl_no_carry_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#16),
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#7F),  %% 01111111
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#16),
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#7F),  %% 01111111
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00, f = 0}},  %% carry=0
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#FE, ezx_emulator:read_byte(Machine2, 16#4000)),  %% 01111111 + carry=0 = 11111110
@@ -293,8 +293,8 @@ cb_rl_hl_no_carry_test() ->
 cb_rr_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#18),  %% RR B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#18),  %% RR B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#01, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -308,8 +308,8 @@ cb_rr_b_test() ->
 cb_rr_b_carry_set_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#18),  %% RR B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#18),  %% RR B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#02, f = 16#01},  %% Carry=1
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -322,8 +322,8 @@ cb_rr_b_carry_set_test() ->
 cb_rr_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#19),  %% RR C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#19),  %% RR C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#80, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -336,8 +336,8 @@ cb_rr_c_test() ->
 cb_rr_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#1F),  %% RR A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#1F),  %% RR A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#02, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -351,9 +351,9 @@ cb_rr_hl_test() ->
     %% RR (HL) - 0x1E: read (HL), RR, write back, 15 T-states
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#1E),  %% RR (HL)
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#02),  %% 00000010
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#1E),  %% RR (HL)
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#02),  %% 00000010
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00, f = 16#01}},  %% carry=1
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#81, ezx_emulator:read_byte(Machine2, 16#4000)),  %% 00000010 + carry=1 = 10000001
@@ -363,9 +363,9 @@ cb_rr_hl_test() ->
 cb_rr_hl_no_carry_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#1E),
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#80),  %% 10000000
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#1E),
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#80),  %% 10000000
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00, f = 0}},  %% carry=0
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#40, ezx_emulator:read_byte(Machine2, 16#4000)),  %% 10000000 + carry=0 = 01000000
@@ -378,8 +378,8 @@ cb_rr_hl_no_carry_test() ->
 cb_sla_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#20),  %% SLA B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#20),  %% SLA B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#40, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -394,8 +394,8 @@ cb_sla_b_test() ->
 cb_sla_b_carry_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#20),  %% SLA B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#20),  %% SLA B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#80, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -409,8 +409,8 @@ cb_sla_b_carry_test() ->
 cb_sla_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#21),  %% SLA C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#21),  %% SLA C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#55, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -423,8 +423,8 @@ cb_sla_c_test() ->
 cb_sla_d_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#22),  %% SLA D
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#22),  %% SLA D
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{d = 16#01, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -436,8 +436,8 @@ cb_sla_d_test() ->
 cb_sla_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#27),  %% SLA A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#27),  %% SLA A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#FF, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -450,9 +450,9 @@ cb_sla_a_test() ->
 cb_sla_hl_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#26),  %% SLA (HL)
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#40),  %% 01000000 -> 10000000, carry=0
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#26),  %% SLA (HL)
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#40),  %% 01000000 -> 10000000, carry=0
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#80, ezx_emulator:read_byte(Machine2, 16#4000)),
@@ -463,9 +463,9 @@ cb_sla_hl_test() ->
 cb_sla_hl_carry_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#26),
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#80),  %% 10000000 -> 00000000, carry=1
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#26),
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#80),  %% 10000000 -> 00000000, carry=1
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#00, ezx_emulator:read_byte(Machine2, 16#4000)),
@@ -479,8 +479,8 @@ cb_sla_hl_carry_test() ->
 cb_sra_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#28),  %% SRA B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#28),  %% SRA B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#81, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -494,8 +494,8 @@ cb_sra_b_test() ->
 cb_sra_b_positive_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#28),  %% SRA B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#28),  %% SRA B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#40, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -509,8 +509,8 @@ cb_sra_b_positive_test() ->
 cb_sra_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#29),  %% SRA C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#29),  %% SRA C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#FF, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -523,8 +523,8 @@ cb_sra_c_test() ->
 cb_sra_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#2F),  %% SRA A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#2F),  %% SRA A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#02, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -537,9 +537,9 @@ cb_sra_a_test() ->
 cb_sra_hl_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#2E),  %% SRA (HL)
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#80),  %% 10000000 -> 11000000 (preserve sign)
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#2E),  %% SRA (HL)
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#80),  %% 10000000 -> 11000000 (preserve sign)
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#C0, ezx_emulator:read_byte(Machine2, 16#4000)),
@@ -549,9 +549,9 @@ cb_sra_hl_test() ->
 cb_sra_hl_positive_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#2E),
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#40),  %% 01000000 -> 00100000
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#2E),
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#40),  %% 01000000 -> 00100000
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#20, ezx_emulator:read_byte(Machine2, 16#4000)),
@@ -561,9 +561,9 @@ cb_sra_hl_positive_test() ->
 cb_sra_hl_carry_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#2E),
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#01),  %% 00000001 -> 00000000, carry=1
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#2E),
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#01),  %% 00000001 -> 00000000, carry=1
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#00, ezx_emulator:read_byte(Machine2, 16#4000)),
@@ -577,8 +577,8 @@ cb_sra_hl_carry_test() ->
 cb_sll_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#30),  %% SLL B (undocumented)
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#30),  %% SLL B (undocumented)
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#80, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -591,8 +591,8 @@ cb_sll_b_test() ->
 cb_sll_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#31),  %% SLL C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#31),  %% SLL C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#40, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -605,8 +605,8 @@ cb_sll_c_test() ->
 cb_sll_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#37),  %% SLL A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#37),  %% SLL A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#55, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -619,9 +619,9 @@ cb_sll_a_test() ->
 cb_sll_hl_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#36),  %% SLL (HL)
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#40),  %% 01000000 -> 10000001
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#36),  %% SLL (HL)
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#40),  %% 01000000 -> 10000001
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#81, ezx_emulator:read_byte(Machine2, 16#4000)),
@@ -632,9 +632,9 @@ cb_sll_hl_test() ->
 cb_sll_hl_carry_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#36),
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#80),  %% 10000000 -> 00000001, carry=1
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#36),
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#80),  %% 10000000 -> 00000001, carry=1
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#01, ezx_emulator:read_byte(Machine2, 16#4000)),
@@ -647,8 +647,8 @@ cb_sll_hl_carry_test() ->
 cb_srl_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#38),  %% SRL B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#38),  %% SRL B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#81, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -662,8 +662,8 @@ cb_srl_b_test() ->
 cb_srl_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#39),  %% SRL C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#39),  %% SRL C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#02, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -676,8 +676,8 @@ cb_srl_c_test() ->
 cb_srl_d_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#3A),  %% SRL D
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#3A),  %% SRL D
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{d = 16#FF, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -691,8 +691,8 @@ cb_srl_d_test() ->
 cb_srl_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#3F),  %% SRL A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#3F),  %% SRL A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#01, f = 0},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -706,9 +706,9 @@ cb_srl_a_test() ->
 cb_srl_hl_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#3E),  %% SRL (HL)
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#81),  %% 10000001 -> 01000000
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#3E),  %% SRL (HL)
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#81),  %% 10000001 -> 01000000
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#40, ezx_emulator:read_byte(Machine2, 16#4000)),
@@ -719,9 +719,9 @@ cb_srl_hl_test() ->
 cb_srl_hl_carry_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#3E),
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#01),  %% 00000001 -> 00000000
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#3E),
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#01),  %% 00000001 -> 00000000
     Machine1 = Machine0#machine_state{memory = Mem3, cpu = Machine0#machine_state.cpu#cpu_state{h = 16#40, l = 16#00}},
     Machine2 = z80_cpu:step(Machine1),
     ?assertEqual(16#00, ezx_emulator:read_byte(Machine2, 16#4000)),
@@ -735,8 +735,8 @@ cb_srl_hl_carry_test() ->
 cb_bit_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#40),  %% BIT 0,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#40),  %% BIT 0,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#01},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -752,8 +752,8 @@ cb_bit_test() ->
 cb_bit_zero_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#40),  %% BIT 0,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#40),  %% BIT 0,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#00},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -766,8 +766,8 @@ cb_bit_zero_test() ->
 cb_bit_1_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#48),  %% BIT 1,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#48),  %% BIT 1,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#02},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -779,8 +779,8 @@ cb_bit_1_b_test() ->
 cb_bit_7_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#78),  %% BIT 7,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#78),  %% BIT 7,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#80},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -793,8 +793,8 @@ cb_bit_7_b_test() ->
 cb_bit_7_b_zero_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#78),  %% BIT 7,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#78),  %% BIT 7,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#7F},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -807,8 +807,8 @@ cb_bit_7_b_zero_test() ->
 cb_bit_0_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#41),  %% BIT 0,C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#41),  %% BIT 0,C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#01},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -820,8 +820,8 @@ cb_bit_0_c_test() ->
 cb_bit_3_d_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#5A),  %% BIT 3,D
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#5A),  %% BIT 3,D
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{d = 16#08},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -833,9 +833,9 @@ cb_bit_3_d_test() ->
 cb_bit_hl_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#46),  %% BIT 0,(HL)
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#01),
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#46),  %% BIT 0,(HL)
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#01),
     Machine1 = Machine0#machine_state{memory = Mem3},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{h = 16#40, l = 16#00},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -845,9 +845,9 @@ cb_bit_hl_test() ->
 cb_bit_5_hl_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#6E),  %% BIT 5,(HL)
-    Mem3 = ezx_mem:write_byte(Mem2, 16#4000, 16#20),
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#6E),  %% BIT 5,(HL)
+    Mem3 = ezx_memory_48:cpu_write_byte(Mem2, 16#4000, 16#20),
     Machine1 = Machine0#machine_state{memory = Mem3},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{h = 16#40, l = 16#00},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -857,8 +857,8 @@ cb_bit_5_hl_test() ->
 cb_bit_7_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#7F),  %% BIT 7,A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#7F),  %% BIT 7,A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#80},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -875,8 +875,8 @@ cb_bit_7_a_test() ->
 cb_res_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#80),  %% RES 0,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#80),  %% RES 0,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#03},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -888,8 +888,8 @@ cb_res_test() ->
 cb_res_1_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#88),  %% RES 1,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#88),  %% RES 1,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#06},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -901,8 +901,8 @@ cb_res_1_b_test() ->
 cb_res_7_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#B8),  %% RES 7,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#B8),  %% RES 7,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#FF},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -914,8 +914,8 @@ cb_res_7_b_test() ->
 cb_res_0_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#81),  %% RES 0,C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#81),  %% RES 0,C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#FF},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -927,8 +927,8 @@ cb_res_0_c_test() ->
 cb_res_3_e_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#9B),  %% RES 3,E
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#9B),  %% RES 3,E
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{e = 16#F8},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -962,8 +962,8 @@ cb_res_4_hl_test() ->
 cb_res_7_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#BF),  %% RES 7,A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#BF),  %% RES 7,A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#FF},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -979,8 +979,8 @@ cb_res_7_a_test() ->
 cb_set_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#C0),  %% SET 0,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#C0),  %% SET 0,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#02},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -992,8 +992,8 @@ cb_set_test() ->
 cb_set_1_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#C8),  %% SET 1,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#C8),  %% SET 1,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#01},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -1005,8 +1005,8 @@ cb_set_1_b_test() ->
 cb_set_7_b_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#F8),  %% SET 7,B
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#F8),  %% SET 7,B
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{b = 16#00},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -1018,8 +1018,8 @@ cb_set_7_b_test() ->
 cb_set_0_c_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#C1),  %% SET 0,C
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#C1),  %% SET 0,C
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{c = 16#FE},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -1031,8 +1031,8 @@ cb_set_0_c_test() ->
 cb_set_5_d_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#EA),  %% SET 5,D
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#EA),  %% SET 5,D
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{d = 16#00},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
@@ -1066,8 +1066,8 @@ cb_set_2_hl_test() ->
 cb_set_7_a_test() ->
     Machine0 = ezx_emulator:init(),
     Mem0 = Machine0#machine_state.memory,
-    Mem1 = ezx_mem:write_byte(Mem0, 0, 16#CB),  %% CB prefix
-    Mem2 = ezx_mem:write_byte(Mem1, 1, 16#FF),  %% SET 7,A
+    Mem1 = ezx_memory_48:cpu_write_byte(Mem0, 0, 16#CB),  %% CB prefix
+    Mem2 = ezx_memory_48:cpu_write_byte(Mem1, 1, 16#FF),  %% SET 7,A
     Machine1 = Machine0#machine_state{memory = Mem2},
     Cpu1 = Machine1#machine_state.cpu#cpu_state{a = 16#00},
     Machine2 = Machine1#machine_state{cpu = Cpu1},
