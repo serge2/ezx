@@ -2,9 +2,8 @@
 
 -export([
     new/0,
-    new/1,
-    cpu_read_byte/2,
-    cpu_write_byte/3
+    read_byte/2,
+    write_byte/3
 ]).
 
 new() ->
@@ -12,10 +11,8 @@ new() ->
       data => <<0:65536/unit:8>>
     }.
 
-new(_Rom) ->
-    new().
 
-cpu_read_byte(State, Addr) ->
+read_byte(State, Addr) ->
     %% Read a byte from memory at the given address.
     Index = Addr band 16#ffff,
     Data = maps:get(data, State),
@@ -24,7 +21,7 @@ cpu_read_byte(State, Addr) ->
         _ -> 0
     end.
 
-cpu_write_byte(State, Addr, Byte) ->
+write_byte(State, Addr, Byte) ->
     %% Write a byte to memory at the given address.
     Index = Addr band 16#ffff,
     Size = maps:get(size, State),
