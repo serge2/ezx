@@ -7,7 +7,7 @@
 
 interrupt_test() ->
     Cpu0 = test_helpers:init_cpu(),
-    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, pc = 16#1000},
+    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, im = 1, pc = 16#1000},
     Cpu2 = test_helpers:write_mem(Cpu1, 16#0038, 16#00),  %% NOP at IRQ vector
     Cpu3 = z80_cpu:request_interrupt(Cpu2, int),
     Cpu4 = z80_cpu:step(Cpu3),
@@ -244,3 +244,63 @@ cp_carry_test() ->
     Cpu2 = Cpu1#cpu_state{a = 16#10, b = 16#20},
     Cpu3 = z80_cpu:step(Cpu2),
     ?assertEqual(?FLAG_C, Cpu3#cpu_state.f band ?FLAG_C).
+
+
+%% --- HALT Tests ---
+
+halt_sets_halted_flag_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#76),  %% HALT
+    Cpu2 = z80_cpu:step(Cpu1),
+    ?assertEqual(true, Cpu2#cpu_state.halted).
+
+halt_nop_loops_without_advancing_pc_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#76),  %% HALT
+    Cpu2 = z80_cpu:step(Cpu1),  %% Execute HALT
+    Cpu3 = z80_cpu:step(Cpu2),  %% NOP loop while halted
+    Cpu4 = z80_cpu:step(Cpu3),
+    %% PC stays at 1 (after HALT), each loop adds 4 T-states
+    ?assertEqual(1, z80_cpu:pc(Cpu4)),
+    ?assertEqual(12, z80_cpu:t_states(Cpu4)).
+
+halt_interrupt_wakes_cpu_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, im = 1, pc = 16#1000},
+    Cpu2 = test_helpers:write_mem(Cpu1, 16#1000, 16#76),  %% HALT
+    Cpu3 = test_helpers:write_mem(Cpu2, 16#0038, 16#00),  %% NOP at IRQ vector
+    Cpu4 = z80_cpu:step(Cpu3),  %% Execute HALT
+    ?assertEqual(true, Cpu4#cpu_state.halted),
+    Cpu5 = z80_cpu:request_interrupt(Cpu4, int),
+    Cpu6 = z80_cpu:step(Cpu5),  %% INT fires, wakes CPU
+    ?assertEqual(false, Cpu6#cpu_state.halted),
+    ?assertEqual(16#0038, z80_cpu:pc(Cpu6)).
+
+
+%% --- IM 0 Tests ---
+
+im0_interrupt_executes_bus_instruction_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, im = 0, pc = 16#1000},
+    Cpu2 = test_helpers:write_mem(Cpu1, 16#0038, 16#00),  %% NOP at RST 38h vector
+    Cpu3 = z80_cpu:request_interrupt(Cpu2, int),
+    Cpu4 = z80_cpu:step(Cpu3),
+    %% IM 0 executes bus instruction (RST 38h = 0xFF by default) -> PC = 0x0038
+    ?assertEqual(16#0038, z80_cpu:pc(Cpu4)),
+    ?assertEqual(0, Cpu4#cpu_state.iff1),
+    ?assertEqual(0, Cpu4#cpu_state.iff2).
+
+
+%% --- IM 2 Tests ---
+
+im2_interrupt_jumps_via_vector_table_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, im = 2, i = 16#A0, pc = 16#1000},
+    %% Vector table at I*256 + 0xFF = 0xA0FF. Put target 0x2000 there.
+    Cpu2 = test_helpers:write_mem(Cpu1, 16#A0FF, 16#00),  %% Low byte of target
+    Cpu3 = test_helpers:write_mem(Cpu2, 16#A100, 16#20),  %% High byte of target
+    Cpu4 = test_helpers:write_mem(Cpu3, 16#2000, 16#00),  %% NOP at target
+    Cpu5 = z80_cpu:request_interrupt(Cpu4, int),
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#2000, z80_cpu:pc(Cpu6)),
+    ?assertEqual(0, Cpu6#cpu_state.iff1).

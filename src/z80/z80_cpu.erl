@@ -48,7 +48,13 @@ step(#cpu_state{} = State) ->
     case maybe_handle_interrupt(State) of
         {handled, State1} -> State1;
         {not_handled, State1} ->
-            execute_next_instruction(State1)
+            case State1#cpu_state.halted of
+                true ->
+                    %% CPU is halted: execute NOP cycle (4 T-states) without advancing PC
+                    State1#cpu_state{t_states = State1#cpu_state.t_states + 4};
+                false ->
+                    execute_next_instruction(State1)
+            end
     end.
 
 %% @doc Logic to handle pending interrupts.
@@ -63,19 +69,44 @@ maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, ei_block = Ei
   when EiBlock > 0 ->
     {not_handled, State#cpu_state{ei_block = EiBlock - 1}}; 
 
-maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int}) ->
+maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, im = Mode}) ->
     State1 = z80_cpu_helpers:push_word(State, State#cpu_state.pc),
     State2 = State1#cpu_state{
-        pc = 16#0038,
         iff1 = 0,
         iff2 = 0,
         halted = false,
         prefix = none,
         displacement = 0,
-        t_states = State1#cpu_state.t_states + 13,
         pending_interrupt = none
     },
-    {handled, State2};
+    case Mode of
+        0 ->
+            %% IM 0: execute instruction from data bus (default RST 38h = 0xFF)
+            BusByte = 16#FF,
+            State3 = execute_opcode_base(BusByte, State2#cpu_state{t_states = State1#cpu_state.t_states + 13}),
+            {handled, State3};
+        1 ->
+            %% IM 1: jump to 0x0038
+            State3 = State2#cpu_state{
+                pc = 16#0038,
+                t_states = State1#cpu_state.t_states + 13
+            },
+            {handled, State3};
+        2 ->
+            %% IM 2: vector table jump
+            %% Bus byte provides low byte of address; high byte from I register.
+            %% Read 16-bit pointer from (I*256 + BusByte), jump to it.
+            BusByte = 16#FF,
+            VectorAddr = (State2#cpu_state.i bsl 8) bor BusByte,
+            {Lo, State3a} = z80_cpu_helpers:read_byte(State2, VectorAddr),
+            {Hi, State3b} = z80_cpu_helpers:read_byte(State3a, VectorAddr + 1),
+            Target = (Hi bsl 8) bor Lo,
+            State3 = State3b#cpu_state{
+                pc = Target,
+                t_states = State1#cpu_state.t_states + 19
+            },
+            {handled, State3}
+    end;
 
 maybe_handle_interrupt(State = #cpu_state{pending_interrupt = nmi}) ->
     State1 = z80_cpu_helpers:push_word(State, State#cpu_state.pc),
