@@ -1,11 +1,8 @@
 -module(ezx_video).
 
--include("z80_records.hrl").
--include("ezx_emulator.hrl").
-
 -export([
-    decode_screen_line/4,
-    decode_screen/3,
+    decode_screen_line/3,
+    decode_screen/2,
     border_color/2,
     screen_pixel/4,
     frame_line_for_screen_y/1,
@@ -47,25 +44,27 @@ tstate_for_frame_line(FrameLine) ->
     FrameLine * ?TSTATES_PER_LINE.
 
 %% @doc Look up the border color at a given T-state within a frame.
--spec border_color(#ext_context{}, non_neg_integer()) -> {byte(), byte(), byte()}.
-border_color(#ext_context{border_changes = Changes, frame_counter = _FrameCounter}, TState) ->
-    ColorIndex = find_border_color(Changes, TState, ?DEFAULT_BORDER),
+%% BorderChanges is a list of {TState, ColorIndex} sorted newest-first.
+-spec border_color(list(), non_neg_integer()) -> {byte(), byte(), byte()}.
+border_color(BorderChanges, TState) ->
+    ColorIndex = find_border_color(BorderChanges, TState, ?DEFAULT_BORDER),
     color(ColorIndex, false).
 
 %% @doc Decode a single screen pixel. X = 0..255, Y = 0..191.
--spec screen_pixel(function(), #ext_context{}, non_neg_integer(), non_neg_integer()) ->
+%% ReadByteFun is fun(Addr :: non_neg_integer()) -> byte().
+%% FrameCounter is the current frame number (for FLASH).
+-spec screen_pixel(function(), non_neg_integer(), non_neg_integer(), non_neg_integer()) ->
     {byte(), byte(), byte()}.
-screen_pixel(ReadByteFun, ExtContext, X, Y) ->
-    FrameCounter = ExtContext#ext_context.frame_counter,
+screen_pixel(ReadByteFun, FrameCounter, X, Y) ->
     CharCol = X div 8,
     CharRow = Y div 8,
     PixelRow = Y rem 8,
 
     BitmapAddr = ?SCREEN_BITMAP + (CharRow * 2048) + (PixelRow * 256) + CharCol,
-    {BitmapByte, _} = ReadByteFun(ExtContext, BitmapAddr),
+    BitmapByte = ReadByteFun(BitmapAddr),
 
     AttrAddr = ?SCREEN_ATTRS + (CharRow * 32) + CharCol,
-    {AttrByte, _} = ReadByteFun(ExtContext, AttrAddr),
+    AttrByte = ReadByteFun(AttrAddr),
 
     BitPos = 7 - (X rem 8),
     PixelOn = (BitmapByte bsr BitPos) band 1 =:= 1,
@@ -88,16 +87,14 @@ screen_pixel(ReadByteFun, ExtContext, X, Y) ->
 
 %% @doc Decode one screen line (Y = 0..191).
 %% Returns a list of 256 {R, G, B} tuples.
--spec decode_screen_line(function(), #ext_context{}, non_neg_integer(), non_neg_integer()) ->
-    list().
-decode_screen_line(ReadByteFun, ExtContext, ScreenY, FrameCounter) ->
-    ExtCtx1 = ExtContext#ext_context{frame_counter = FrameCounter},
-    [screen_pixel(ReadByteFun, ExtCtx1, X, ScreenY) || X <- lists:seq(0, ?SCREEN_WIDTH - 1)].
+-spec decode_screen_line(function(), non_neg_integer(), non_neg_integer()) -> list().
+decode_screen_line(ReadByteFun, FrameCounter, ScreenY) ->
+    [screen_pixel(ReadByteFun, FrameCounter, X, ScreenY) || X <- lists:seq(0, ?SCREEN_WIDTH - 1)].
 
 %% @doc Decode all 192 screen lines.
--spec decode_screen(function(), #ext_context{}, non_neg_integer()) -> list().
-decode_screen(ReadByteFun, ExtContext, FrameCounter) ->
-    [decode_screen_line(ReadByteFun, ExtContext, Y, FrameCounter) ||
+-spec decode_screen(function(), non_neg_integer()) -> list().
+decode_screen(ReadByteFun, FrameCounter) ->
+    [decode_screen_line(ReadByteFun, FrameCounter, Y) ||
      Y <- lists:seq(0, ?SCREEN_HEIGHT - 1)].
 
 

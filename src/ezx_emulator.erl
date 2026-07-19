@@ -22,7 +22,14 @@
 -define(DEFAULT_BORDER, 1).
 
 init() ->
-    init(ezx_memory_48, <<0:65536/unit:8>>).
+    RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
+    catch error:badarg ->
+        %% Fallback: priv is a sibling of ebin in the OTP lib structure
+        BeamDir = filename:dirname(code:which(?MODULE)),
+        filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
+    end,
+    {ok, Rom} = file:read_file(RomPath),
+    init(ezx_memory_48, Rom).
 
 %% @doc Create a new machine state with initialized CPU and memory components.
 -spec init(module(), binary()) -> #machine_state{}.
@@ -57,10 +64,9 @@ init(Mem, Rom) ->
                     ExtContext
             end
         end,
-    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun),
-    Cpu1 = Cpu0#cpu_state{port_read_fun = PortReadFun, port_write_fun = PortWriteFun},
+    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun),
     #machine_state{
-        cpu = Cpu1,
+        cpu = Cpu0,
         memory = Mem:new(Rom),
         mem_read_fun = MemReadFun,
         mem_write_fun = MemWriteFun

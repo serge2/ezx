@@ -3,7 +3,7 @@
 -include("z80_records.hrl").
 
 -export([
-    init_state/2,
+    init_state/4,
     step/1,
     run/2,
     request_interrupt/2,
@@ -16,10 +16,15 @@
     set_reg_pair/3
 ]).
 
-%% @doc Create a fresh CPU state.
--spec init_state(function(), function()) -> #cpu_state{}.
-init_state(MemReadFun, MemWriteFun) ->
-    #cpu_state{mem_read_fun = MemReadFun, mem_write_fun = MemWriteFun}.
+%% @doc Create a fresh CPU state with all callback functions.
+-spec init_state(function(), function(), function(), function()) -> #cpu_state{}.
+init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun) ->
+    #cpu_state{
+        mem_read_fun = MemReadFun,
+        mem_write_fun = MemWriteFun,
+        port_read_fun = PortReadFun,
+        port_write_fun = PortWriteFun
+    }.
 
 %% @doc Return the current program counter from the machine state.
 -spec pc(#cpu_state{}) -> non_neg_integer().
