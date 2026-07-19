@@ -1,4 +1,4 @@
--module(z80_video).
+-module(ezx_video).
 
 -include("z80_records.hrl").
 -include("ezx_emulator.hrl").

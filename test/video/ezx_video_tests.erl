@@ -1,4 +1,4 @@
--module(z80_video_tests).
+-module(ezx_video_tests).
 
 -include("z80_records.hrl").
 -include("ezx_emulator.hrl").
@@ -9,27 +9,27 @@
 border_color_default_test() ->
     %% No changes: default border is blue (1).
     ExtCtx = #ext_context{},
-    ?assertEqual({0, 0, 215}, z80_video:border_color(ExtCtx, 0)).
+    ?assertEqual({0, 0, 215}, ezx_video:border_color(ExtCtx, 0)).
 
 border_color_single_change_test() ->
     %% Set border to red (2) at T=0.
     ExtCtx = #ext_context{border_changes = [{0, 2}]},
-    ?assertEqual({215, 0, 0}, z80_video:border_color(ExtCtx, 0)).
+    ?assertEqual({215, 0, 0}, ezx_video:border_color(ExtCtx, 0)).
 
 border_color_change_mid_frame_test() ->
     %% Border is blue initially, changes to green (4) at T=20000.
     ExtCtx = #ext_context{border_changes = [{20000, 4}, {0, 1}]},
-    ?assertEqual({0, 215, 0}, z80_video:border_color(ExtCtx, 20000)),
-    ?assertEqual({0, 215, 0}, z80_video:border_color(ExtCtx, 30000)),
-    ?assertEqual({0, 0, 215}, z80_video:border_color(ExtCtx, 19999)).
+    ?assertEqual({0, 215, 0}, ezx_video:border_color(ExtCtx, 20000)),
+    ?assertEqual({0, 215, 0}, ezx_video:border_color(ExtCtx, 30000)),
+    ?assertEqual({0, 0, 215}, ezx_video:border_color(ExtCtx, 19999)).
 
 border_color_multiple_changes_test() ->
     %% Three color changes during a frame.
     ExtCtx = #ext_context{border_changes = [{40000, 6}, {20000, 4}, {0, 1}]},
-    ?assertEqual({0, 0, 215}, z80_video:border_color(ExtCtx, 0)),
-    ?assertEqual({0, 215, 0}, z80_video:border_color(ExtCtx, 20000)),
-    ?assertEqual({215, 215, 0}, z80_video:border_color(ExtCtx, 40000)),
-    ?assertEqual({215, 215, 0}, z80_video:border_color(ExtCtx, 69887)).
+    ?assertEqual({0, 0, 215}, ezx_video:border_color(ExtCtx, 0)),
+    ?assertEqual({0, 215, 0}, ezx_video:border_color(ExtCtx, 20000)),
+    ?assertEqual({215, 215, 0}, ezx_video:border_color(ExtCtx, 40000)),
+    ?assertEqual({215, 215, 0}, ezx_video:border_color(ExtCtx, 69887)).
 
 
 %% --- Screen pixel tests ---
@@ -57,14 +57,14 @@ screen_pixel_white_on_black_test() ->
     Bin = create_test_screen(16#FF, 16#07),  %% bitmap=all ones, attr=ink7/paper0
     ReadFun = make_read_fun(Bin),
     ExtCtx = make_ext_ctx(Bin),
-    ?assertEqual({215, 215, 215}, z80_video:screen_pixel(ReadFun, ExtCtx, 0, 0)).
+    ?assertEqual({215, 215, 215}, ezx_video:screen_pixel(ReadFun, ExtCtx, 0, 0)).
 
 screen_pixel_black_on_white_test() ->
     %% Bitmap = 0x00 (all zeros = paper), attribute = ink7/paper0
     Bin = create_test_screen(16#00, 16#07),
     ReadFun = make_read_fun(Bin),
     ExtCtx = make_ext_ctx(Bin),
-    ?assertEqual({0, 0, 0}, z80_video:screen_pixel(ReadFun, ExtCtx, 0, 0)).
+    ?assertEqual({0, 0, 0}, ezx_video:screen_pixel(ReadFun, ExtCtx, 0, 0)).
 
 screen_pixel_individual_bits_test() ->
     %% Bitmap byte = 0x80 (bit7=1, rest=0), attribute = ink2(red)/paper4(green)
@@ -73,22 +73,22 @@ screen_pixel_individual_bits_test() ->
     Bin = create_test_screen(16#80, 16#22),  %% ink=2, paper=4
     ReadFun = make_read_fun(Bin),
     ExtCtx = make_ext_ctx(Bin),
-    ?assertEqual({215, 0, 0}, z80_video:screen_pixel(ReadFun, ExtCtx, 0, 0)),
-    ?assertEqual({0, 215, 0}, z80_video:screen_pixel(ReadFun, ExtCtx, 1, 0)).
+    ?assertEqual({215, 0, 0}, ezx_video:screen_pixel(ReadFun, ExtCtx, 0, 0)),
+    ?assertEqual({0, 215, 0}, ezx_video:screen_pixel(ReadFun, ExtCtx, 1, 0)).
 
 screen_pixel_bright_test() ->
     %% Attribute: ink=1(blue), paper=0, BRIGHT=1 -> bright blue
     Bin = create_test_screen(16#FF, 16#41),  %% BRIGHT=1, ink=1
     ReadFun = make_read_fun(Bin),
     ExtCtx = make_ext_ctx(Bin),
-    ?assertEqual({0, 0, 255}, z80_video:screen_pixel(ReadFun, ExtCtx, 0, 0)).
+    ?assertEqual({0, 0, 255}, ezx_video:screen_pixel(ReadFun, ExtCtx, 0, 0)).
 
 screen_pixel_flash_no_effect_test() ->
     %% FLASH bit set, but frame_counter=0 -> no swap
     Bin = create_test_screen(16#FF, 16#87),  %% FLASH=1, ink=7, paper=0
     ReadFun = make_read_fun(Bin),
     ExtCtx = make_ext_ctx(Bin),
-    ?assertEqual({215, 215, 215}, z80_video:screen_pixel(ReadFun, ExtCtx, 0, 0)).
+    ?assertEqual({215, 215, 215}, ezx_video:screen_pixel(ReadFun, ExtCtx, 0, 0)).
 
 screen_pixel_flash_active_test() ->
     %% FLASH=1, frame_counter=16 -> flash active, swap ink/paper
@@ -96,7 +96,7 @@ screen_pixel_flash_active_test() ->
     ReadFun = make_read_fun(Bin),
     ExtCtx = (make_ext_ctx(Bin))#ext_context{frame_counter = 16},
     %% Flash active: ink and paper swap -> pixel is now paper (black)
-    ?assertEqual({0, 0, 0}, z80_video:screen_pixel(ReadFun, ExtCtx, 0, 0)).
+    ?assertEqual({0, 0, 0}, ezx_video:screen_pixel(ReadFun, ExtCtx, 0, 0)).
 
 screen_pixel_flash_period_test() ->
     %% FLASH toggles every 16 frames.
@@ -104,22 +104,22 @@ screen_pixel_flash_period_test() ->
     ReadFun = make_read_fun(Bin),
     %% frame_counter 0-15: no flash (paper=black, pixel on paper=black)
     ExtCtx0 = make_ext_ctx(Bin),
-    ?assertEqual({0, 0, 0}, z80_video:screen_pixel(ReadFun, ExtCtx0, 0, 0)),
+    ?assertEqual({0, 0, 0}, ezx_video:screen_pixel(ReadFun, ExtCtx0, 0, 0)),
     %% frame_counter 16-31: flash active (swap: paper=white, pixel on paper=white)
     ExtCtx16 = ExtCtx0#ext_context{frame_counter = 16},
-    ?assertEqual({215, 215, 215}, z80_video:screen_pixel(ReadFun, ExtCtx16, 0, 0)).
+    ?assertEqual({215, 215, 215}, ezx_video:screen_pixel(ReadFun, ExtCtx16, 0, 0)).
 
 
 %% --- Frame line mapping tests ---
 
 frame_line_for_screen_y_test() ->
-    ?assertEqual(64, z80_video:frame_line_for_screen_y(0)),
-    ?assertEqual(255, z80_video:frame_line_for_screen_y(191)).
+    ?assertEqual(64, ezx_video:frame_line_for_screen_y(0)),
+    ?assertEqual(255, ezx_video:frame_line_for_screen_y(191)).
 
 tstate_for_frame_line_test() ->
-    ?assertEqual(0, z80_video:tstate_for_frame_line(0)),
-    ?assertEqual(224, z80_video:tstate_for_frame_line(1)),
-    ?assertEqual(14336, z80_video:tstate_for_frame_line(64)).
+    ?assertEqual(0, ezx_video:tstate_for_frame_line(0)),
+    ?assertEqual(224, ezx_video:tstate_for_frame_line(1)),
+    ?assertEqual(14336, ezx_video:tstate_for_frame_line(64)).
 
 
 %% --- Internal helpers ---
