@@ -39,7 +39,7 @@ run(State, N) ->
     run(step(State), N - 1).
 
 %% @doc Queue an interrupt request for the next CPU step.
--spec request_interrupt(#cpu_state{}, irq | nmi) -> #cpu_state{}.
+-spec request_interrupt(#cpu_state{}, int | nmi) -> #cpu_state{}.
 request_interrupt(#cpu_state{} = State, Type) ->
     State#cpu_state{pending_interrupt = Type}.
 
@@ -55,15 +55,15 @@ step(#cpu_state{} = State) ->
 maybe_handle_interrupt(State = #cpu_state{pending_interrupt = none}) ->
     {not_handled, State};
 
-maybe_handle_interrupt(State = #cpu_state{pending_interrupt = irq, iff1 = Iff1})
+maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, iff1 = Iff1})
   when Iff1 =:= 0 ->
     {not_handled, State};
 
-maybe_handle_interrupt(State = #cpu_state{pending_interrupt = irq, ei_block = EiBlock})
+maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, ei_block = EiBlock})
   when EiBlock > 0 ->
     {not_handled, State#cpu_state{ei_block = EiBlock - 1}}; 
 
-maybe_handle_interrupt(State = #cpu_state{pending_interrupt = irq}) ->
+maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int}) ->
     State1 = z80_cpu_helpers:push_word(State, State#cpu_state.pc),
     State2 = State1#cpu_state{
         pc = 16#0038,

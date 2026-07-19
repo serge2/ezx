@@ -21,7 +21,7 @@ ld_bc_nn_test() ->
 interrupt_test() ->
     Cpu0 = test_helpers:init_cpu(),
     Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, pc = 16#1000},
-    Cpu2 = z80_cpu:request_interrupt(Cpu1, irq),
+    Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
     Cpu3 = z80_cpu:step(Cpu2),
     ?assertEqual(16#0038, z80_cpu:pc(Cpu3)),
     ?assertEqual(0, Cpu3#cpu_state.iff1),

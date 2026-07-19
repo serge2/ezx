@@ -9,7 +9,7 @@ interrupt_test() ->
     Cpu0 = test_helpers:init_cpu(),
     Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, pc = 16#1000},
     Cpu2 = test_helpers:write_mem(Cpu1, 16#0038, 16#00),  %% NOP at IRQ vector
-    Cpu3 = z80_cpu:request_interrupt(Cpu2, irq),
+    Cpu3 = z80_cpu:request_interrupt(Cpu2, int),
     Cpu4 = z80_cpu:step(Cpu3),
     ?assertEqual(16#0038, z80_cpu:pc(Cpu4)),
     ?assertEqual(0, Cpu4#cpu_state.iff1),
@@ -38,7 +38,7 @@ nmi_does_not_require_iff1_test() ->
 irq_ignored_when_iff1_zero_test() ->
     Cpu0 = test_helpers:init_cpu(),
     Cpu1 = Cpu0#cpu_state{iff1 = 0, iff2 = 0, pc = 16#1000},
-    Cpu2 = z80_cpu:request_interrupt(Cpu1, irq),
+    Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
     Cpu3 = z80_cpu:step(Cpu2),
     %% IRQ should be ignored, continue with next instruction (NOP at 0x1000)
     ?assertEqual(16#1001, z80_cpu:pc(Cpu3)),
@@ -68,7 +68,7 @@ ei_blocks_interrupt_until_next_instruction_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 16#0038, 16#00),  %% NOP at IRQ vector
     Cpu3 = test_helpers:write_mem(Cpu2, 16#1000, 16#FB),  %% EI
     Cpu4 = test_helpers:write_mem(Cpu3, 16#1001, 16#00),  %% NOP
-    Cpu5 = z80_cpu:request_interrupt(Cpu4, irq),
+    Cpu5 = z80_cpu:request_interrupt(Cpu4, int),
     Cpu6 = z80_cpu:step(Cpu5),
     %% EI executed, interrupt should be pending but blocked until next instruction
     ?assertEqual(16#1001, z80_cpu:pc(Cpu6)),

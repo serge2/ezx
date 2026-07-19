@@ -7,6 +7,7 @@
     init/0,
     init/2,
     step/1,
+    run_frame/1,
     load_program/2,
     run_until_tstates/2,
     read_byte/2,
@@ -17,6 +18,7 @@
 
 %% ZX Spectrum frame length in T-states.
 -define(TSTATES_PER_FRAME, 69888).
+-define(INT_TSTATE, 32).
 -define(DEFAULT_BORDER, 1).
 
 init() ->
@@ -124,6 +126,32 @@ step(#machine_state{t_states = MachineTStates} = Machine) ->
         memory = Memory1,
         t_states = NewMachineTStates,
         border_changes = MergedChanges
+    }.
+
+%% @doc Execute one complete frame (69888 T-states).
+%% Two-phase execution:
+%%   Phase 1: 0..31 T-states — normal execution (no interrupt)
+%%   Phase 2: 32..69887 T-states — interrupt raised at boundary, then normal execution
+%% Frame boundary is ignored mid-instruction (variant A).
+-spec run_frame(#machine_state{}) -> #machine_state{}.
+run_frame(#machine_state{t_states = StartT} = Machine) ->
+    %% Phase 1: run to interrupt point (T = StartT + 32).
+    Phase1End = StartT + ?INT_TSTATE,
+    Machine1 = run_until_tstates(Machine, Phase1End),
+
+    %% Raise INT at the boundary.
+    Cpu1 = Machine1#machine_state.cpu,
+    Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
+    Machine2 = Machine1#machine_state{cpu = Cpu2},
+
+    %% Phase 2: run to end of frame (T = StartT + 69888).
+    Phase2End = StartT + ?TSTATES_PER_FRAME,
+    Machine3 = run_until_tstates(Machine2, Phase2End),
+
+    %% Reset T-states to 0 (start of next frame).
+    Machine3#machine_state{
+        t_states = 0,
+        border_changes = []
     }.
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.

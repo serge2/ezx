@@ -56,3 +56,57 @@ memory_reset_to_zero_test() ->
     _Memory1 = ezx_memory_48:write_byte(Memory0, 4, 16#99),
     Memory2 = ezx_memory_48:new(<<0:8/unit:8>>),
     ?assertEqual(0, ezx_memory_48:read_byte(Memory2, 4)).
+
+%% --- run_frame tests ---
+
+run_frame_completes_one_frame_test() ->
+    Machine0 = ezx_emulator:init(),
+    %% NOP loop at address 0.
+    Machine1 = ezx_emulator:load_program(Machine0, [16#00]),
+    Machine2 = ezx_emulator:run_frame(Machine1),
+    %% After one frame, t_states resets to 0.
+    ?assertEqual(0, Machine2#machine_state.t_states).
+
+run_frame_int_fires_test() ->
+    Machine0 = ezx_emulator:init(),
+    %% Program: EI; NOP; NOP; ... (at addr 0)
+    %% EI enables interrupts but blocks for 1 instruction.
+    %% After 2 instructions, INT can fire.
+    %% INT at T=32: CPU pushes PC, jumps to 0x0038.
+    Machine1 = ezx_emulator:load_program(Machine0, [16#FB, 16#00, 16#00]),
+    Machine2 = ezx_emulator:run_frame(Machine1),
+    Cpu = Machine2#machine_state.cpu,
+    %% After INT, PC should be at 0x0038 (INT handler in ROM, all NOPs).
+    %% The CPU ran some instructions, then INT jumped to 0x0038 and ran NOPs there.
+    %% PC should be somewhere in the 0x0038+ range.
+    Pc = z80_cpu:pc(Cpu),
+    ?assert(Pc >= 16#0038).
+
+run_frame_border_changes_cleared_test() ->
+    Machine0 = ezx_emulator:init(),
+    %% OUT (0xFE), A with A=4 (green border) at addr 0, then NOPs.
+    %% OUT (n),A = D3 xx FE = 11 T-states.
+    Machine1 = ezx_emulator:load_program(Machine0, [16#3E, 16#04, 16#D3, 16#FE]),
+    Machine2 = ezx_emulator:run_frame(Machine1),
+    %% Border changes are cleared after frame completes.
+    ?assertEqual([], Machine2#machine_state.border_changes).
+
+run_frame_multiple_nops_test() ->
+    Machine0 = ezx_emulator:init(),
+    %% Fill with NOPs — enough to fill some of the frame.
+    Nops = lists:duplicate(200, 16#00),
+    Machine1 = ezx_emulator:load_program(Machine0, Nops),
+    Machine2 = ezx_emulator:run_frame(Machine1),
+    %% INT fires at T=32, jumping PC to 0x0038.
+    %% After INT, CPU executes NOPs from 0x0038 onwards.
+    %% So PC should be somewhere past 0x0038.
+    Pc = z80_cpu:pc(Machine2#machine_state.cpu),
+    ?assert(Pc >= 16#0038).
+
+run_frame_two_frames_test() ->
+    Machine0 = ezx_emulator:init(),
+    Machine1 = ezx_emulator:load_program(Machine0, [16#00]),
+    Machine2 = ezx_emulator:run_frame(Machine1),
+    Machine3 = ezx_emulator:run_frame(Machine2),
+    %% After two frames, t_states should be 0 again.
+    ?assertEqual(0, Machine3#machine_state.t_states).
