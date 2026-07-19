@@ -418,13 +418,17 @@ execute_ini(State, Repeat) ->
     B = State#cpu_state.b,
     HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
     NewB = (B - 1) band 16#FF,
-    Val = 16#FF,
-    State1 = z80_cpu_helpers:write_byte(State, HL, Val),
+    Port = State#cpu_state.c,
+    PortReadFun = State#cpu_state.port_read_fun,
+    ExtCtx = State#cpu_state.ext_context,
+    {Val, NewExtCtx} = PortReadFun(ExtCtx, Port),
+    Val8 = Val band 16#FF,
+    State1 = z80_cpu_helpers:write_byte(State#cpu_state{ext_context = NewExtCtx}, HL, Val8),
     NewHL = (HL + 1) band 16#FFFF,
-    F_S = Val band 16#80,
+    F_S = Val8 band 16#80,
     F_Z = if NewB =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
-    F_V = if ((Val bor NewB) band 16#07) =/= 0 -> 0; true -> ?FLAG_V end,
+    F_V = if ((Val8 bor NewB) band 16#07) =/= 0 -> 0; true -> ?FLAG_V end,
     F_N = 1,
     F_C = State#cpu_state.f band ?FLAG_C,
     NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
@@ -439,13 +443,17 @@ execute_ind(State, Repeat) ->
     B = State#cpu_state.b,
     HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
     NewB = (B - 1) band 16#FF,
-    Val = 16#FF,
-    State1 = z80_cpu_helpers:write_byte(State, HL, Val),
+    Port = State#cpu_state.c,
+    PortReadFun = State#cpu_state.port_read_fun,
+    ExtCtx = State#cpu_state.ext_context,
+    {Val, NewExtCtx} = PortReadFun(ExtCtx, Port),
+    Val8 = Val band 16#FF,
+    State1 = z80_cpu_helpers:write_byte(State#cpu_state{ext_context = NewExtCtx}, HL, Val8),
     NewHL = (HL - 1) band 16#FFFF,
-    F_S = Val band 16#80,
+    F_S = Val8 band 16#80,
     F_Z = if NewB =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
-    F_V = if ((Val bor NewB) band 16#07) =/= 0 -> 0; true -> ?FLAG_V end,
+    F_V = if ((Val8 bor NewB) band 16#07) =/= 0 -> 0; true -> ?FLAG_V end,
     F_N = 1,
     F_C = State#cpu_state.f band ?FLAG_C,
     NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
@@ -468,6 +476,10 @@ execute_outi(State, Repeat) ->
     NewB = (B - 1) band 16#FF,
     {Val, State1} = z80_cpu_helpers:read_byte(State, HL),
     NewHL = (HL + 1) band 16#FFFF,
+    Port = State1#cpu_state.c,
+    PortWriteFun = State1#cpu_state.port_write_fun,
+    ExtCtx = State1#cpu_state.ext_context,
+    NewExtCtx = PortWriteFun(ExtCtx, Port, Val),
     F_S = Val band 16#80,
     F_Z = if NewB =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
@@ -478,7 +490,7 @@ execute_outi(State, Repeat) ->
     TAdd = if Repeat andalso NewB =/= 0 -> 13; true -> 8 end,
     State2 = State1#cpu_state{
         b = NewB, h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
-        f = NewFlags
+        f = NewFlags, ext_context = NewExtCtx
     },
     z80_cpu_helpers:advance_tstates(State2, TAdd).
 
@@ -488,6 +500,10 @@ execute_outd(State, Repeat) ->
     NewB = (B - 1) band 16#FF,
     {Val, State1} = z80_cpu_helpers:read_byte(State, HL),
     NewHL = (HL - 1) band 16#FFFF,
+    Port = State1#cpu_state.c,
+    PortWriteFun = State1#cpu_state.port_write_fun,
+    ExtCtx = State1#cpu_state.ext_context,
+    NewExtCtx = PortWriteFun(ExtCtx, Port, Val),
     F_S = Val band 16#80,
     F_Z = if NewB =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
@@ -498,7 +514,7 @@ execute_outd(State, Repeat) ->
     TAdd = if Repeat andalso NewB =/= 0 -> 13; true -> 8 end,
     State2 = State1#cpu_state{
         b = NewB, h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
-        f = NewFlags
+        f = NewFlags, ext_context = NewExtCtx
     },
     z80_cpu_helpers:advance_tstates(State2, TAdd).
 
@@ -529,9 +545,11 @@ execute_ed_in_out(Opcode, State) ->
 
 %% IN r,(C): read from port C, store in r - 12 T-states total (8 base + 4 added)
 execute_ed_in_r_c(State, Reg) ->
-    _Port = State#cpu_state.c,
-    Val = 16#FF,
-    State1 = z80_cpu_helpers:set_reg_byte(Reg, Val, State),
+    Port = State#cpu_state.c,
+    PortReadFun = State#cpu_state.port_read_fun,
+    ExtCtx = State#cpu_state.ext_context,
+    {Val, NewExtCtx} = PortReadFun(ExtCtx, Port),
+    State1 = z80_cpu_helpers:set_reg_byte(Reg, Val band 16#FF, State#cpu_state{ext_context = NewExtCtx}),
     Flags = State1#cpu_state.f band 16#E7,
     F_S = Val band 16#80,
     F_Z = if Val =:= 0 -> ?FLAG_Z; true -> 0 end,
@@ -543,8 +561,10 @@ execute_ed_in_r_c(State, Reg) ->
 
 %% IN (C) / IN F,(C): 12 T-states (flags affected, result discarded)
 execute_ed_in_f_c(State) ->
-    _Port = State#cpu_state.c,
-    Val = 16#FF,
+    Port = State#cpu_state.c,
+    PortReadFun = State#cpu_state.port_read_fun,
+    ExtCtx = State#cpu_state.ext_context,
+    {Val, NewExtCtx} = PortReadFun(ExtCtx, Port),
     Flags = State#cpu_state.f band 16#E7,
     F_S = Val band 16#80,
     F_Z = if Val =:= 0 -> ?FLAG_Z; true -> 0 end,
@@ -552,15 +572,24 @@ execute_ed_in_f_c(State) ->
     F_V = z80_cpu_helpers:parity(Val),
     F_N = 0,
     NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N,
-    z80_cpu_helpers:advance_tstates(State#cpu_state{f = NewFlags}, 4).
+    z80_cpu_helpers:advance_tstates(State#cpu_state{f = NewFlags, ext_context = NewExtCtx}, 4).
 
 %% OUT (C),r implementation
-execute_ed_out_c_r(State, _Reg) ->
-    z80_cpu_helpers:advance_tstates(State, 4).
+execute_ed_out_c_r(State, Reg) ->
+    Port = State#cpu_state.c,
+    Val = z80_cpu_helpers:get_reg_byte(Reg, State),
+    PortWriteFun = State#cpu_state.port_write_fun,
+    ExtCtx = State#cpu_state.ext_context,
+    NewExtCtx = PortWriteFun(ExtCtx, Port, Val),
+    z80_cpu_helpers:advance_tstates(State#cpu_state{ext_context = NewExtCtx}, 4).
 
 %% OUT (C),0: 12 T-states total (8 base + 4 added)
 execute_ed_out_c_0(State) ->
-    z80_cpu_helpers:advance_tstates(State, 4).
+    Port = State#cpu_state.c,
+    PortWriteFun = State#cpu_state.port_write_fun,
+    ExtCtx = State#cpu_state.ext_context,
+    NewExtCtx = PortWriteFun(ExtCtx, Port, 0),
+    z80_cpu_helpers:advance_tstates(State#cpu_state{ext_context = NewExtCtx}, 4).
 
 %% ADC HL,rr / SBC HL,rr dispatcher
 execute_ed_adc_sbc_hl(Opcode, State) ->

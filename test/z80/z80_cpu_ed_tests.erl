@@ -13,7 +13,7 @@ ed_rrd_test() ->
     Cpu4 = Cpu3#cpu_state{a = 16#00, h = 16#40, l = 16#00},
     Cpu5 = z80_cpu:step(Cpu4),
     ?assertEqual(16#04, Cpu5#cpu_state.a),
-    ?assertEqual(16#03, z80_cpu_mem:read_byte(Cpu5#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#03, test_helpers:read_mem(Cpu5, 16#4000)),
     ?assertEqual(18, z80_cpu:t_states(Cpu5)).
 
 ed_rld_test() ->
@@ -24,7 +24,7 @@ ed_rld_test() ->
     Cpu4 = Cpu3#cpu_state{a = 16#00, h = 16#40, l = 16#00},
     Cpu5 = z80_cpu:step(Cpu4),
     ?assertEqual(16#03, Cpu5#cpu_state.a),
-    ?assertEqual(16#40, z80_cpu_mem:read_byte(Cpu5#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#40, test_helpers:read_mem(Cpu5, 16#4000)),
     ?assertEqual(18, z80_cpu:t_states(Cpu5)).
 
 %% --- ED LD A,I / LD A,R / LD I,A / LD R,A ---
@@ -266,7 +266,7 @@ ed_ldir_test() ->
     ?assertEqual(16#5001, z80_cpu:get_reg_pair(de, Cpu6)),
     ?assertEqual(16#0001, z80_cpu:get_reg_pair(bc, Cpu6)),
     ?assertEqual(16#04, Cpu6#cpu_state.f band 16#04),
-    ?assertEqual(16#11, z80_cpu_mem:read_byte(Cpu6#cpu_state.ext_context, 16#5000)),
+    ?assertEqual(16#11, test_helpers:read_mem(Cpu6, 16#5000)),
     ?assertEqual(21, z80_cpu:t_states(Cpu6)).
 
 ed_lddr_test() ->
@@ -280,7 +280,7 @@ ed_lddr_test() ->
     ?assertEqual(16#4000, z80_cpu:get_reg_pair(hl, Cpu6)),
     ?assertEqual(16#5000, z80_cpu:get_reg_pair(de, Cpu6)),
     ?assertEqual(16#0001, z80_cpu:get_reg_pair(bc, Cpu6)),
-    ?assertEqual(16#22, z80_cpu_mem:read_byte(Cpu6#cpu_state.ext_context, 16#5001)),
+    ?assertEqual(16#22, test_helpers:read_mem(Cpu6, 16#5001)),
     ?assertEqual(21, z80_cpu:t_states(Cpu6)).
 
 %% --- ED Block Search: CPI, CPD, CPIR, CPDR ---
@@ -344,7 +344,7 @@ ed_ini_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#A2),  %% INI
     Cpu3 = Cpu2#cpu_state{b = 0, c = 16#10, h = 16#40, l = 16#00},
     Cpu4 = z80_cpu:step(Cpu3),
-    ?assertEqual(16#FF, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu4, 16#4000)),
     ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu4)),
     ?assertEqual(16#FF, Cpu4#cpu_state.b),
     ?assertEqual(16, z80_cpu:t_states(Cpu4)).
@@ -355,7 +355,7 @@ ed_ind_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#AA),  %% IND
     Cpu3 = Cpu2#cpu_state{b = 0, c = 16#10, h = 16#40, l = 16#01},
     Cpu4 = z80_cpu:step(Cpu3),
-    ?assertEqual(16#FF, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#4001)),
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu4, 16#4001)),
     ?assertEqual(16#4000, z80_cpu:get_reg_pair(hl, Cpu4)),
     ?assertEqual(16#FF, Cpu4#cpu_state.b),
     ?assertEqual(16, z80_cpu:t_states(Cpu4)).
@@ -366,7 +366,7 @@ ed_inir_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#B2),  %% INIR
     Cpu3 = Cpu2#cpu_state{b = 16#02, c = 16#10, h = 16#40, l = 16#00},
     Cpu4 = z80_cpu:step(Cpu3),
-    ?assertEqual(16#FF, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu4, 16#4000)),
     ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu4)),
     ?assertEqual(16#01, Cpu4#cpu_state.b),
     ?assertEqual(21, z80_cpu:t_states(Cpu4)).

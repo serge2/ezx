@@ -242,8 +242,8 @@ call_nn_test() ->
     Cpu5 = z80_cpu:step(Cpu4),
     ?assertEqual(16#8000, z80_cpu:pc(Cpu5)),
     ?assertEqual(16#0FFE, Cpu5#cpu_state.sp),
-    ?assertEqual(16#03, z80_cpu_mem:read_byte(Cpu5#cpu_state.ext_context, 16#0FFE)),  %% Low byte of PC=3
-    ?assertEqual(16#00, z80_cpu_mem:read_byte(Cpu5#cpu_state.ext_context, 16#0FFF)).  %% High byte of PC=3
+    ?assertEqual(16#03, test_helpers:read_mem(Cpu5, 16#0FFE)),  %% Low byte of PC=3
+    ?assertEqual(16#00, test_helpers:read_mem(Cpu5, 16#0FFF)).  %% High byte of PC=3
 
 call_nz_taken_test() ->
     Cpu0 = test_helpers:init_cpu(),

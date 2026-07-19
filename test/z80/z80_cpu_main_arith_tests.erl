@@ -217,7 +217,7 @@ inc_mem_hl_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#34),  %% INC (HL)
     Cpu3 = Cpu2#cpu_state{h = 16#40, l = 16#00},
     Cpu4 = z80_cpu:step(Cpu3),
-    ?assertEqual(16#11, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#11, test_helpers:read_mem(Cpu4, 16#4000)).
 
 inc_mem_hl_zero_flag_test() ->
     Cpu0 = test_helpers:init_cpu(),
@@ -225,7 +225,7 @@ inc_mem_hl_zero_flag_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#34),  %% INC (HL)
     Cpu3 = Cpu2#cpu_state{h = 16#40, l = 16#00},
     Cpu4 = z80_cpu:step(Cpu3),
-    ?assertEqual(16#00, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#00, test_helpers:read_mem(Cpu4, 16#4000)),
     ?assertEqual(?FLAG_Z, Cpu4#cpu_state.f band ?FLAG_Z).
 
 inc_bc_test() ->
@@ -279,7 +279,7 @@ dec_mem_hl_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#35),  %% DEC (HL)
     Cpu3 = Cpu2#cpu_state{h = 16#40, l = 16#00},
     Cpu4 = z80_cpu:step(Cpu3),
-    ?assertEqual(16#0F, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#0F, test_helpers:read_mem(Cpu4, 16#4000)).
 
 dec_mem_hl_half_carry_test() ->
     Cpu0 = test_helpers:init_cpu(),

@@ -15,6 +15,10 @@
     write_word/3
 ]).
 
+%% ZX Spectrum frame length in T-states.
+-define(TSTATES_PER_FRAME, 69888).
+-define(DEFAULT_BORDER, 1).
+
 init() ->
     init(ezx_memory_48, <<0:65536/unit:8>>).
 
@@ -33,8 +37,28 @@ init(Mem, Rom) ->
             NewMem = Mem:write_byte(Memory, Addr band 16#ffff, Byte band 16#ff),
             ExtContext#ext_context{memory = NewMem}
         end,
+    PortReadFun =
+        fun(ExtContext, _Port) ->
+            {16#FF, ExtContext}
+        end,
+    PortWriteFun =
+        fun(ExtContext, Port, Byte) ->
+            case Port band 16#FF of
+                16#FE ->
+                    BorderColor = Byte band 16#07,
+                    TState = ExtContext#ext_context.t_states,
+                    Changes = ExtContext#ext_context.border_changes,
+                    ExtContext#ext_context{
+                        border_changes = [{TState, BorderColor} | Changes]
+                    };
+                _ ->
+                    ExtContext
+            end
+        end,
+    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun),
+    Cpu1 = Cpu0#cpu_state{port_read_fun = PortReadFun, port_write_fun = PortWriteFun},
     #machine_state{
-        cpu = z80_cpu:init_state(MemReadFun, MemWriteFun),
+        cpu = Cpu1,
         memory = Mem:new(Rom),
         mem_read_fun = MemReadFun,
         mem_write_fun = MemWriteFun
@@ -78,17 +102,28 @@ write_word(Machine, Addr, Word) ->
 
 %% @doc Execute one machine step by advancing the CPU once and updating machine time.
 -spec step(#machine_state{}) -> #machine_state{}.
-step(Machine) ->
+step(#machine_state{t_states = MachineTStates} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
     Memory0 = Machine#machine_state.memory,
-    ExtContext0 = #ext_context{memory = Memory0},
+    %% Build ext_context with current frame position so port callbacks can timestamp events.
+    ExtContext0 = #ext_context{
+        memory = Memory0,
+        t_states = MachineTStates,
+        frame_counter = MachineTStates div ?TSTATES_PER_FRAME,
+        border_changes = []
+    },
     Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = 0}),
     Ticks = Cpu1#cpu_state.t_states,
+    NewMachineTStates = MachineTStates + Ticks,
     Memory1 = Cpu1#cpu_state.ext_context#ext_context.memory,
+    %% Propagate border_changes accumulated during this step.
+    StepChanges = Cpu1#cpu_state.ext_context#ext_context.border_changes,
+    MergedChanges = merge_border_changes(Machine#machine_state.border_changes, StepChanges),
     Machine#machine_state{
-        cpu = Cpu1#cpu_state{t_states = Machine#machine_state.t_states + Ticks},
+        cpu = Cpu1#cpu_state{t_states = NewMachineTStates},
         memory = Memory1,
-        t_states = Machine#machine_state.t_states + Ticks
+        t_states = NewMachineTStates,
+        border_changes = MergedChanges
     }.
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.
@@ -100,3 +135,15 @@ run_until_tstates(Machine, Target) ->
         true -> Machine;
         false -> run_until_tstates(step(Machine), Target)
     end.
+
+
+%% --- Internal ---
+
+%% Merge border changes from a step into the accumulated list.
+%% Both lists are newest-first (prepended). We append step changes to the front.
+merge_border_changes(Existing, []) ->
+    Existing;
+merge_border_changes(Existing, StepChanges) ->
+    %% StepChanges are in reverse order (newest first within the step).
+    %% We want to prepend them so the combined list remains newest-first.
+    StepChanges ++ Existing.

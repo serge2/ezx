@@ -57,8 +57,8 @@ dd_push_ix_test() ->
     Cpu3 = Cpu2#cpu_state{ixh = 16#12, ixl = 16#34, sp = 16#FF00},
     Cpu4 = z80_cpu:step(Cpu3),
     ?assertEqual(16#FEFE, Cpu4#cpu_state.sp),
-    ?assertEqual(16#34, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#FEFE)),
-    ?assertEqual(16#12, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#FEFF)),
+    ?assertEqual(16#34, test_helpers:read_mem(Cpu4, 16#FEFE)),
+    ?assertEqual(16#12, test_helpers:read_mem(Cpu4, 16#FEFF)),
     ?assertEqual(2, z80_cpu:pc(Cpu4)),
     ?assertEqual(15, z80_cpu:t_states(Cpu4)).
 
@@ -140,8 +140,8 @@ fd_push_iy_test() ->
     Cpu3 = Cpu2#cpu_state{iyh = 16#12, iyl = 16#34, sp = 16#FF00},
     Cpu4 = z80_cpu:step(Cpu3),
     ?assertEqual(16#FEFE, Cpu4#cpu_state.sp),
-    ?assertEqual(16#34, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#FEFE)),
-    ?assertEqual(16#12, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#FEFF)),
+    ?assertEqual(16#34, test_helpers:read_mem(Cpu4, 16#FEFE)),
+    ?assertEqual(16#12, test_helpers:read_mem(Cpu4, 16#FEFF)),
     ?assertEqual(2, z80_cpu:pc(Cpu4)),
     ?assertEqual(15, z80_cpu:t_states(Cpu4)).
 
@@ -439,8 +439,8 @@ dd_ex_sp_ix_test() ->
     ?assertEqual(16#34, Cpu6#cpu_state.ixh),
     ?assertEqual(16#12, Cpu6#cpu_state.ixl),
     %% Stack should get old IX value (0x5678) -> 0x78 at FF00, 0x56 at FF01
-    ?assertEqual(16#78, z80_cpu_mem:read_byte(Cpu6#cpu_state.ext_context, 16#FF00)),
-    ?assertEqual(16#56, z80_cpu_mem:read_byte(Cpu6#cpu_state.ext_context, 16#FF01)),
+    ?assertEqual(16#78, test_helpers:read_mem(Cpu6, 16#FF00)),
+    ?assertEqual(16#56, test_helpers:read_mem(Cpu6, 16#FF01)),
     ?assertEqual(none, Cpu6#cpu_state.prefix),
     ?assertEqual(23, z80_cpu:t_states(Cpu6)).
 
@@ -458,8 +458,8 @@ fd_ex_sp_iy_test() ->
     ?assertEqual(16#BC, Cpu6#cpu_state.iyh),
     ?assertEqual(16#9A, Cpu6#cpu_state.iyl),
     %% Stack should get old IY value (0xDEF0) -> 0xF0 at FF00, 0xDE at FF01
-    ?assertEqual(16#F0, z80_cpu_mem:read_byte(Cpu6#cpu_state.ext_context, 16#FF00)),
-    ?assertEqual(16#DE, z80_cpu_mem:read_byte(Cpu6#cpu_state.ext_context, 16#FF01)),
+    ?assertEqual(16#F0, test_helpers:read_mem(Cpu6, 16#FF00)),
+    ?assertEqual(16#DE, test_helpers:read_mem(Cpu6, 16#FF01)),
     ?assertEqual(none, Cpu6#cpu_state.prefix),
     ?assertEqual(23, z80_cpu:t_states(Cpu6)).
 
@@ -509,5 +509,5 @@ dd_ld_mem_ix_r_test() ->
     Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#03),  %% displacement +3
     Cpu4 = Cpu3#cpu_state{ixh = 16#40, ixl = 16#00, b = 16#EE},
     Cpu5 = z80_cpu:step(Cpu4),
-    ?assertEqual(16#EE, z80_cpu_mem:read_byte(Cpu5#cpu_state.ext_context, 16#4003)),
+    ?assertEqual(16#EE, test_helpers:read_mem(Cpu5, 16#4003)),
     ?assertEqual(none, Cpu5#cpu_state.prefix).

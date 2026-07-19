@@ -6,9 +6,13 @@
     mem_read_fun = undefined,
     mem_write_fun = undefined,
     pending_interrupt = none,
-    t_states = 0
+    t_states = 0,
+    border_changes = []
 }).
 
 -record(ext_context, {
-    memory = undefined
+    memory = undefined,
+    t_states = 0,
+    frame_counter = 0,
+    border_changes = []
 }).

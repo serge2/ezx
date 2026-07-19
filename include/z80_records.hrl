@@ -36,6 +36,8 @@
     ext_context = undefined,
     mem_read_fun = undefined,
     mem_write_fun = undefined,
+    port_read_fun = undefined,
+    port_write_fun = undefined,
     pending_interrupt = none :: none | nmi | int
 }).
 

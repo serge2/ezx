@@ -1061,12 +1061,20 @@ execute_cp_a(State) ->
     z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(a, State)).
 
 execute_out_n_a(State) ->
-    {_, State1} = z80_cpu_helpers:fetch_byte(State),
-    z80_cpu_helpers:advance_tstates(State1, 4).
+    {Port, State1} = z80_cpu_helpers:fetch_byte(State),
+    PortWriteFun = State1#cpu_state.port_write_fun,
+    ExtCtx = State1#cpu_state.ext_context,
+    NewExtCtx = PortWriteFun(ExtCtx, Port, State1#cpu_state.a),
+    State2 = State1#cpu_state{ext_context = NewExtCtx},
+    z80_cpu_helpers:advance_tstates(State2, 4).
 
 execute_in_a_n(State) ->
-    {_, State1} = z80_cpu_helpers:fetch_byte(State),
-    z80_cpu_helpers:advance_tstates(State1, 4).
+    {Port, State1} = z80_cpu_helpers:fetch_byte(State),
+    PortReadFun = State1#cpu_state.port_read_fun,
+    ExtCtx = State1#cpu_state.ext_context,
+    {Val, NewExtCtx} = PortReadFun(ExtCtx, Port),
+    State2 = State1#cpu_state{a = Val, ext_context = NewExtCtx},
+    z80_cpu_helpers:advance_tstates(State2, 4).
 
 %% --- Core Jump, Call, Return Group Helpers with Timing Control ---
 

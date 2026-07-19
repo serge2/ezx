@@ -11,8 +11,8 @@ push_bc_test() ->
     Cpu2 = Cpu1#cpu_state{b = 16#12, c = 16#34, sp = 16#FF00},
     Cpu3 = z80_cpu:step(Cpu2),
     ?assertEqual(16#FEFE, Cpu3#cpu_state.sp),
-    ?assertEqual(16#34, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#FEFE)),
-    ?assertEqual(16#12, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#FEFF)),
+    ?assertEqual(16#34, test_helpers:read_mem(Cpu3, 16#FEFE)),
+    ?assertEqual(16#12, test_helpers:read_mem(Cpu3, 16#FEFF)),
     ?assertEqual(11, z80_cpu:t_states(Cpu3)).
 
 push_de_test() ->
@@ -21,8 +21,8 @@ push_de_test() ->
     Cpu2 = Cpu1#cpu_state{d = 16#56, e = 16#78, sp = 16#FF00},
     Cpu3 = z80_cpu:step(Cpu2),
     ?assertEqual(16#FEFE, Cpu3#cpu_state.sp),
-    ?assertEqual(16#78, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#FEFE)),
-    ?assertEqual(16#56, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#FEFF)).
+    ?assertEqual(16#78, test_helpers:read_mem(Cpu3, 16#FEFE)),
+    ?assertEqual(16#56, test_helpers:read_mem(Cpu3, 16#FEFF)).
 
 push_hl_test() ->
     Cpu0 = test_helpers:init_cpu(),
@@ -30,8 +30,8 @@ push_hl_test() ->
     Cpu2 = Cpu1#cpu_state{h = 16#9A, l = 16#BC, sp = 16#FF00},
     Cpu3 = z80_cpu:step(Cpu2),
     ?assertEqual(16#FEFE, Cpu3#cpu_state.sp),
-    ?assertEqual(16#BC, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#FEFE)),
-    ?assertEqual(16#9A, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#FEFF)).
+    ?assertEqual(16#BC, test_helpers:read_mem(Cpu3, 16#FEFE)),
+    ?assertEqual(16#9A, test_helpers:read_mem(Cpu3, 16#FEFF)).
 
 push_af_test() ->
     Cpu0 = test_helpers:init_cpu(),
@@ -39,8 +39,8 @@ push_af_test() ->
     Cpu2 = Cpu1#cpu_state{a = 16#DE, f = 16#F0, sp = 16#FF00},
     Cpu3 = z80_cpu:step(Cpu2),
     ?assertEqual(16#FEFE, Cpu3#cpu_state.sp),
-    ?assertEqual(16#F0, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#FEFE)),
-    ?assertEqual(16#DE, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#FEFF)).
+    ?assertEqual(16#F0, test_helpers:read_mem(Cpu3, 16#FEFE)),
+    ?assertEqual(16#DE, test_helpers:read_mem(Cpu3, 16#FEFF)).
 
 push_sp_test() ->
     Cpu0 = test_helpers:init_cpu(),
@@ -201,5 +201,5 @@ rst_00_test() ->
     Cpu3 = z80_cpu:step(Cpu2),
     ?assertEqual(16#0000, z80_cpu:pc(Cpu3)),
     ?assertEqual(16#0FFE, Cpu3#cpu_state.sp),
-    ?assertEqual(16#06, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#0FFE)),  %% Low byte of pushed PC=6
-    ?assertEqual(16#00, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#0FFF)).  %% High byte of pushed PC=6
+    ?assertEqual(16#06, test_helpers:read_mem(Cpu3, 16#0FFE)),  %% Low byte of pushed PC=6
+    ?assertEqual(16#00, test_helpers:read_mem(Cpu3, 16#0FFF)).  %% High byte of pushed PC=6

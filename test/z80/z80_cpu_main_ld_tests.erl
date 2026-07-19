@@ -141,7 +141,7 @@ ld_mem_hl_b_test() ->
     Cpu0 = Cpu0_init#cpu_state{h = 16#40, l = 16#00, b = 16#55},
     Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#70),  %% LD (HL),B
     Cpu2 = z80_cpu:step(Cpu1),
-    ?assertEqual(16#55, z80_cpu_mem:read_byte(Cpu2#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#55, test_helpers:read_mem(Cpu2, 16#4000)),
     ?assertEqual(1, z80_cpu:pc(Cpu2)).
 
 ld_mem_hl_a_test() ->
@@ -149,7 +149,7 @@ ld_mem_hl_a_test() ->
     Cpu0 = Cpu0_init#cpu_state{h = 16#40, l = 16#00, a = 16#AA},
     Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#77),  %% LD (HL),A
     Cpu2 = z80_cpu:step(Cpu1),
-    ?assertEqual(16#AA, z80_cpu_mem:read_byte(Cpu2#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#AA, test_helpers:read_mem(Cpu2, 16#4000)).
 
 %% --- LD (HL),n Test ---
 
@@ -159,7 +159,7 @@ ld_mem_hl_n_test() ->
     Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#36),  %% LD (HL),n
     Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#77),
     Cpu3 = z80_cpu:step(Cpu2),
-    ?assertEqual(16#77, z80_cpu_mem:read_byte(Cpu3#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#77, test_helpers:read_mem(Cpu3, 16#4000)),
     ?assertEqual(2, z80_cpu:pc(Cpu3)).
 
 %% --- LD (BC),A / LD (DE),A Tests ---
@@ -169,7 +169,7 @@ ld_mem_bc_a_test() ->
     Cpu0 = Cpu0_init#cpu_state{b = 16#40, c = 16#00, a = 16#55},
     Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#02),  %% LD (BC),A
     Cpu2 = z80_cpu:step(Cpu1),
-    ?assertEqual(16#55, z80_cpu_mem:read_byte(Cpu2#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#55, test_helpers:read_mem(Cpu2, 16#4000)),
     ?assertEqual(1, z80_cpu:pc(Cpu2)).
 
 ld_mem_de_a_test() ->
@@ -177,7 +177,7 @@ ld_mem_de_a_test() ->
     Cpu0 = Cpu0_init#cpu_state{d = 16#40, e = 16#00, a = 16#AA},
     Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#12),  %% LD (DE),A
     Cpu2 = z80_cpu:step(Cpu1),
-    ?assertEqual(16#AA, z80_cpu_mem:read_byte(Cpu2#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#AA, test_helpers:read_mem(Cpu2, 16#4000)).
 
 %% --- LD A,(BC) / LD A,(DE) Tests ---
 
@@ -207,8 +207,8 @@ ld_mem_nn_hl_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#00),
     Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#80),
     Cpu4 = z80_cpu:step(Cpu3),
-    ?assertEqual(16#34, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#8000)),
-    ?assertEqual(16#12, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#8001)),
+    ?assertEqual(16#34, test_helpers:read_mem(Cpu4, 16#8000)),
+    ?assertEqual(16#12, test_helpers:read_mem(Cpu4, 16#8001)),
     ?assertEqual(3, z80_cpu:pc(Cpu4)).
 
 ld_hl_mem_nn_test() ->
@@ -230,7 +230,7 @@ ld_mem_nn_a_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#00),
     Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#80),
     Cpu4 = z80_cpu:step(Cpu3),
-    ?assertEqual(16#55, z80_cpu_mem:read_byte(Cpu4#cpu_state.ext_context, 16#8000)),
+    ?assertEqual(16#55, test_helpers:read_mem(Cpu4, 16#8000)),
     ?assertEqual(3, z80_cpu:pc(Cpu4)).
 
 ld_a_mem_nn_test() ->

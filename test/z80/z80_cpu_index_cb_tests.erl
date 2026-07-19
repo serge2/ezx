@@ -16,7 +16,7 @@ dd_cb_rlc_ix_zero_disp_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#06),  %% RLC (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#01, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#01, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_Z),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_S),
@@ -32,7 +32,7 @@ dd_cb_rlc_ix_pos_disp_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#06),  %% RLC (IX+5)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#80, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4005)),
+    ?assertEqual(16#80, test_helpers:read_mem(Cpu7, 16#4005)),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_C),
     ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_Z).
@@ -47,7 +47,7 @@ dd_cb_rlc_ix_neg_disp_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#06),  %% RLC (IX-1)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#02, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#3FFF)),
+    ?assertEqual(16#02, test_helpers:read_mem(Cpu7, 16#3FFF)),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_C).
 
 dd_cb_rlc_ix_zero_result_test() ->
@@ -60,7 +60,7 @@ dd_cb_rlc_ix_zero_result_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#06),  %% RLC (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#00, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#00, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_Z, Cpu7#cpu_state.f band ?FLAG_Z),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_C).
 
@@ -77,7 +77,7 @@ fd_cb_rlc_iy_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#06),  %% RLC (IY+0)
     Cpu6 = Cpu5#cpu_state{iyh = 16#50, iyl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#01, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#5000)),
+    ?assertEqual(16#01, test_helpers:read_mem(Cpu7, 16#5000)),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C).
 
 %% ============================================================================
@@ -93,7 +93,7 @@ dd_cb_rrc_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#0E),  %% RRC (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#80, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#80, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C),
     ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S).
 
@@ -107,7 +107,7 @@ dd_cb_rrc_ix_zero_result_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#0E),  %% RRC (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#00, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#00, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_Z, Cpu7#cpu_state.f band ?FLAG_Z).
 
 %% ============================================================================
@@ -123,7 +123,7 @@ dd_cb_rl_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#16),  %% RL (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00, f = 0},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#FE, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#FE, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_C).
 
 dd_cb_rl_ix_with_carry_test() ->
@@ -136,7 +136,7 @@ dd_cb_rl_ix_with_carry_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#16),  %% RL (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00, f = ?FLAG_C},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#FF, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_C).
 
 dd_cb_rl_ix_carry_out_test() ->
@@ -149,7 +149,7 @@ dd_cb_rl_ix_carry_out_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#16),  %% RL (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00, f = ?FLAG_C},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#01, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#01, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C).
 
 %% ============================================================================
@@ -165,7 +165,7 @@ dd_cb_rr_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#1E),  %% RR (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00, f = 0},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#00, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#00, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C),
     ?assertEqual(?FLAG_Z, Cpu7#cpu_state.f band ?FLAG_Z).
 
@@ -179,7 +179,7 @@ dd_cb_rr_ix_with_carry_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#1E),  %% RR (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00, f = ?FLAG_C},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#80, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#80, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S).
 
 %% ============================================================================
@@ -195,7 +195,7 @@ dd_cb_sla_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#26),  %% SLA (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#80, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#80, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S).
 
 dd_cb_sla_ix_carry_test() ->
@@ -208,7 +208,7 @@ dd_cb_sla_ix_carry_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#26),  %% SLA (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#00, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#00, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C),
     ?assertEqual(?FLAG_Z, Cpu7#cpu_state.f band ?FLAG_Z).
 
@@ -225,7 +225,7 @@ dd_cb_sra_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#2E),  %% SRA (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#C0, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#C0, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S).
 
 dd_cb_sra_ix_positive_test() ->
@@ -238,7 +238,7 @@ dd_cb_sra_ix_positive_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#2E),  %% SRA (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#20, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#20, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_S).
 
 dd_cb_sra_ix_carry_test() ->
@@ -251,7 +251,7 @@ dd_cb_sra_ix_carry_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#2E),  %% SRA (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#00, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#00, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C),
     ?assertEqual(?FLAG_Z, Cpu7#cpu_state.f band ?FLAG_Z).
 
@@ -268,7 +268,7 @@ dd_cb_sll_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#36),  %% SLL (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#81, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#81, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S).
 
 dd_cb_sll_ix_carry_test() ->
@@ -281,7 +281,7 @@ dd_cb_sll_ix_carry_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#36),  %% SLL (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#01, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#01, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C).
 
 %% ============================================================================
@@ -297,7 +297,7 @@ dd_cb_srl_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#3E),  %% SRL (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#40, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#40, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_S).
 
 dd_cb_srl_ix_carry_test() ->
@@ -310,7 +310,7 @@ dd_cb_srl_ix_carry_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#3E),  %% SRL (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#00, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#00, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C),
     ?assertEqual(?FLAG_Z, Cpu7#cpu_state.f band ?FLAG_Z).
 
@@ -327,7 +327,7 @@ dd_cb_bit_0_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#46),  %% BIT 0,(IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#01, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#01, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_Z),
     ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S),
     ?assertEqual(?FLAG_H, Cpu7#cpu_state.f band ?FLAG_H),
@@ -397,7 +397,7 @@ dd_cb_res_0_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#86),  %% RES 0,(IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#FE, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#FE, test_helpers:read_mem(Cpu7, 16#4000)).
 
 dd_cb_res_7_ix_test() ->
     %% RES 7,(IX+0): 0xFF -> 0x7F
@@ -409,7 +409,7 @@ dd_cb_res_7_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#BE),  %% RES 7,(IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#7F, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#7F, test_helpers:read_mem(Cpu7, 16#4000)).
 
 dd_cb_res_3_ix_test() ->
     %% RES 3,(IX+5): 0xFF -> 0xF7
@@ -421,7 +421,7 @@ dd_cb_res_3_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#9E),  %% RES 3,(IX+5)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#F7, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4005)).
+    ?assertEqual(16#F7, test_helpers:read_mem(Cpu7, 16#4005)).
 
 fd_cb_res_iy_test() ->
     %% RES 2,(IY-2): 0xFF -> 0xFB
@@ -433,7 +433,7 @@ fd_cb_res_iy_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#96),  %% RES 2,(IY-2)
     Cpu6 = Cpu5#cpu_state{iyh = 16#50, iyl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#FB, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4FFE)).
+    ?assertEqual(16#FB, test_helpers:read_mem(Cpu7, 16#4FFE)).
 
 %% ============================================================================
 %% DD CB SET (IX+d) - 0xC6-0xFE
@@ -448,7 +448,7 @@ dd_cb_set_0_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#C6),  %% SET 0,(IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#FF, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu7, 16#4000)).
 
 dd_cb_set_7_ix_test() ->
     %% SET 7,(IX+0): 0x7F -> 0xFF
@@ -460,7 +460,7 @@ dd_cb_set_7_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#FE),  %% SET 7,(IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#FF, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu7, 16#4000)).
 
 dd_cb_set_2_ix_test() ->
     %% SET 2,(IX+3): 0xF3 -> 0xF7 (0xD6 = SET 2, reg=6)
@@ -472,7 +472,7 @@ dd_cb_set_2_ix_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#D6),  %% SET 2,(IX+3)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#F7, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4003)).
+    ?assertEqual(16#F7, test_helpers:read_mem(Cpu7, 16#4003)).
 
 fd_cb_set_iy_test() ->
     %% SET 4,(IY+1): 0xEF -> 0xFF (0xE6 = SET 4, reg=6)
@@ -484,7 +484,7 @@ fd_cb_set_iy_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#E6),  %% SET 4,(IY+1)
     Cpu6 = Cpu5#cpu_state{iyh = 16#50, iyl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#FF, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#5001)).
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu7, 16#5001)).
 
 %% ============================================================================
 %% Prefix state verification
@@ -550,7 +550,7 @@ dd_cb_memory_writeback_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#06),  %% RLC (IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#02, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#02, test_helpers:read_mem(Cpu7, 16#4000)).
 
 dd_cb_bit_no_memory_write_test() ->
     %% BIT does not modify memory
@@ -562,7 +562,7 @@ dd_cb_bit_no_memory_write_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#5E),  %% BIT 3,(IX+0)
     Cpu6 = Cpu5#cpu_state{ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#55, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#55, test_helpers:read_mem(Cpu7, 16#4000)).
 
 %% ============================================================================
 %% DD CB register operands (RegField 0-5, 7 = B,C,D,E,H,L,A)
@@ -581,7 +581,7 @@ dd_cb_rlc_b_reg_test() ->
     Cpu7 = z80_cpu:step(Cpu6),
     ?assertEqual(16#03, Cpu7#cpu_state.b),   %% 10000001 RLC = 00000011
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C),
-    ?assertEqual(16#03, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).  %% memory also updated
+    ?assertEqual(16#03, test_helpers:read_mem(Cpu7, 16#4000)).  %% memory also updated
 
 dd_cb_rlc_c_reg_test() ->
     %% DD CB 01 = RLC C (RegField=1): read (IX+0), RLC, write back, copy to C
@@ -596,7 +596,7 @@ dd_cb_rlc_c_reg_test() ->
     ?assertEqual(16#80, Cpu7#cpu_state.c),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_C),
     ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S),
-    ?assertEqual(16#80, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#80, test_helpers:read_mem(Cpu7, 16#4000)).
 
 dd_cb_rlc_a_reg_test() ->
     %% DD CB 07 = RLC A (RegField=7): read (IX+0), RLC, write back, copy to A
@@ -610,7 +610,7 @@ dd_cb_rlc_a_reg_test() ->
     Cpu7 = z80_cpu:step(Cpu6),
     ?assertEqual(16#FF, Cpu7#cpu_state.a),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C),
-    ?assertEqual(16#FF, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu7, 16#4000)).
 
 dd_cb_bit_0_b_reg_test() ->
     %% DD CB 40 = BIT 0,B (RegField=0): read (IX+0), BIT 0, flags set, B UNCHANGED (BIT doesn't copy to reg)
@@ -652,7 +652,7 @@ dd_cb_res_3_d_reg_test() ->
     Cpu6 = Cpu5#cpu_state{d = 16#00, ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
     ?assertEqual(16#F7, Cpu7#cpu_state.d),  %% 11111111 -> 11110111
-    ?assertEqual(16#F7, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#F7, test_helpers:read_mem(Cpu7, 16#4000)).
 
 dd_cb_set_5_e_reg_test() ->
     %% DD CB EB = SET 5,E (RegField=3): read (IX+0), SET 5, write back, copy to E
@@ -665,7 +665,7 @@ dd_cb_set_5_e_reg_test() ->
     Cpu6 = Cpu5#cpu_state{e = 16#00, ixh = 16#40, ixl = 16#00},
     Cpu7 = z80_cpu:step(Cpu6),
     ?assertEqual(16#20, Cpu7#cpu_state.e),  %% 00000000 -> 00100000
-    ?assertEqual(16#20, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#20, test_helpers:read_mem(Cpu7, 16#4000)).
 
 dd_cb_rl_h_reg_test() ->
     %% DD CB 14 = RL H (RegField=4): read (IX+0), RL, write back, copy to H
@@ -679,7 +679,7 @@ dd_cb_rl_h_reg_test() ->
     Cpu7 = z80_cpu:step(Cpu6),
     ?assertEqual(16#FF, Cpu7#cpu_state.h),  %% 01111111 RL with carry=1 = 11111111
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_C),
-    ?assertEqual(16#FF, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)).
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu7, 16#4000)).
 
 fd_cb_sla_l_reg_test() ->
     %% FD CB 25 = SLA L (RegField=5): read (IY+0), SLA, write back, copy to L
@@ -693,7 +693,7 @@ fd_cb_sla_l_reg_test() ->
     Cpu7 = z80_cpu:step(Cpu6),
     ?assertEqual(16#80, Cpu7#cpu_state.l),
     ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S),
-    ?assertEqual(16#80, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#5000)).
+    ?assertEqual(16#80, test_helpers:read_mem(Cpu7, 16#5000)).
 
 dd_cb_register_ops_read_write_memory_test() ->
     %% Register operands (z!=6): read from (IX+d), apply op, write back to (IX+d), copy to register
@@ -706,7 +706,7 @@ dd_cb_register_ops_read_write_memory_test() ->
     Cpu6 = Cpu5#cpu_state{b = 16#00, ixh = 16#40, ixl = 16#00, f = 0},
     Cpu7 = z80_cpu:step(Cpu6),
     %% Memory at (IX+0) should be updated (RLC 0x81 = 0x03, carry=1)
-    ?assertEqual(16#03, z80_cpu_mem:read_byte(Cpu7#cpu_state.ext_context, 16#4000)),
+    ?assertEqual(16#03, test_helpers:read_mem(Cpu7, 16#4000)),
     %% B register should get the result
     ?assertEqual(16#03, Cpu7#cpu_state.b),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C).
