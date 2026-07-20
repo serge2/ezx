@@ -54,7 +54,7 @@ ed_ld_r_a_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#4F),  %% LD R,A
     Cpu3 = Cpu2#cpu_state{a = 16#FF},
     Cpu4 = z80_cpu:step(Cpu3),
-    ?assertEqual(16#80, Cpu4#cpu_state.r),  % The regiter R automatically increased at the end of a command
+    ?assertEqual(16#80, Cpu4#cpu_state.r),
     ?assertEqual(9, z80_cpu:t_states(Cpu4)).
 
 ed_ld_a_r_test() ->
@@ -262,12 +262,13 @@ ed_ldir_test() ->
     Cpu4 = test_helpers:write_mem(Cpu3, 1, 16#B0),  %% LDIR
     Cpu5 = Cpu4#cpu_state{h = 16#40, l = 16#00, d = 16#50, e = 16#00, b = 0, c = 16#02, a = 16#00},
     Cpu6 = z80_cpu:step(Cpu5),
-    ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu6)),
-    ?assertEqual(16#5001, z80_cpu:get_reg_pair(de, Cpu6)),
-    ?assertEqual(16#0001, z80_cpu:get_reg_pair(bc, Cpu6)),
+    ?assertEqual(16#4002, z80_cpu:get_reg_pair(hl, Cpu6)),
+    ?assertEqual(16#5002, z80_cpu:get_reg_pair(de, Cpu6)),
+    ?assertEqual(16#0000, z80_cpu:get_reg_pair(bc, Cpu6)),
     ?assertEqual(16#04, Cpu6#cpu_state.f band 16#04),
     ?assertEqual(16#11, test_helpers:read_mem(Cpu6, 16#5000)),
-    ?assertEqual(21, z80_cpu:t_states(Cpu6)).
+    ?assertEqual(16#22, test_helpers:read_mem(Cpu6, 16#5001)),
+    ?assertEqual(37, z80_cpu:t_states(Cpu6)).
 
 ed_lddr_test() ->
     Cpu0 = test_helpers:init_cpu(),
@@ -277,11 +278,12 @@ ed_lddr_test() ->
     Cpu4 = test_helpers:write_mem(Cpu3, 1, 16#B8),  %% LDDR
     Cpu5 = Cpu4#cpu_state{h = 16#40, l = 16#01, d = 16#50, e = 16#01, b = 0, c = 16#02, a = 16#00},
     Cpu6 = z80_cpu:step(Cpu5),
-    ?assertEqual(16#4000, z80_cpu:get_reg_pair(hl, Cpu6)),
-    ?assertEqual(16#5000, z80_cpu:get_reg_pair(de, Cpu6)),
-    ?assertEqual(16#0001, z80_cpu:get_reg_pair(bc, Cpu6)),
+    ?assertEqual(16#3FFF, z80_cpu:get_reg_pair(hl, Cpu6)),
+    ?assertEqual(16#4FFF, z80_cpu:get_reg_pair(de, Cpu6)),
+    ?assertEqual(16#0000, z80_cpu:get_reg_pair(bc, Cpu6)),
+    ?assertEqual(16#11, test_helpers:read_mem(Cpu6, 16#5000)),
     ?assertEqual(16#22, test_helpers:read_mem(Cpu6, 16#5001)),
-    ?assertEqual(21, z80_cpu:t_states(Cpu6)).
+    ?assertEqual(37, z80_cpu:t_states(Cpu6)).
 
 %% --- ED Block Search: CPI, CPD, CPIR, CPDR ---
 
@@ -318,10 +320,10 @@ ed_cpir_test() ->
     Cpu5 = test_helpers:write_mem(Cpu4, 1, 16#B1),  %% CPIR
     Cpu6 = Cpu5#cpu_state{h = 16#40, l = 16#00, a = 16#55, b = 0, c = 16#03},
     Cpu7 = z80_cpu:step(Cpu6),
-    ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu7)),
+    ?assertEqual(16#4002, z80_cpu:get_reg_pair(hl, Cpu7)),
     ?assertEqual(16#0002, z80_cpu:get_reg_pair(bc, Cpu7)),
-    ?assertEqual(16#04, Cpu7#cpu_state.f band 16#04),
-    ?assertEqual(21, z80_cpu:t_states(Cpu7)).
+    ?assertEqual(16#44, Cpu7#cpu_state.f band 16#44),
+    ?assertEqual(37, z80_cpu:t_states(Cpu7)).
 
 ed_cpdr_test() ->
     Cpu0 = test_helpers:init_cpu(),
@@ -331,10 +333,10 @@ ed_cpdr_test() ->
     Cpu4 = test_helpers:write_mem(Cpu3, 1, 16#B9),  %% CPDR
     Cpu5 = Cpu4#cpu_state{h = 16#40, l = 16#01, a = 16#55, b = 0, c = 16#02},
     Cpu6 = z80_cpu:step(Cpu5),
-    ?assertEqual(16#4000, z80_cpu:get_reg_pair(hl, Cpu6)),
+    ?assertEqual(16#3FFF, z80_cpu:get_reg_pair(hl, Cpu6)),
     ?assertEqual(16#0001, z80_cpu:get_reg_pair(bc, Cpu6)),
-    ?assertEqual(16#04, Cpu6#cpu_state.f band 16#04),
-    ?assertEqual(21, z80_cpu:t_states(Cpu6)).
+    ?assertEqual(16#44, Cpu6#cpu_state.f band 16#44),
+    ?assertEqual(37, z80_cpu:t_states(Cpu6)).
 
 %% --- ED Block I/O: INI, IND, INIR, INDR, OUTI, OUTD, OTIR, OTDR ---
 
@@ -367,9 +369,10 @@ ed_inir_test() ->
     Cpu3 = Cpu2#cpu_state{b = 16#02, c = 16#10, h = 16#40, l = 16#00},
     Cpu4 = z80_cpu:step(Cpu3),
     ?assertEqual(16#FF, test_helpers:read_mem(Cpu4, 16#4000)),
-    ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu4)),
-    ?assertEqual(16#01, Cpu4#cpu_state.b),
-    ?assertEqual(21, z80_cpu:t_states(Cpu4)).
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu4, 16#4001)),
+    ?assertEqual(16#4002, z80_cpu:get_reg_pair(hl, Cpu4)),
+    ?assertEqual(16#00, Cpu4#cpu_state.b),
+    ?assertEqual(37, z80_cpu:t_states(Cpu4)).
 
 ed_outi_test() ->
     Cpu0 = test_helpers:init_cpu(),
@@ -390,6 +393,6 @@ ed_otir_test() ->
     Cpu4 = test_helpers:write_mem(Cpu3, 1, 16#B3),  %% OTIR
     Cpu5 = Cpu4#cpu_state{b = 16#02, c = 16#10, h = 16#40, l = 16#00},
     Cpu6 = z80_cpu:step(Cpu5),
-    ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu6)),
-    ?assertEqual(16#01, Cpu6#cpu_state.b),
-    ?assertEqual(21, z80_cpu:t_states(Cpu6)).
+    ?assertEqual(16#4002, z80_cpu:get_reg_pair(hl, Cpu6)),
+    ?assertEqual(16#00, Cpu6#cpu_state.b),
+    ?assertEqual(37, z80_cpu:t_states(Cpu6)).

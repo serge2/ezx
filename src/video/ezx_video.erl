@@ -57,13 +57,14 @@ border_color(BorderChanges, TState) ->
     {byte(), byte(), byte()}.
 screen_pixel(ReadByteFun, FrameCounter, X, Y) ->
     CharCol = X div 8,
-    CharRow = Y div 8,
+    Third = Y div 64,
+    CharRowInThird = (Y rem 64) div 8,
     PixelRow = Y rem 8,
 
-    BitmapAddr = ?SCREEN_BITMAP + (CharRow * 2048) + (PixelRow * 256) + CharCol,
+    BitmapAddr = ?SCREEN_BITMAP + (Third * 2048) + (CharRowInThird * 32) + (PixelRow * 256) + CharCol,
     BitmapByte = ReadByteFun(BitmapAddr),
 
-    AttrAddr = ?SCREEN_ATTRS + (CharRow * 32) + CharCol,
+    AttrAddr = ?SCREEN_ATTRS + ((Third * 8 + CharRowInThird) * 32) + CharCol,
     AttrByte = ReadByteFun(AttrAddr),
 
     BitPos = 7 - (X rem 8),

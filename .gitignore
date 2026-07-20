@@ -7,3 +7,6 @@ config/sys.config
 erl_crash.dump
 rebar3.crashdump
 
+# ROM files (too large / not ours)
+priv/roms/*.rom
+

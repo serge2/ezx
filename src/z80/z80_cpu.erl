@@ -131,11 +131,12 @@ maybe_handle_interrupt(State = #cpu_state{pending_interrupt = nmi}) ->
 execute_next_instruction(State) ->
     {Opcode, State1} = z80_cpu_helpers:fetch_opcode(State),
     State2 = execute_opcode_base(Opcode, State1),
-    case Opcode of
+    State3 = case Opcode of
          16#DD -> State2;
          16#FD -> State2;
         _     -> State2#cpu_state{prefix = none}
-    end.
+    end,
+    State3#cpu_state{displacement = 0}.
  
 
 %% @doc Base opcode implementations (no prefix handling)
@@ -594,11 +595,15 @@ execute_ld_r_r(State, RegDst, RegSrc) ->
 
 execute_ld_r_mem_hl(State, Reg) ->
     {Byte, State1} = z80_cpu_helpers:read_hl_mem(State),
-    State2 = set_reg_byte_prefixed(Reg, Byte, State1),
+    %% DD/FD prefix only changes the address (HL)->(IX+d)/(IY+d), handled by read_hl_mem.
+    %% The destination register stays as H/L (NOT IXH/IYL).
+    State2 = z80_cpu_helpers:set_reg_byte(Reg, Byte, State1),
     z80_cpu_helpers:advance_tstates(State2, 3).
 
 execute_ld_mem_hl_r(State, Reg) ->
-    Byte = get_reg_byte_prefixed(Reg, State),
+    %% DD/FD prefix only changes the address (HL)->(IX+d)/(IY+d), handled by write_hl_mem.
+    %% The source register stays as H/L (NOT IXH/IYL).
+    Byte = z80_cpu_helpers:get_reg_byte(Reg, State),
     State1 = z80_cpu_helpers:write_hl_mem(State, Byte),
     z80_cpu_helpers:advance_tstates(State1, 3).
 
@@ -780,9 +785,13 @@ execute_dec_mem_hl(State) ->
     z80_cpu_helpers:advance_tstates(State3, 11).
 
 execute_ld_mem_hl_n(State) ->
-    {Value, State1} = z80_cpu_helpers:fetch_byte(State),
-    State2 = z80_cpu_helpers:write_hl_mem(State1, Value),
-    z80_cpu_helpers:advance_tstates(State2, 10).
+    %% For DD/FD prefix, byte order is: DD 36 dd n (displacement before immediate).
+    %% Consume displacement first, then fetch immediate value.
+    State1 = z80_cpu_helpers:fetch_indexed_displacement(State),
+    {Value, State2} = z80_cpu_helpers:fetch_byte(State1),
+    Addr = z80_cpu_helpers:get_hl_mem_addr(State1),
+    State3 = z80_cpu_helpers:write_byte(State2, Addr, Value band 16#FF),
+    z80_cpu_helpers:advance_tstates(State3, 10).
 
 execute_rla(State) ->
     A = State#cpu_state.a,
@@ -902,13 +911,13 @@ execute_add_a_e(State) ->
     z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_add_a_h(State) ->
-    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(h, State)).
+    z80_cpu_helpers:do_add(State, get_reg_byte_prefixed(h, State)).
 
 execute_add_a_l(State) ->
-    z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(l, State)).
+    z80_cpu_helpers:do_add(State, get_reg_byte_prefixed(l, State)).
 
 execute_add_a_mem_hl(State) ->
-    {Val, State1} = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
+    {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
     z80_cpu_helpers:do_add(State1, Val).
 
 execute_add_a_a(State) ->
@@ -928,13 +937,13 @@ execute_adc_a_e(State) ->
     z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_adc_a_h(State) ->
-    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(h, State)).
+    z80_cpu_helpers:do_adc(State, get_reg_byte_prefixed(h, State)).
 
 execute_adc_a_l(State) ->
-    z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(l, State)).
+    z80_cpu_helpers:do_adc(State, get_reg_byte_prefixed(l, State)).
 
 execute_adc_a_mem_hl(State) ->
-    {Val, State1} = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
+    {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
     z80_cpu_helpers:do_adc(State1, Val).
 
 execute_adc_a_a(State) ->
@@ -954,13 +963,13 @@ execute_sub_e(State) ->
     z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_sub_h(State) ->
-    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(h, State)).
+    z80_cpu_helpers:do_sub(State, get_reg_byte_prefixed(h, State)).
 
 execute_sub_l(State) ->
-    z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(l, State)).
+    z80_cpu_helpers:do_sub(State, get_reg_byte_prefixed(l, State)).
 
 execute_sub_mem_hl(State) ->
-    {Val, State1} = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
+    {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
     z80_cpu_helpers:do_sub(State1, Val).
 
 execute_sub_a(State) ->
@@ -980,13 +989,13 @@ execute_sbc_a_e(State) ->
     z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_sbc_a_h(State) ->
-    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(h, State)).
+    z80_cpu_helpers:do_sbc(State, get_reg_byte_prefixed(h, State)).
 
 execute_sbc_a_l(State) ->
-    z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(l, State)).
+    z80_cpu_helpers:do_sbc(State, get_reg_byte_prefixed(l, State)).
 
 execute_sbc_a_mem_hl(State) ->
-    {Val, State1} = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
+    {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
     z80_cpu_helpers:do_sbc(State1, Val).
 
 execute_sbc_a_a(State) ->
@@ -1006,13 +1015,13 @@ execute_and_e(State) ->
     z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_and_h(State) ->
-    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(h, State)).
+    z80_cpu_helpers:do_and(State, get_reg_byte_prefixed(h, State)).
 
 execute_and_l(State) ->
-    z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(l, State)).
+    z80_cpu_helpers:do_and(State, get_reg_byte_prefixed(l, State)).
 
 execute_and_mem_hl(State) ->
-    {Val, State1} = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
+    {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
     z80_cpu_helpers:do_and(State1, Val).
 
 execute_and_a(State) ->
@@ -1032,13 +1041,13 @@ execute_xor_e(State) ->
     z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_xor_h(State) ->
-    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(h, State)).
+    z80_cpu_helpers:do_xor(State, get_reg_byte_prefixed(h, State)).
 
 execute_xor_l(State) ->
-    z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(l, State)).
+    z80_cpu_helpers:do_xor(State, get_reg_byte_prefixed(l, State)).
 
 execute_xor_mem_hl(State) ->
-    {Val, State1} = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
+    {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
     z80_cpu_helpers:do_xor(State1, Val).
 
 execute_xor_a(State) ->
@@ -1058,13 +1067,13 @@ execute_or_e(State) ->
     z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_or_h(State) ->
-    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(h, State)).
+    z80_cpu_helpers:do_or(State, get_reg_byte_prefixed(h, State)).
 
 execute_or_l(State) ->
-    z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(l, State)).
+    z80_cpu_helpers:do_or(State, get_reg_byte_prefixed(l, State)).
 
 execute_or_mem_hl(State) ->
-    {Val, State1} = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
+    {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
     z80_cpu_helpers:do_or(State1, Val).
 
 execute_or_a(State) ->
@@ -1084,13 +1093,13 @@ execute_cp_e(State) ->
     z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(e, State)).
 
 execute_cp_h(State) ->
-    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(h, State)).
+    z80_cpu_helpers:do_cp(State, get_reg_byte_prefixed(h, State)).
 
 execute_cp_l(State) ->
-    z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(l, State)).
+    z80_cpu_helpers:do_cp(State, get_reg_byte_prefixed(l, State)).
 
 execute_cp_mem_hl(State) ->
-    {Val, State1} = z80_cpu_helpers:read_byte(State, z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l)),
+    {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
     z80_cpu_helpers:do_cp(State1, Val).
 
 execute_cp_a(State) ->

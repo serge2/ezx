@@ -9,6 +9,8 @@
     step/1,
     run_frame/1,
     load_program/2,
+    load_program/3,
+    set_pc/2,
     run_until_tstates/2,
     read_byte/2,
     write_byte/3,
@@ -75,11 +77,19 @@ init(Mem, Rom) ->
 %% @doc Load a program into memory starting at address 0.
 -spec load_program(#machine_state{}, [byte()] | map()) -> #machine_state{}.
 load_program(Machine, Program) when is_list(Program) ->
-    load_program(Machine, maps:from_list(lists:enumerate(0, Program)));
+    load_program(Machine, 0, Program);
 load_program(Machine, Program) when is_map(Program) ->
     maps:fold(fun(Addr, Byte, M) ->
         write_byte(M, Addr, Byte)
     end, Machine, Program).
+
+-spec load_program(#machine_state{}, non_neg_integer(), [byte()]) -> #machine_state{}.
+load_program(Machine, BaseAddr, Program) when is_list(Program) ->
+    load_program(Machine, maps:from_list(lists:enumerate(BaseAddr, Program))).
+
+-spec set_pc(#machine_state{}, non_neg_integer()) -> #machine_state{}.
+set_pc(#machine_state{cpu = Cpu} = Machine, Addr) ->
+    Machine#machine_state{cpu = Cpu#cpu_state{pc = Addr}}.
 
 -spec read_byte(#machine_state{}, non_neg_integer()) -> {byte(), #machine_state{}}.
 read_byte(#machine_state{memory = Mem, mem_read_fun = MemReadFun} = Machine, Addr) ->

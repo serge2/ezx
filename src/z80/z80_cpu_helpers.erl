@@ -202,7 +202,7 @@ set_hl_pair(Val, State) ->
 %% Memory address based on HL/IX/IY (with optional displacement for CB prefix or DD/FD indexed addressing)
 get_hl_mem_addr(State) ->
     Base = get_hl_pair(State),
-    Disp = ?GET_DISPLACEMENT(State),
+    Disp = ?SIGNED_BYTE(?GET_DISPLACEMENT(State)),
     (Base + Disp) band 16#FFFF.
 
 %% Fetch displacement byte for DD/FD indexed addressing if needed

@@ -511,3 +511,562 @@ dd_ld_mem_ix_r_test() ->
     Cpu5 = z80_cpu:step(Cpu4),
     ?assertEqual(16#EE, test_helpers:read_mem(Cpu5, 16#4003)),
     ?assertEqual(none, Cpu5#cpu_state.prefix).
+
+%% --- Bug fix: LD H,(IX+d) must write to H, not IXH ---
+
+dd_ld_h_mem_ix_test() ->
+    %% DD 66 00 = LD H,(IX+0): result must go to H, not IXH
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#5000, 16#AB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#66),  %% LD H,(IX+d)
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{ixh = 16#50, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#AB, Cpu6#cpu_state.h),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_ld_h_mem_ix_neg_disp_test() ->
+    %% DD 66 FE = LD H,(IX-2): negative displacement
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#5000 - 2, 16#CD),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#66),  %% LD H,(IX+d)
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#FE),  %% displacement -2
+    Cpu5 = Cpu4#cpu_state{ixh = 16#50, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#CD, Cpu6#cpu_state.h),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_ld_l_mem_ix_test() ->
+    %% DD 6E 00 = LD L,(IX+0): result must go to L, not IXL
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#6000, 16#EF),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#6E),  %% LD L,(IX+d)
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{ixh = 16#60, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#EF, Cpu6#cpu_state.l),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_ld_l_mem_ix_disp_test() ->
+    %% DD 6E 03 = LD L,(IX+3)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#6003, 16#77),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#6E),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#03),
+    Cpu5 = Cpu4#cpu_state{ixh = 16#60, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#77, Cpu6#cpu_state.l),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_ld_a_mem_ix_test() ->
+    %% DD 7E 00 = LD A,(IX+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#7000, 16#33),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#7E),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{ixh = 16#70, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#33, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+fd_ld_h_mem_iy_test() ->
+    %% FD 66 00 = LD H,(IY+0): same rule for IY
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#8000, 16#44),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#66),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{iyh = 16#80, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#44, Cpu6#cpu_state.h),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+fd_ld_l_mem_iy_test() ->
+    %% FD 6E 00 = LD L,(IY+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#9000, 16#88),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#6E),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{iyh = 16#90, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#88, Cpu6#cpu_state.l),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+fd_ld_a_mem_iy_test() ->
+    %% FD 7E 00 = LD A,(IY+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#A000, 16#99),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#7E),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{iyh = 16#A0, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#99, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+%% --- Bug fix: LD (IX+d),H must read from H, not IXH ---
+
+dd_ld_mem_ix_h_test() ->
+    %% DD 74 00 = LD (IX+0),H: source must be H, not IXH
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#DD),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#74),
+    Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#00),
+    Cpu4 = Cpu3#cpu_state{ixh = 16#40, ixl = 16#00, h = 16#12},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#12, test_helpers:read_mem(Cpu5, 16#4000)),
+    ?assertEqual(none, Cpu5#cpu_state.prefix).
+
+dd_ld_mem_ix_l_test() ->
+    %% DD 75 00 = LD (IX+0),L: source must be L, not IXL
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#DD),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#75),
+    Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#00),
+    Cpu4 = Cpu3#cpu_state{ixh = 16#40, ixl = 16#00, l = 16#34},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#34, test_helpers:read_mem(Cpu5, 16#4000)),
+    ?assertEqual(none, Cpu5#cpu_state.prefix).
+
+dd_ld_mem_ix_a_test() ->
+    %% DD 77 00 = LD (IX+0),A
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#DD),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#77),
+    Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#00),
+    Cpu4 = Cpu3#cpu_state{ixh = 16#40, ixl = 16#00, a = 16#56},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#56, test_helpers:read_mem(Cpu5, 16#4000)),
+    ?assertEqual(none, Cpu5#cpu_state.prefix).
+
+fd_ld_mem_iy_h_test() ->
+    %% FD 74 00 = LD (IY+0),H
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#FD),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#74),
+    Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#00),
+    Cpu4 = Cpu3#cpu_state{iyh = 16#50, iyl = 16#00, h = 16#AA},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#AA, test_helpers:read_mem(Cpu5, 16#5000)),
+    ?assertEqual(none, Cpu5#cpu_state.prefix).
+
+fd_ld_mem_iy_l_test() ->
+    %% FD 75 00 = LD (IY+0),L
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#FD),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#75),
+    Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#00),
+    Cpu4 = Cpu3#cpu_state{iyh = 16#50, iyl = 16#00, l = 16#BB},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#BB, test_helpers:read_mem(Cpu5, 16#5000)),
+    ?assertEqual(none, Cpu5#cpu_state.prefix).
+
+fd_ld_mem_iy_a_test() ->
+    %% FD 77 00 = LD (IY+0),A
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#FD),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#77),
+    Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#00),
+    Cpu4 = Cpu3#cpu_state{iyh = 16#50, iyl = 16#00, a = 16#CC},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#CC, test_helpers:read_mem(Cpu5, 16#5000)),
+    ?assertEqual(none, Cpu5#cpu_state.prefix).
+
+%% --- Bug fix: ALU (HL) with DD/FD prefix must use (IX+d)/(IY+d) addressing ---
+
+dd_add_a_mem_ix_test() ->
+    %% DD 86 00 = ADD A,(IX+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#30),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#86),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#10, ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#40, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_adc_a_mem_ix_test() ->
+    %% DD 8E 00 = ADC A,(IX+0) with carry
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#20),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#8E),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#10, f = 16#01, ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#31, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_sub_mem_ix_test() ->
+    %% DD 96 00 = SUB (IX+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#30),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#96),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#50, ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#20, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_sbc_a_mem_ix_test() ->
+    %% DD 9E 00 = SBC A,(IX+0) with carry
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#20),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#9E),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#50, f = 16#01, ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#2F, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_and_mem_ix_test() ->
+    %% DD A6 00 = AND (IX+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#0F),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A6),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#FF, ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#0F, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_xor_mem_ix_test() ->
+    %% DD AE 00 = XOR (IX+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#FF),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#AE),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#55, ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#AA, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_or_mem_ix_test() ->
+    %% DD B6 00 = OR (IX+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#F0),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#B6),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#0F, ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#FF, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_cp_mem_ix_test() ->
+    %% DD BE 00 = CP (IX+0) — not equal
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#50),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#BE),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#60, ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#60, Cpu6#cpu_state.a),
+    ?assertEqual(0, Cpu6#cpu_state.f band ?FLAG_Z).
+
+dd_cp_mem_ix_equal_test() ->
+    %% CP equal: DD BE 00
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#50),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#BE),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#50, ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(?FLAG_Z, Cpu6#cpu_state.f band ?FLAG_Z).
+
+dd_cp_mem_ix_less_test() ->
+    %% CP A < (IX+d): DD BE 00
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#80),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#BE),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#50, ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(?FLAG_C, Cpu6#cpu_state.f band ?FLAG_C).
+
+fd_add_a_mem_iy_test() ->
+    %% FD 86 00 = ADD A,(IY+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#6000, 16#40),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#86),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#10, iyh = 16#60, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#50, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+fd_sub_mem_iy_test() ->
+    %% FD 96 00 = SUB (IY+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#6000, 16#10),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#96),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#30, iyh = 16#60, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#20, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+fd_cp_mem_iy_test() ->
+    %% FD BE 00 = CP (IY+0) equal
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#6000, 16#42),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#BE),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#42, iyh = 16#60, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(?FLAG_Z, Cpu6#cpu_state.f band ?FLAG_Z).
+
+fd_and_mem_iy_test() ->
+    %% FD A6 00 = AND (IY+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#6000, 16#FF),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A6),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#0F, iyh = 16#60, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#0F, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+fd_xor_mem_iy_test() ->
+    %% FD AE 00 = XOR (IY+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#6000, 16#CC),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#AE),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#CC, iyh = 16#60, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#00, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+fd_or_mem_iy_test() ->
+    %% FD B6 00 = OR (IY+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#6000, 16#0F),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#B6),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{a = 16#F0, iyh = 16#60, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#FF, Cpu6#cpu_state.a),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+%% --- Bug fix: ALU register H/L with DD/FD prefix must map to IXH/IXL ---
+
+dd_add_a_ixh_test() ->
+    %% DD 84 = ADD A,IXH (not ADD A,H)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, ixh = 16#20, ixl = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#84),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#30, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+dd_add_a_ixl_test() ->
+    %% DD 85 = ADD A,IXL (not ADD A,L)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, ixh = 16#00, ixl = 16#30},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#85),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#40, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+dd_sub_ixh_test() ->
+    %% DD 94 = SUB IXH (not SUB H)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#50, ixh = 16#20, ixl = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#94),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#30, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+dd_sub_ixl_test() ->
+    %% DD 9D = SUB IXL
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#50, ixh = 16#00, ixl = 16#10},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#9D),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#40, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+dd_and_ixh_test() ->
+    %% DD A4 = AND IXH (not AND H)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#FF, ixh = 16#0F, ixl = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A4),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#0F, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+dd_xor_ixh_test() ->
+    %% DD AC = XOR IXH (not XOR H)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#55, ixh = 16#FF, ixl = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#AC),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#AA, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+dd_or_ixh_test() ->
+    %% DD B4 = OR IXH (not OR H)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#0F, ixh = 16#F0, ixl = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#B4),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#FF, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+dd_cp_ixh_test() ->
+    %% DD BC = CP IXH (not CP H) — equal
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#42, ixh = 16#42, ixl = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#BC),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(?FLAG_Z, Cpu4#cpu_state.f band ?FLAG_Z).
+
+dd_adc_a_ixh_test() ->
+    %% DD 8C = ADC A,IXH with carry
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, f = 16#01, ixh = 16#20, ixl = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#8C),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#31, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+dd_sbc_a_ixh_test() ->
+    %% DD 9C = SBC A,IXH with carry
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#50, f = 16#01, ixh = 16#20, ixl = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#9C),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#2F, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+fd_add_a_iyh_test() ->
+    %% FD 84 = ADD A,IYH
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, iyh = 16#20, iyl = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#84),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#30, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+fd_add_a_iyl_test() ->
+    %% FD 85 = ADD A,IYL
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#10, iyh = 16#00, iyl = 16#30},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#85),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#40, Cpu4#cpu_state.a),
+    ?assertEqual(none, Cpu4#cpu_state.prefix).
+
+fd_cp_iyl_test() ->
+    %% FD BD = CP IYL — not equal
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{a = 16#42, iyh = 16#00, iyl = 16#55},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#BD),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(0, Cpu4#cpu_state.f band ?FLAG_Z).
+
+dd_inc_mem_ix_test() ->
+    %% DD 34 00 = INC (IX+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#0F),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#34),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#10, test_helpers:read_mem(Cpu6, 16#4000)),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_dec_mem_ix_test() ->
+    %% DD 35 00 = DEC (IX+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#10),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#35),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#0F, test_helpers:read_mem(Cpu6, 16#4000)),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+dd_ld_mem_ix_n_test() ->
+    %% DD 36 00 AA = LD (IX+0),0xAA
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#DD),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#36),
+    Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#00),
+    Cpu4 = test_helpers:write_mem(Cpu3, 3, 16#AA),
+    Cpu5 = Cpu4#cpu_state{ixh = 16#40, ixl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#AA, test_helpers:read_mem(Cpu6, 16#4000)),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+fd_inc_mem_iy_test() ->
+    %% FD 34 00 = INC (IY+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#6000, 16#0F),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#34),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{iyh = 16#60, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#10, test_helpers:read_mem(Cpu6, 16#6000)),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+fd_dec_mem_iy_test() ->
+    %% FD 35 00 = DEC (IY+0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#6000, 16#10),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#35),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = Cpu4#cpu_state{iyh = 16#60, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#0F, test_helpers:read_mem(Cpu6, 16#6000)),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).
+
+fd_ld_mem_iy_n_test() ->
+    %% FD 36 00 BB = LD (IY+0),0xBB
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#FD),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#36),
+    Cpu3 = test_helpers:write_mem(Cpu2, 2, 16#00),
+    Cpu4 = test_helpers:write_mem(Cpu3, 3, 16#BB),
+    Cpu5 = Cpu4#cpu_state{iyh = 16#60, iyl = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#BB, test_helpers:read_mem(Cpu6, 16#6000)),
+    ?assertEqual(none, Cpu6#cpu_state.prefix).

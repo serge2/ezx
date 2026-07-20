@@ -22,7 +22,12 @@ read_byte(State, Addr) ->
 
 write_byte(State, Addr, Byte) ->
     Index = Addr band 16#ffff,
-    <<Prefix:Index/binary, _Old:8/integer, Suffix/binary>> = maps:get(data, State),
-    Data1 = <<Prefix/binary, (Byte band 16#ff):8/integer, Suffix/binary>>,
-    maps:put(data, Data1, State).
+    %% ROM area (0x0000-0x3FFF) is write-protected on ZX Spectrum 48K.
+    case Index < 16#4000 of
+        true  -> State;
+        false ->
+            <<Prefix:Index/binary, _Old:8/integer, Suffix/binary>> = maps:get(data, State),
+            Data1 = <<Prefix/binary, (Byte band 16#ff):8/integer, Suffix/binary>>,
+            maps:put(data, Data1, State)
+    end.
 
