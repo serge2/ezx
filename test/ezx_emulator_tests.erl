@@ -84,7 +84,10 @@ run_frame_border_changes_cleared_test() ->
     Machine1 = ezx_emulator:load_program(Machine0, #{16#4000 => 16#3E, 16#4001 => 16#04, 16#4002 => 16#D3, 16#4003 => 16#FE}),
     Machine1b = ezx_emulator:set_pc(Machine1, 16#4000),
     Machine2 = ezx_emulator:run_frame(Machine1b),
-    ?assertEqual([], Machine2#machine_state.border_changes).
+    %% border_changes are now preserved after run_frame for rendering.
+    %% They should be empty only if no OUT instructions executed.
+    %% With the program above (OUT 0xFE, A), there should be one change.
+    ?assertEqual([{7, 4}], Machine2#machine_state.border_changes).
 
 run_frame_multiple_nops_test() ->
     Machine0 = ezx_emulator:init(),

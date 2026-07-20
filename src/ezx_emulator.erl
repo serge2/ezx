@@ -137,10 +137,15 @@ step(#machine_state{t_states = MachineTStates} = Machine) ->
     %% Propagate border_changes accumulated during this step.
     StepChanges = Cpu1#cpu_state.ext_context#ext_context.border_changes,
     MergedChanges = merge_border_changes(Machine#machine_state.border_changes, StepChanges),
+    NewBorder = case StepChanges of
+        [{_, Color} | _] -> Color;
+        [] -> Machine#machine_state.border_color
+    end,
     Machine#machine_state{
         cpu = Cpu1#cpu_state{t_states = NewMachineTStates},
         memory = Memory1,
         t_states = NewMachineTStates,
+        border_color = NewBorder,
         border_changes = MergedChanges
     }.
 
@@ -151,9 +156,13 @@ step(#machine_state{t_states = MachineTStates} = Machine) ->
 %% Frame boundary is ignored mid-instruction (variant A).
 -spec run_frame(#machine_state{}) -> #machine_state{}.
 run_frame(#machine_state{t_states = StartT} = Machine) ->
+    %% Clear border_changes at the start of a new frame so they are
+    %% available after run_frame returns (for the renderer).
+    Machine0 = Machine#machine_state{border_changes = []},
+
     %% Phase 1: run to interrupt point (T = StartT + 32).
     Phase1End = StartT + ?INT_TSTATE,
-    Machine1 = run_until_tstates(Machine, Phase1End),
+    Machine1 = run_until_tstates(Machine0, Phase1End),
 
     %% Raise INT at the boundary.
     Cpu1 = Machine1#machine_state.cpu,
@@ -165,9 +174,9 @@ run_frame(#machine_state{t_states = StartT} = Machine) ->
     Machine3 = run_until_tstates(Machine2, Phase2End),
 
     %% Reset T-states to 0 (start of next frame).
+    %% border_changes are preserved for the renderer.
     Machine3#machine_state{
-        t_states = 0,
-        border_changes = []
+        t_states = 0
     }.
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.

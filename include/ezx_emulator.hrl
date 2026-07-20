@@ -7,6 +7,7 @@
     mem_write_fun = undefined,
     pending_interrupt = none,
     t_states = 0,
+    border_color = 0,
     border_changes = []
 }).
 
