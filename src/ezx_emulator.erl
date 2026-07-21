@@ -10,7 +10,9 @@
     run_frame/1,
     load_program/2,
     load_program/3,
+    load_sna/2,
     set_pc/2,
+    set_keyboard/2,
     run_until_tstates/2,
     read_byte/2,
     write_byte/3,
@@ -49,8 +51,18 @@ init(Mem, Rom) ->
             ExtContext#ext_context{memory = NewMem}
         end,
     PortReadFun =
-        fun(ExtContext, _Port) ->
-            {16#FF, ExtContext}
+        fun(ExtContext, Port) ->
+            case Port band 16#FF of
+                16#FE ->
+                    %% Keyboard: upper byte selects half-rows (active low).
+                    %% Multiple half-rows can be selected; results are ANDed.
+                    Keyboard = ExtContext#ext_context.keyboard,
+                    UpperByte = (Port bsr 8) band 16#FF,
+                    Result = decode_keyboard(Keyboard, UpperByte),
+                    {Result, ExtContext};
+                _ ->
+                    {16#FF, ExtContext}
+            end
         end,
     PortWriteFun =
         fun(ExtContext, Port, Byte) ->
@@ -91,6 +103,64 @@ load_program(Machine, BaseAddr, Program) when is_list(Program) ->
 set_pc(#machine_state{cpu = Cpu} = Machine, Addr) ->
     Machine#machine_state{cpu = Cpu#cpu_state{pc = Addr}}.
 
+%% @doc Update the keyboard matrix state.
+-spec set_keyboard(#machine_state{}, tuple()) -> #machine_state{}.
+set_keyboard(Machine, Keyboard) ->
+    Machine#machine_state{keyboard = Keyboard}.
+
+%% @doc Load a 48K SNA snapshot.
+-spec load_sna(#machine_state{}, binary()) -> #machine_state{}.
+load_sna(Machine, Data) when is_binary(Data) ->
+    case byte_size(Data) of
+        Sz when Sz < 27 + 49152 ->
+            error(bad_sna_header);
+        _ ->
+            load_sna_do(Machine, Data)
+    end.
+
+load_sna_do(Machine, Data) ->
+    <<I:8,
+      HLp:16/little, DEp:16/little, BCp:16/little, AFp:16/little,
+      HL:16/little, DE:16/little, BC:16/little, IY:16/little, IX:16/little,
+      IFF2:8, R:8,
+      AF:16/little, SP:16/little,
+      _IM:8, Border:8,
+      Mem:49152/bytes>> = Data,
+    MemWriteFun = Machine#machine_state.mem_write_fun,
+    ExtContext0 = #ext_context{memory = Machine#machine_state.memory},
+    MemList = binary:bin_to_list(Mem),
+    {_FinalOffset, ExtContext1} = lists:foldl(
+        fun(Byte, {Offset, Ctx}) ->
+            Addr = 16384 + Offset,
+            {Offset + 1, MemWriteFun(Ctx, Addr, Byte)}
+        end, {0, ExtContext0}, MemList),
+    MemReadFun = Machine#machine_state.mem_read_fun,
+    ReadCtx0 = #ext_context{memory = ExtContext1#ext_context.memory},
+    {PCL, ReadCtx1} = MemReadFun(ReadCtx0, SP band 16#FFFF),
+    {PCH, _ReadCtx2} = MemReadFun(ReadCtx1, (SP + 1) band 16#FFFF),
+    PC = (PCH bsl 8) bor PCL,
+    Cpu = Machine#machine_state.cpu,
+    Cpu1 = Cpu#cpu_state{
+        i = I, r = R,
+        a = AF bsr 8, f = AF band 16#FF,
+        b = BC bsr 8, c = BC band 16#FF,
+        d = DE bsr 8, e = DE band 16#FF,
+        h = HL bsr 8, l = HL band 16#FF,
+        sp = SP, pc = PC,
+        ixh = IX bsr 8, ixl = IX band 16#FF,
+        iyh = IY bsr 8, iyl = IY band 16#FF,
+        iff1 = IFF2, iff2 = IFF2,
+        a_alt = AFp bsr 8, f_alt = AFp band 16#FF,
+        b_alt = BCp bsr 8, c_alt = BCp band 16#FF,
+        d_alt = DEp bsr 8, e_alt = DEp band 16#FF,
+        h_alt = HLp bsr 8, l_alt = HLp band 16#FF
+    },
+    Machine#machine_state{
+        memory = ExtContext1#ext_context.memory,
+        cpu = Cpu1,
+        border_color = Border
+    }.
+
 -spec read_byte(#machine_state{}, non_neg_integer()) -> {byte(), #machine_state{}}.
 read_byte(#machine_state{memory = Mem, mem_read_fun = MemReadFun} = Machine, Addr) ->
     ExtContext = #ext_context{memory = Mem},
@@ -128,7 +198,8 @@ step(#machine_state{t_states = MachineTStates} = Machine) ->
         memory = Memory0,
         t_states = MachineTStates,
         frame_counter = MachineTStates div ?TSTATES_PER_FRAME,
-        border_changes = []
+        border_changes = [],
+        keyboard = Machine#machine_state.keyboard
     },
     Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = 0}),
     Ticks = Cpu1#cpu_state.t_states,
@@ -200,3 +271,23 @@ merge_border_changes(Existing, StepChanges) ->
     %% StepChanges are in reverse order (newest first within the step).
     %% We want to prepend them so the combined list remains newest-first.
     StepChanges ++ Existing.
+
+%% Decode ZX Spectrum keyboard state from the keyboard matrix.
+%% Keyboard is a tuple of 8 bytes (half-rows 0-7).
+%% UpperByte: each bit selects a half-row (active low, 0 = selected).
+%% Multiple selected half-rows are ANDed together (open-collector bus).
+%% Bits 5-7 of result are always 1 (floating bus).
+-spec decode_keyboard(tuple(), non_neg_integer()) -> non_neg_integer().
+decode_keyboard(Keyboard, UpperByte) ->
+    decode_keyboard_rows(Keyboard, UpperByte, 16#1F, 0).
+
+decode_keyboard_rows(_Keyboard, _UpperByte, Acc, 8) ->
+    Acc bor 16#E0;
+decode_keyboard_rows(Keyboard, UpperByte, Acc, N) ->
+    case (UpperByte band 1) of
+        0 ->
+            RowByte = element(N + 1, Keyboard),
+            decode_keyboard_rows(Keyboard, UpperByte bsr 1, Acc band RowByte, N + 1);
+        1 ->
+            decode_keyboard_rows(Keyboard, UpperByte bsr 1, Acc, N + 1)
+    end.

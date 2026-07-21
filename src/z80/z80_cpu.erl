@@ -1109,7 +1109,8 @@ execute_out_n_a(State) ->
     {Port, State1} = z80_cpu_helpers:fetch_byte(State),
     PortWriteFun = State1#cpu_state.port_write_fun,
     ExtCtx = State1#cpu_state.ext_context,
-    NewExtCtx = PortWriteFun(ExtCtx, Port, State1#cpu_state.a),
+    FullPort = (State1#cpu_state.a bsl 8) bor Port,
+    NewExtCtx = PortWriteFun(ExtCtx, FullPort, State1#cpu_state.a),
     State2 = State1#cpu_state{ext_context = NewExtCtx},
     z80_cpu_helpers:advance_tstates(State2, 4).
 
@@ -1117,7 +1118,8 @@ execute_in_a_n(State) ->
     {Port, State1} = z80_cpu_helpers:fetch_byte(State),
     PortReadFun = State1#cpu_state.port_read_fun,
     ExtCtx = State1#cpu_state.ext_context,
-    {Val, NewExtCtx} = PortReadFun(ExtCtx, Port),
+    FullPort = (State1#cpu_state.a bsl 8) bor Port,
+    {Val, NewExtCtx} = PortReadFun(ExtCtx, FullPort),
     State2 = State1#cpu_state{a = Val, ext_context = NewExtCtx},
     z80_cpu_helpers:advance_tstates(State2, 4).
 

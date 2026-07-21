@@ -488,7 +488,7 @@ execute_ed_indr(State) -> execute_ind(State, true).
 execute_ini(State, Repeat) ->
     HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
     B = State#cpu_state.b,
-    Port = State#cpu_state.c,
+    Port = (State#cpu_state.b bsl 8) bor State#cpu_state.c,
     {FinalB, FinalHL, FinalFlags, TotalT, StateFinal} =
         block_io_loop(State, HL, B, Port, 0, true, Repeat, true),
     State1 = StateFinal#cpu_state{
@@ -500,7 +500,7 @@ execute_ini(State, Repeat) ->
 execute_ind(State, Repeat) ->
     HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
     B = State#cpu_state.b,
-    Port = State#cpu_state.c,
+    Port = (State#cpu_state.b bsl 8) bor State#cpu_state.c,
     {FinalB, FinalHL, FinalFlags, TotalT, StateFinal} =
         block_io_loop(State, HL, B, Port, 0, true, Repeat, false),
     State1 = StateFinal#cpu_state{
@@ -549,7 +549,7 @@ execute_ed_otdr(State) -> execute_outd(State, true).
 execute_outi(State, Repeat) ->
     HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
     B = State#cpu_state.b,
-    Port = State#cpu_state.c,
+    Port = (State#cpu_state.b bsl 8) bor State#cpu_state.c,
     {FinalB, FinalHL, FinalFlags, TotalT, StateFinal} =
         block_out_loop(State, HL, B, Port, 0, true, Repeat, true),
     State1 = StateFinal#cpu_state{
@@ -561,7 +561,7 @@ execute_outi(State, Repeat) ->
 execute_outd(State, Repeat) ->
     HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
     B = State#cpu_state.b,
-    Port = State#cpu_state.c,
+    Port = (State#cpu_state.b bsl 8) bor State#cpu_state.c,
     {FinalB, FinalHL, FinalFlags, TotalT, StateFinal} =
         block_out_loop(State, HL, B, Port, 0, true, Repeat, false),
     State1 = StateFinal#cpu_state{
@@ -625,9 +625,9 @@ execute_ed_in_out(Opcode, State) ->
             z80_cpu_helpers:advance_tstates(State, 4)
     end.
 
-%% IN r,(C): read from port C, store in r - 12 T-states total (8 base + 4 added)
+%% IN r,(C): read from port BC, store in r - 12 T-states total (8 base + 4 added)
 execute_ed_in_r_c(State, Reg) ->
-    Port = State#cpu_state.c,
+    Port = (State#cpu_state.b bsl 8) bor State#cpu_state.c,
     PortReadFun = State#cpu_state.port_read_fun,
     ExtCtx = State#cpu_state.ext_context,
     {Val, NewExtCtx} = PortReadFun(ExtCtx, Port),
@@ -643,7 +643,7 @@ execute_ed_in_r_c(State, Reg) ->
 
 %% IN (C) / IN F,(C): 12 T-states (flags affected, result discarded)
 execute_ed_in_f_c(State) ->
-    Port = State#cpu_state.c,
+    Port = (State#cpu_state.b bsl 8) bor State#cpu_state.c,
     PortReadFun = State#cpu_state.port_read_fun,
     ExtCtx = State#cpu_state.ext_context,
     {Val, NewExtCtx} = PortReadFun(ExtCtx, Port),
@@ -658,7 +658,7 @@ execute_ed_in_f_c(State) ->
 
 %% OUT (C),r implementation
 execute_ed_out_c_r(State, Reg) ->
-    Port = State#cpu_state.c,
+    Port = (State#cpu_state.b bsl 8) bor State#cpu_state.c,
     Val = z80_cpu_helpers:get_reg_byte(Reg, State),
     PortWriteFun = State#cpu_state.port_write_fun,
     ExtCtx = State#cpu_state.ext_context,
@@ -667,7 +667,7 @@ execute_ed_out_c_r(State, Reg) ->
 
 %% OUT (C),0: 12 T-states total (8 base + 4 added)
 execute_ed_out_c_0(State) ->
-    Port = State#cpu_state.c,
+    Port = (State#cpu_state.b bsl 8) bor State#cpu_state.c,
     PortWriteFun = State#cpu_state.port_write_fun,
     ExtCtx = State#cpu_state.ext_context,
     NewExtCtx = PortWriteFun(ExtCtx, Port, 0),
