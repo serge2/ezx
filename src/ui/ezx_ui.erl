@@ -14,6 +14,8 @@
 -define(DEFAULT_SCALE, 2).
 -define(FRAME_INTERVAL, 20).
 
+-define(wxID_LOAD_TAP, 6000).
+
 -record(state, {
     machine   :: #machine_state{},
     frame     :: wxFrame:wxFrame(),
@@ -46,6 +48,8 @@ init(_Options) ->
     MenuBar = wxMenuBar:new(),
     FileMenu = wxMenu:new(),
     wxMenu:append(FileMenu, ?wxID_OPEN, "Load SNA\tCtrl+O", [{help, "Load a .sna snapshot"}]),
+    wxMenu:append(FileMenu, ?wxID_LOAD_TAP, "Load TAP\tCtrl+T", [{help, "Load a .tap tape file"}]),
+    wxMenu:appendSeparator(FileMenu),
     wxMenu:append(FileMenu, ?wxID_EXIT, "Quit\tCtrl+Q", [{help, "Exit emulator"}]),
     wxMenuBar:append(MenuBar, FileMenu, "File"),
     wxFrame:setMenuBar(Frame, MenuBar),
@@ -78,31 +82,33 @@ handle_cast(_Msg, State) ->
 handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                                  scale = Scale, keyboard = Keyboard,
                                  bitmap = OldBitmap, frame_count = FC0} = State) ->
-    % io:format("FRAME KB: ~p~n", [Keyboard]),                                
-    Machine1 = ezx_emulator:set_keyboard(Machine0, Keyboard),
-    Machine2 = ezx_emulator:run_frame(Machine1),
-    FC = FC0 + 1,
-    % Mem = Machine2#machine_state.memory,
-    % Mode = ezx_memory_48:read_byte(Mem, 16#5C41),
-    % CurChr = ezx_memory_48:read_byte(Mem, 16#5C8D),
-    % io:format("FRAME ~p: MODE=~p (0=KLC,1=E,2=G) CURCHR=~p (~c)~n", [FC, Mode, CurChr, CurChr]),
-    Changes = Machine2#machine_state.border_changes,
-    CB = Machine2#machine_state.border_color,
-    Mem = Machine2#machine_state.memory,
-    ReadFun = fun(Addr) -> ezx_memory_48:read_byte(Mem, Addr band 16#FFFF) end,
-    FrameData = ezx_video:decode_full_frame(ReadFun, FC, lists:reverse(Changes), CB),
-    Image = frame_to_image(FrameData),
-    W = ?DEFAULT_WIDTH * Scale,
-    H = ?DEFAULT_HEIGHT * Scale,
-    ScaledImage = wxImage:scale(Image, W, H),
-    NewBitmap = wxBitmap:new(ScaledImage),
-    wxImage:destroy(ScaledImage),
-    case OldBitmap of undefined -> ok; _ -> wxBitmap:destroy(OldBitmap) end,
-    DC = wxClientDC:new(Panel),
-    wxDC:drawBitmap(DC, NewBitmap, {0, 0}),
-    wxClientDC:destroy(DC),
-    erlang:send_after(?FRAME_INTERVAL, self(), frame_tick),
-    {noreply, State#state{machine = Machine2, bitmap = NewBitmap, frame_count = FC}};
+    try
+        Machine1 = ezx_emulator:set_keyboard(Machine0, Keyboard),
+        Machine2 = ezx_emulator:run_frame(Machine1),
+        FC = FC0 + 1,
+        Changes = Machine2#machine_state.border_changes,
+        CB = Machine2#machine_state.border_color,
+        Mem = Machine2#machine_state.memory,
+        ReadFun = fun(Addr) -> ezx_memory_48:read_byte(Mem, Addr band 16#FFFF) end,
+        FrameData = ezx_video:decode_full_frame(ReadFun, FC, lists:reverse(Changes), CB),
+        Image = frame_to_image(FrameData),
+        W = ?DEFAULT_WIDTH * Scale,
+        H = ?DEFAULT_HEIGHT * Scale,
+        ScaledImage = wxImage:scale(Image, W, H),
+        NewBitmap = wxBitmap:new(ScaledImage),
+        wxImage:destroy(ScaledImage),
+        case OldBitmap of undefined -> ok; _ -> wxBitmap:destroy(OldBitmap) end,
+        DC = wxClientDC:new(Panel),
+        wxDC:drawBitmap(DC, NewBitmap, {0, 0}),
+        wxClientDC:destroy(DC),
+        erlang:send_after(?FRAME_INTERVAL, self(), frame_tick),
+        {noreply, State#state{machine = Machine2, bitmap = NewBitmap, frame_count = FC}}
+    catch
+        C:E:S ->
+            io:format("Frame error: ~p:~p~n~p~n", [C, E, S]),
+            erlang:send_after(?FRAME_INTERVAL, self(), frame_tick),
+            {noreply, State}
+    end;
 
 handle_info(#wx{event = #wxClose{}}, State) ->
     {stop, normal, State};
@@ -147,6 +153,34 @@ handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected
 
 handle_info(#wx{id = ?wxID_EXIT, event = #wxCommand{type = command_menu_selected}}, State) ->
     {stop, normal, State};
+
+handle_info(#wx{id = ?wxID_LOAD_TAP, event = #wxCommand{type = command_menu_selected}}, State) ->
+    Dialog = wxFileDialog:new(State#state.frame, [{message, "Load TAP tape file"},
+                                                   {wildCard, "TAP files (*.tap)|*.tap"},
+                                                   {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}]),
+    case wxFileDialog:showModal(Dialog) of
+        ?wxID_OK ->
+            File = wxFileDialog:getPath(Dialog),
+            wxFileDialog:destroy(Dialog),
+            case file:read_file(File) of
+                {ok, Data} ->
+                    try
+                        NewMachine = ezx_emulator:load_tap(State#state.machine, Data),
+                        io:format("Loaded TAP: ~s~n", [File]),
+                        {noreply, State#state{machine = NewMachine}}
+                    catch
+                        C:E:S ->
+                            io:format("Failed to load TAP: ~s~n  ~p:~p~n~p~n", [File, C, E, S]),
+                            {noreply, State}
+                    end;
+                _ ->
+                    io:format("Failed to read file: ~s~n", [File]),
+                    {noreply, State}
+            end;
+        _ ->
+            wxFileDialog:destroy(Dialog),
+            {noreply, State}
+    end;
 
 handle_info(_Info, State) ->
     {noreply, State}.

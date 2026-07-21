@@ -11,6 +11,8 @@
     load_program/2,
     load_program/3,
     load_sna/2,
+    load_tap/2,
+    reset/1,
     set_pc/2,
     set_keyboard/2,
     run_until_tstates/2,
@@ -161,6 +163,111 @@ load_sna_do(Machine, Data) ->
         border_color = Border
     }.
 
+%% @doc Reset machine to a fresh boot state (ROM loaded, memory zeroed).
+-spec reset(#machine_state{}) -> #machine_state{}.
+reset(_Machine) ->
+    init().
+
+%% @doc Load a TAP file using tape traps.
+%% Parses TAP into {flag, data} block list, resets machine, lets ROM boot,
+%% then stores blocks for interception at LD-BYTES (0x0556).
+%% A keyboard queue types LOAD "" automatically.
+-spec load_tap(#machine_state{}, binary()) -> #machine_state{}.
+load_tap(_Machine, Data) when is_binary(Data) ->
+    Blocks = parse_tap_blocks(Data),
+    io:format("TAP: parsed ~p blocks~n", [length(Blocks)]),
+    FreshMachine = init(),
+    InitMachine = run_until_tstates(FreshMachine, 4000000),
+    Q = make_tap_load_queue(),
+    InitMachine#machine_state{
+        tape_blocks = Blocks,
+        keyboard_queue = Q
+    }.
+
+parse_tap_blocks(<<>>) -> [];
+parse_tap_blocks(<<Len:16/little, Flag:8, PayloadAndChecksum/binary>>) when byte_size(PayloadAndChecksum) >= Len - 1 ->
+    PayloadLen = Len - 2,
+    <<Payload:PayloadLen/binary, _Checksum:8, Remaining/binary>> = PayloadAndChecksum,
+    [{Flag, Payload} | parse_tap_blocks(Remaining)];
+parse_tap_blocks(_) -> [].
+
+%% @doc Tape trap: intercept LD-BYTES at PC=0x0556.
+%% Copies block data to memory at IX, sets registers for success, jumps to RET (0x05E2).
+tape_trap(#machine_state{cpu = Cpu, tape_blocks = [{_Flag, Data} | RestBlocks]} = Machine,
+          MachineTStates) ->
+    IX = (Cpu#cpu_state.ixh bsl 8) bor Cpu#cpu_state.ixl,
+    DE = (Cpu#cpu_state.d bsl 8) bor Cpu#cpu_state.e,
+    DataList = binary:bin_to_list(Data),
+    WriteLen = min(DE, length(DataList)),
+    {WriteData, _} = lists:split(WriteLen, DataList),
+    Machine1 = write_block(Machine, IX, WriteData),
+    NewIX = (IX + WriteLen) band 16#FFFF,
+    Cpu1 = Cpu#cpu_state{
+        pc = 16#05E2,
+        ixh = (NewIX bsr 8) band 16#FF,
+        ixl = NewIX band 16#FF,
+        d = 0, e = 0,
+        b = 16#B0, a = 0,
+        f = 1,  %% carry set = success
+        halted = false,
+        prefix = none
+    },
+    TStatesDelta = 1000,
+    NewMT = MachineTStates + TStatesDelta,
+    io:format("Tape trap: ~p bytes at 0x~.16B (~p left)~n",
+              [WriteLen, IX, length(RestBlocks)]),
+    Machine1#machine_state{
+        cpu = Cpu1#cpu_state{t_states = NewMT},
+        t_states = NewMT,
+        tape_blocks = RestBlocks
+    }.
+
+write_block(Machine, _Addr, []) -> Machine;
+write_block(Machine, Addr, [Byte | Rest]) ->
+    Machine1 = write_byte(Machine, Addr band 16#FFFF, Byte),
+    write_block(Machine1, (Addr + 1) band 16#FFFF, Rest).
+
+%% --- Auto-typing keyboard queue for LOAD "" ---
+%% Queue is a list of per-frame keyboard actions.
+%% Each element is consumed in one frame: {set, KeyboardTuple} or release.
+-type kb_action() :: {set, tuple()} | release.
+
+make_tap_load_queue() ->
+    D = ?KEYBOARD_DEFAULT,
+    J = key_pressed(D, {7, 3}),
+    Quote = key_pressed(key_pressed(D, {8, 1}), {6, 0}),
+    Enter = key_pressed(D, {7, 0}),
+    [
+        {repeat, 50, release},            %% wait for ROM init (6 sec)
+        {repeat, 3, {set, J}},            %% press J → LOAD keyword
+        {repeat, 10, release},            %% release, let ROM process LOAD token
+        {repeat, 3, {set, Quote}},        %% first "
+        {repeat, 5, release},             %% explicit release
+        {repeat, 3, {set, Quote}},        %% second "
+        {repeat, 5, release},             %% release before ENTER
+        {repeat, 3, {set, Enter}},        %% ENTER
+        {repeat, 5, release}              %% final release
+    ].
+
+key_pressed(KB, {Row, Bit}) ->
+    Old = element(Row, KB),
+    setelement(Row, KB, Old band (bnot (1 bsl Bit))).
+
+%% @doc Process one step of the keyboard auto-typing queue (called per frame).
+%% Queue elements: {repeat, N, Action} where Action is {set, KB} or release.
+%% Each frame consumes one count from the current repeat block.
+process_keyboard_queue(#machine_state{keyboard_queue = [{repeat, N, Action} | Rest]} = Machine) when N > 1 ->
+    KB = apply_kb_action(Machine#machine_state.keyboard, Action),
+    Machine#machine_state{keyboard = KB, keyboard_queue = [{repeat, N - 1, Action} | Rest]};
+process_keyboard_queue(#machine_state{keyboard_queue = [{repeat, 1, Action} | Rest]} = Machine) ->
+    KB = apply_kb_action(Machine#machine_state.keyboard, Action),
+    Machine#machine_state{keyboard = KB, keyboard_queue = Rest};
+process_keyboard_queue(Machine) ->
+    Machine.
+
+apply_kb_action(_KB, release) -> ?KEYBOARD_DEFAULT;
+apply_kb_action(_KB, {set, NewKB}) -> NewKB.
+
 -spec read_byte(#machine_state{}, non_neg_integer()) -> {byte(), #machine_state{}}.
 read_byte(#machine_state{memory = Mem, mem_read_fun = MemReadFun} = Machine, Addr) ->
     ExtContext = #ext_context{memory = Mem},
@@ -190,7 +297,16 @@ write_word(Machine, Addr, Word) ->
 
 %% @doc Execute one machine step by advancing the CPU once and updating machine time.
 -spec step(#machine_state{}) -> #machine_state{}.
-step(#machine_state{t_states = MachineTStates} = Machine) ->
+step(#machine_state{t_states = MachineTStates, tape_blocks = [_ | _]} = Machine) ->
+    Cpu0 = Machine#machine_state.cpu,
+    case Cpu0#cpu_state.pc of
+        16#0556 -> tape_trap(Machine, MachineTStates);
+        _ -> step_normal(Machine)
+    end;
+step(Machine) ->
+    step_normal(Machine).
+
+step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
     Memory0 = Machine#machine_state.memory,
     %% Build ext_context with current frame position so port callbacks can timestamp events.
@@ -226,7 +342,12 @@ step(#machine_state{t_states = MachineTStates} = Machine) ->
 %%   Phase 2: 32..69887 T-states — interrupt raised at boundary, then normal execution
 %% Frame boundary is ignored mid-instruction (variant A).
 -spec run_frame(#machine_state{}) -> #machine_state{}.
-run_frame(#machine_state{t_states = StartT} = Machine) ->
+run_frame(Machine) ->
+    %% Process auto-typing keyboard queue (overrides user keyboard while active).
+    MachineQ = process_keyboard_queue(Machine),
+    run_frame_1(MachineQ).
+
+run_frame_1(#machine_state{t_states = StartT} = Machine) ->
     %% Clear border_changes at the start of a new frame so they are
     %% available after run_frame returns (for the renderer).
     Machine0 = Machine#machine_state{border_changes = []},

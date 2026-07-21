@@ -15,7 +15,12 @@
     t_states = 0,
     border_color = 0,
     border_changes = [],
-    keyboard = ?KEYBOARD_DEFAULT
+    keyboard = ?KEYBOARD_DEFAULT,
+    %% Tape trap state: list of [{flag :: 0 | 16#FF, data :: binary()}]
+    %% served via LD-BYTES (0x0556) trap during execution.
+    tape_blocks = [],
+    %% Auto-typing queue: [{keyboard_tuple(), frames_to_hold}]
+    keyboard_queue = []
 }).
 
 -record(ext_context, {
