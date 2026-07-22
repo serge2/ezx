@@ -363,3 +363,53 @@ add_hl_half_carry_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#09),  %% ADD HL,BC
     Cpu3 = z80_cpu:step(Cpu2),
     ?assertEqual(?FLAG_H, Cpu3#cpu_state.f band ?FLAG_H).
+
+%% --- ADD HL,rr F3/F5 from high byte of result ---
+
+add_hl_bc_f3f5_test() ->
+    %% ADD HL,BC: HL=0x1000, BC=0x0028 -> Res=0x1028
+    %% ResHi = 0x10 -> F3=0, F5=0
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#10, l = 16#00, b = 16#00, c = 16#28},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#09),
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#1028, z80_cpu:get_reg_pair(hl, Cpu3)),
+    ?assertEqual(0, Cpu3#cpu_state.f band 16#28).
+
+add_hl_de_f3f5_both_test() ->
+    %% ADD HL,DE: HL=0x2800, DE=0x0028 -> Res=0x2828
+    %% ResHi = 0x28 -> F3=1, F5=1
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#28, l = 16#00, d = 16#00, e = 16#28},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#19),
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#2828, z80_cpu:get_reg_pair(hl, Cpu3)),
+    ?assertEqual(16#28, Cpu3#cpu_state.f band 16#28).
+
+add_hl_hl_f3f5_test() ->
+    %% ADD HL,HL: HL=0x1400 -> Res=0x2800
+    %% ResHi = 0x28 -> F3=1, F5=1 (0x28 & 0x28 = 0x28)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#14, l = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#29),
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#2800, z80_cpu:get_reg_pair(hl, Cpu3)),
+    ?assertEqual(16#28, Cpu3#cpu_state.f band 16#28).
+
+add_hl_sp_f3f5_test() ->
+    %% ADD HL,SP: HL=0x0000, SP=0x2800 -> Res=0x2800
+    %% ResHi = 0x28 -> F3=1, F5=1 (0x28 & 0x28 = 0x28)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#00, l = 16#00, sp = 16#2800},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#39),
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(16#2800, z80_cpu:get_reg_pair(hl, Cpu3)),
+    ?assertEqual(16#28, Cpu3#cpu_state.f band 16#28).
+
+%% ADD HL,rr: N=0, H=0 when no half carry
+add_hl_bc_no_h_n_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{h = 16#10, l = 16#00, b = 16#20, c = 16#00},
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#09),
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(0, Cpu3#cpu_state.f band (?FLAG_H bor ?FLAG_N)).

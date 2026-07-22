@@ -402,3 +402,261 @@ ed_otir_test() ->
     ?assertEqual(16#4002, z80_cpu:get_reg_pair(hl, Cpu6)),
     ?assertEqual(16#00, Cpu6#cpu_state.b),
     ?assertEqual(37, z80_cpu:t_states(Cpu6)).
+
+%% --- ED RETN/RETI ---
+
+ed_retn_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    %% Push return address 0x1234 onto stack at 0x4000-0x4001
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#34),  %% low byte
+    Cpu2 = test_helpers:write_mem(Cpu1, 16#4001, 16#12),  %% high byte
+    Cpu3 = test_helpers:write_mem(Cpu2, 0, 16#ED),
+    Cpu4 = test_helpers:write_mem(Cpu3, 1, 16#45),  %% RETN
+    Cpu5 = Cpu4#cpu_state{sp = 16#4000, iff2 = 1, f = 16#FF, a = 16#AA},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#1234, Cpu6#cpu_state.pc),
+    ?assertEqual(16#4002, Cpu6#cpu_state.sp),
+    ?assertEqual(1, Cpu6#cpu_state.iff1),
+    ?assertEqual(16#FF, Cpu6#cpu_state.f),  %% flags unchanged
+    ?assertEqual(16#AA, Cpu6#cpu_state.a),
+    ?assertEqual(14, z80_cpu:t_states(Cpu6)).
+
+ed_reti_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#78),
+    Cpu2 = test_helpers:write_mem(Cpu1, 16#4001, 16#56),
+    Cpu3 = test_helpers:write_mem(Cpu2, 0, 16#ED),
+    Cpu4 = test_helpers:write_mem(Cpu3, 1, 16#4D),  %% RETI
+    Cpu5 = Cpu4#cpu_state{sp = 16#4000, iff2 = 1, f = 16#FF, a = 16#BB},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#5678, Cpu6#cpu_state.pc),
+    ?assertEqual(16#4002, Cpu6#cpu_state.sp),
+    ?assertEqual(1, Cpu6#cpu_state.iff1),
+    ?assertEqual(16#FF, Cpu6#cpu_state.f),
+    ?assertEqual(16#BB, Cpu6#cpu_state.a),
+    ?assertEqual(14, z80_cpu:t_states(Cpu6)).
+
+ed_retn_iff2_zero_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#00),
+    Cpu2 = test_helpers:write_mem(Cpu1, 16#4001, 16#80),
+    Cpu3 = test_helpers:write_mem(Cpu2, 0, 16#ED),
+    Cpu4 = test_helpers:write_mem(Cpu3, 1, 16#45),  %% RETN
+    Cpu5 = Cpu4#cpu_state{sp = 16#4000, iff2 = 0, f = 16#00},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#8000, Cpu6#cpu_state.pc),
+    ?assertEqual(0, Cpu6#cpu_state.iff1),
+    ?assertEqual(0, Cpu6#cpu_state.iff2).
+
+%% --- ED Undocumented RETN*/RETI* (ED 55,5D,65,6D,75,7D) ---
+
+ed_retn_55_test() -> ed_retn_undoc_test(16#55).
+ed_retn_65_test() -> ed_retn_undoc_test(16#65).
+ed_retn_75_test() -> ed_retn_undoc_test(16#75).
+ed_reti_5d_test() -> ed_retn_undoc_test(16#5D).
+ed_reti_6d_test() -> ed_retn_undoc_test(16#6D).
+ed_reti_7d_test() -> ed_retn_undoc_test(16#7D).
+
+ed_retn_undoc_test(Opc) ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#56),
+    Cpu2 = test_helpers:write_mem(Cpu1, 16#4001, 16#34),
+    Cpu3 = test_helpers:write_mem(Cpu2, 0, 16#ED),
+    Cpu4 = test_helpers:write_mem(Cpu3, 1, Opc),
+    Cpu5 = Cpu4#cpu_state{sp = 16#4000, iff2 = 1, f = 16#FF},
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#3456, Cpu6#cpu_state.pc),
+    ?assertEqual(16#4002, Cpu6#cpu_state.sp),
+    ?assertEqual(1, Cpu6#cpu_state.iff1),
+    ?assertEqual(16#FF, Cpu6#cpu_state.f),
+    ?assertEqual(14, z80_cpu:t_states(Cpu6)).
+
+%% --- ED LDI/LDD F3/F5 tests - F3/F5 from (transferred_byte + A) ---
+
+ed_ldi_f3f5_test() ->
+    %% LDI: transferred byte + A -> F3/F5 bits
+    %% Mem(0x4000) = 0x05, A = 0x03 -> sum = 0x08, F3=1, F5=0
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#05),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A0),  %% LDI
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, d = 16#50, e = 16#00,
+                          b = 0, c = 16#02, a = 16#03},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#08, Cpu5#cpu_state.f band 16#28).
+
+ed_ldi_f3f5_both_test() ->
+    %% LDI: transferred byte + A -> F3/F5 both set
+    %% Mem(0x4000) = 0x18, A = 0x10 -> sum = 0x28
+    %% F3 = V & 0x08 = 0x08, F5 = V & 0x02 mapped to 0x20 = 0 (undocumented: bit1 not bit5)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#18),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A0),  %% LDI
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, d = 16#50, e = 16#00,
+                          b = 0, c = 16#02, a = 16#10},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#08, Cpu5#cpu_state.f band 16#28).
+
+ed_ldi_pv_zero_test() ->
+    %% LDI: P/V=0 when BC=0 after decrement
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#11),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A0),  %% LDI
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, d = 16#50, e = 16#00,
+                          b = 0, c = 16#01, a = 16#00},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(0, Cpu5#cpu_state.f band ?FLAG_V).
+
+ed_ldd_f3f5_test() ->
+    %% LDD: transferred byte + A -> F3/F5 bits
+    %% Mem(0x4000) = 0x05, A = 0x03 -> sum = 0x08, F3=1, F5=0
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#05),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A8),  %% LDD
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, d = 16#50, e = 16#00,
+                          b = 0, c = 16#02, a = 16#03},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#08, Cpu5#cpu_state.f band 16#28).
+
+ed_ldd_pv_zero_test() ->
+    %% LDD: P/V=0 when BC=0 after decrement
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#11),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A8),  %% LDD
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, d = 16#50, e = 16#00,
+                          b = 0, c = 16#01, a = 16#00},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(0, Cpu5#cpu_state.f band ?FLAG_V).
+
+%% --- ED CPI/CPD F3/F5 tests - F3/F5 from (A - (HL) - H_flag) ---
+
+ed_cpi_f3f5_test() ->
+    %% CPI: temp = A - (HL) - H_flag, F3/F5 from temp
+    %% A = 0x55, (HL) = 0x01, H_flag = 0 -> temp = 0x54
+    %% F3 = Tmp & 0x08 = 0, F5 = Tmp & 0x02 mapped to 0x20 = 0 (both zero)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#01),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A1),  %% CPI
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, a = 16#55, b = 0, c = 16#03},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#00, Cpu5#cpu_state.f band 16#28).
+
+ed_cpi_f3f5_with_h_flag_test() ->
+    %% CPI with half-carry: temp = A - (HL) - H
+    %% A = 0x10, (HL) = 0x08, H_flag = 1 -> temp = 0x10 - 0x08 - 1 = 0x07
+    %% F3 = Tmp & 0x08 = 0, F5 = Tmp & 0x02 mapped to 0x20 = 0x20
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#08),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A1),  %% CPI
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, a = 16#10, b = 0, c = 16#03},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#20, Cpu5#cpu_state.f band 16#28).
+
+ed_cpi_pv_zero_test() ->
+    %% CPI: P/V=0 when BC=0 after decrement (match, BC was 1)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#55),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A1),  %% CPI
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, a = 16#55, b = 0, c = 16#01},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(0, Cpu5#cpu_state.f band ?FLAG_V).
+
+ed_cpd_f3f5_test() ->
+    %% CPD: temp = A - (HL) - H_flag, F3/F5 from temp
+    %% A = 0x30, (HL) = 0x01, H_flag = 0 -> temp = 0x2F
+    %% 0x2F = 0010 1111, F3=1, F5=1
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#01),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A9),  %% CPD
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, a = 16#30, b = 0, c = 16#03},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#28, Cpu5#cpu_state.f band 16#28).
+
+ed_cpd_pv_zero_test() ->
+    %% CPD: P/V=0 when BC=0 after decrement (match, BC was 1)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#55),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#A9),  %% CPD
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, a = 16#55, b = 0, c = 16#01},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(0, Cpu5#cpu_state.f band ?FLAG_V).
+
+%% --- NEG undocumented variants ---
+
+ed_neg_4c_test() -> ed_neg_undoc_variant_test(16#4C).
+ed_neg_54_test() -> ed_neg_undoc_variant_test(16#54).
+ed_neg_5c_test() -> ed_neg_undoc_variant_test(16#5C).
+ed_neg_64_test() -> ed_neg_undoc_variant_test(16#64).
+ed_neg_6c_test() -> ed_neg_undoc_variant_test(16#6C).
+ed_neg_74_test() -> ed_neg_undoc_variant_test(16#74).
+ed_neg_7c_test() -> ed_neg_undoc_variant_test(16#7C).
+
+ed_neg_undoc_variant_test(Opc) ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, Opc),
+    Cpu3 = Cpu2#cpu_state{a = 16#40},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#C0, Cpu4#cpu_state.a),
+    ?assertEqual(16#83, Cpu4#cpu_state.f).
+
+%% --- RLD/RRD: only C preserved, N=0, H=0, F3/F5 from result ---
+
+ed_rrd_flags_test() ->
+    %% RRD: N=0, H=0, only C preserved from old flags
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#34),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#67),  %% RRD
+    Cpu4 = Cpu3#cpu_state{a = 16#00, h = 16#40, l = 16#00,
+                          f = ?FLAG_C bor ?FLAG_N bor ?FLAG_H bor ?FLAG_V bor ?FLAG_Z bor ?FLAG_S},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(?FLAG_C, Cpu5#cpu_state.f band ?FLAG_C),  %% C preserved
+    ?assertEqual(0, Cpu5#cpu_state.f band (?FLAG_N bor ?FLAG_H)).  %% N and H cleared
+
+ed_rld_flags_test() ->
+    %% RLD: N=0, H=0, only C preserved
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#34),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#6F),  %% RLD
+    Cpu4 = Cpu3#cpu_state{a = 16#00, h = 16#40, l = 16#00,
+                          f = ?FLAG_C bor ?FLAG_N bor ?FLAG_H bor ?FLAG_V bor ?FLAG_Z bor ?FLAG_S},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(?FLAG_C, Cpu5#cpu_state.f band ?FLAG_C),
+    ?assertEqual(0, Cpu5#cpu_state.f band (?FLAG_N bor ?FLAG_H)).
+
+ed_rrd_f3f5_test() ->
+    %% RRD: F3/F5 from result A
+    %% A = 0x28, (HL) = 0x34 -> A = 0x24, (HL) = 0x43
+    %% 0x24: bit5=1, bit3=0 -> F3F5 = 0x20
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#34),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#67),  %% RRD
+    Cpu4 = Cpu3#cpu_state{a = 16#28, h = 16#40, l = 16#00, f = 0},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#24, Cpu5#cpu_state.a),
+    ?assertEqual(16#20, Cpu5#cpu_state.f band 16#28).
+
+ed_rld_f3f5_test() ->
+    %% RLD: F3/F5 from result A
+    %% A = 0x00, (HL) = 0x28 -> temp=0x28, A = 0x02, (HL) = 0x80
+    %% 0x02: F3=0, F5=0
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#28),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#6F),  %% RLD
+    Cpu4 = Cpu3#cpu_state{a = 16#00, h = 16#40, l = 16#00, f = 0},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#02, Cpu5#cpu_state.a),
+    ?assertEqual(0, Cpu5#cpu_state.f band 16#28).

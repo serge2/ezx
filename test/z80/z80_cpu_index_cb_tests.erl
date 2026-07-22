@@ -710,3 +710,75 @@ dd_cb_register_ops_read_write_memory_test() ->
     %% B register should get the result
     ?assertEqual(16#03, Cpu7#cpu_state.b),
     ?assertEqual(?FLAG_C, Cpu7#cpu_state.f band ?FLAG_C).
+
+%% ============================================================================
+%% BIT b,(IX+d) F3/F5 tests - F3/F5 from address high byte (IXH/IYH)
+%% ============================================================================
+
+dd_cb_bit_3_ix_f3f5_test() ->
+    %% BIT 3,(IX+0): F3/F5 from address high byte
+    %% IX = 0x2800, Addr = 0x2800, AddrHi = 0x28 (bit3=1, bit5=0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#2800, 16#FF),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#CB),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#5E),  %% BIT 3,(IX+0)
+    Cpu6 = Cpu5#cpu_state{ixh = 16#28, ixl = 16#00},
+    Cpu7 = z80_cpu:step(Cpu6),
+    ?assertEqual(16#28, Cpu7#cpu_state.f band 16#28).
+
+dd_cb_bit_5_ix_f3f5_test() ->
+    %% BIT 5,(IX+0): F3/F5 from address high byte
+    %% IX = 0x0028, Addr = 0x0028, AddrHi = 0x00 (no F3/F5)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#0028, 16#20),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#CB),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#6E),  %% BIT 5,(IX+0)
+    Cpu6 = Cpu5#cpu_state{ixh = 16#00, ixl = 16#28},
+    Cpu7 = z80_cpu:step(Cpu6),
+    ?assertEqual(0, Cpu7#cpu_state.f band 16#28).
+
+dd_cb_bit_7_ix_f3f5_test() ->
+    %% BIT 7,(IX+0): S=1, F3/F5 from address high byte
+    %% IX = 0x2A00, Addr = 0x2A00, AddrHi = 0x2A (bit3=1, bit5=1)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#2A00, 16#80),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#CB),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#7E),  %% BIT 7,(IX+0)
+    Cpu6 = Cpu5#cpu_state{ixh = 16#2A, ixl = 16#00},
+    Cpu7 = z80_cpu:step(Cpu6),
+    ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S),
+    ?assertEqual(16#28, Cpu7#cpu_state.f band 16#28).
+
+fd_cb_bit_5_iy_f3f5_test() ->
+    %% BIT 5,(IY+0): F3/F5 from IYH
+    %% IY = 0x5028, AddrHi = 0x50 (bit3=0, bit5=0)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#5028, 16#20),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#FD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#CB),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#6E),  %% BIT 5,(IY+0)
+    Cpu6 = Cpu5#cpu_state{iyh = 16#50, iyl = 16#28},
+    Cpu7 = z80_cpu:step(Cpu6),
+    ?assertEqual(16#00, Cpu7#cpu_state.f band 16#28).
+
+dd_cb_bit_ix_zero_f3f5_test() ->
+    %% BIT 0,(IX+0): Z=1, F3/F5 from address high byte
+    %% IX = 0x2800, AddrHi = 0x28 (bit3=1, bit5=1)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#2800, 16#00),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#DD),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#CB),
+    Cpu4 = test_helpers:write_mem(Cpu3, 2, 16#00),
+    Cpu5 = test_helpers:write_mem(Cpu4, 3, 16#46),  %% BIT 0,(IX+0)
+    Cpu6 = Cpu5#cpu_state{ixh = 16#28, ixl = 16#00},
+    Cpu7 = z80_cpu:step(Cpu6),
+    ?assertEqual(?FLAG_Z, Cpu7#cpu_state.f band ?FLAG_Z),
+    ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_S),
+    ?assertEqual(16#28, Cpu7#cpu_state.f band 16#28).

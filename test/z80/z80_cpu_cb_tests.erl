@@ -831,3 +831,169 @@ cb_set_7_a_test() ->
     Cpu4 = z80_cpu:step(Cpu3),
     ?assertEqual(16#80, Cpu4#cpu_state.a),
     ?assertEqual(8, z80_cpu:t_states(Cpu4)).
+
+%% ============================================================================
+%% F3/F5 Flag Tests for CB Shift/Rotate ops
+%% ============================================================================
+
+%% RLC: F3/F5 from result
+cb_rlc_b_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#00),  %% RLC B
+    %% B = 0x28 -> result 0x50, 0x50 & 0x28 = 0x00 (bit3=0, bit5=0)
+    Cpu3 = Cpu2#cpu_state{b = 16#28, f = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#50, Cpu4#cpu_state.b),
+    ?assertEqual(16#00, Cpu4#cpu_state.f band 16#28).
+
+cb_rlc_a_f3f5_both_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#07),  %% RLC A
+    %% A = 0x01 -> result 0x02, no F3/F5 set
+    Cpu3 = Cpu2#cpu_state{a = 16#01, f = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(0, Cpu4#cpu_state.f band 16#28).
+
+%% RRC: F3/F5 from result
+cb_rrc_b_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#08),  %% RRC B
+    %% B = 0xA0 -> result 0x50, 0x50 & 0x28 = 0x00
+    Cpu3 = Cpu2#cpu_state{b = 16#A0, f = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#50, Cpu4#cpu_state.b),
+    ?assertEqual(16#00, Cpu4#cpu_state.f band 16#28).
+
+%% SLA: F3/F5 from result
+cb_sla_b_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#20),  %% SLA B
+    %% B = 0x14 -> result 0x28, 0x28 & 0x28 = 0x28
+    Cpu3 = Cpu2#cpu_state{b = 16#14, f = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#28, Cpu4#cpu_state.b),
+    ?assertEqual(16#28, Cpu4#cpu_state.f band 16#28).
+
+%% SRA: F3/F5 from result
+cb_sra_b_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#28),  %% SRA B
+    %% B = 0xA8 -> result 0xD4, 0xD4 & 0x28 = 0x00
+    Cpu3 = Cpu2#cpu_state{b = 16#A8, f = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#D4, Cpu4#cpu_state.b),
+    ?assertEqual(16#00, Cpu4#cpu_state.f band 16#28).
+
+%% BIT b,r: F3/F5 from register value
+cb_bit_3_b_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#58),  %% BIT 3,B
+    Cpu3 = Cpu2#cpu_state{b = 16#28},  %% B has bit3=1, bit5=1
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#28, Cpu4#cpu_state.f band 16#28).  %% F3=1, F5=1
+
+cb_bit_5_b_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#68),  %% BIT 5,B
+    Cpu3 = Cpu2#cpu_state{b = 16#20},  %% B has bit3=0, bit5=1
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#20, Cpu4#cpu_state.f band 16#28).  %% F3=0, F5=1
+
+cb_bit_7_s_flag_only_test() ->
+    %% BIT 7: S flag set only for BIT 7 (already tested above, but confirm other bits don't set S)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#78),  %% BIT 7,B
+    Cpu3 = Cpu2#cpu_state{b = 16#80},  %% B has bit7=1
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(?FLAG_S, Cpu4#cpu_state.f band ?FLAG_S),
+    ?assertEqual(0, Cpu4#cpu_state.f band ?FLAG_Z).
+
+%% BIT b,(HL): F3/F5 from H register
+cb_bit_3_hl_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#FF),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#CB),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#5E),  %% BIT 3,(HL)
+    %% H=0x40 (bit3=0, bit5=0), (HL)=0xFF
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#00, Cpu5#cpu_state.f band 16#28).  %% F3=0, F5=0 from H
+
+%% RL: F3/F5 from result
+cb_rl_b_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#10),  %% RL B
+    %% B = 0x14 -> result 0x28 (bit3=1, bit5=1), carry=0
+    Cpu3 = Cpu2#cpu_state{b = 16#14, f = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#28, Cpu4#cpu_state.b),
+    ?assertEqual(16#28, Cpu4#cpu_state.f band 16#28).
+
+%% RR: F3/F5 from result
+cb_rr_b_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#18),  %% RR B
+    %% B = 0x05 -> result 0x02 (no F3/F5), carry=1
+    Cpu3 = Cpu2#cpu_state{b = 16#05, f = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#02, Cpu4#cpu_state.b),
+    ?assertEqual(0, Cpu4#cpu_state.f band 16#28).
+
+%% SRL: F3/F5 from result
+cb_srl_b_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#38),  %% SRL B
+    %% B = 0x50 -> result 0x28 (bit3=1, bit5=1), carry=0
+    Cpu3 = Cpu2#cpu_state{b = 16#50, f = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#28, Cpu4#cpu_state.b),
+    ?assertEqual(16#28, Cpu4#cpu_state.f band 16#28).
+
+%% SLL: F3/F5 from result
+cb_sll_b_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#30),  %% SLL B
+    %% B = 0x0A -> result 0x15 (no F3/F5), carry=0
+    Cpu3 = Cpu2#cpu_state{b = 16#0A, f = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#15, Cpu4#cpu_state.b),
+    ?assertEqual(0, Cpu4#cpu_state.f band 16#28).
+
+%% CB ops: verify N=0, H=0 for all shift/rotate types
+cb_rlc_h_n_zero_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#00),  %% RLC B
+    Cpu3 = Cpu2#cpu_state{b = 16#80, f = ?FLAG_H bor ?FLAG_N},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(0, Cpu4#cpu_state.f band (?FLAG_H bor ?FLAG_N)).
+
+cb_sla_h_n_zero_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#20),  %% SLA B
+    Cpu3 = Cpu2#cpu_state{b = 16#40, f = ?FLAG_H bor ?FLAG_N},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(0, Cpu4#cpu_state.f band (?FLAG_H bor ?FLAG_N)).
+
+%% CB BIT: verify N=0, H=1
+cb_bit_h_n_flag_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#CB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#40),  %% BIT 0,B
+    Cpu3 = Cpu2#cpu_state{b = 16#01, f = ?FLAG_N},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(?FLAG_H, Cpu4#cpu_state.f band ?FLAG_H),
+    ?assertEqual(0, Cpu4#cpu_state.f band ?FLAG_N).
