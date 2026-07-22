@@ -12,9 +12,13 @@
 -define(DEFAULT_WIDTH, 352).
 -define(DEFAULT_HEIGHT, 288).
 -define(DEFAULT_SCALE, 2).
--define(FRAME_INTERVAL, 20).
+-define(FCREPORT_INTERVAL, 100).
 
 -define(wxID_LOAD_TAP, 6000).
+
+%% Audio: 44100 Hz * 2 bytes = 88200 bytes/sec
+-define(AUDIO_RATE, 88200).
+-define(BYTES_PER_FRAME, 1764).  %% 882 samples * 2 bytes
 
 -record(state, {
     machine   :: #machine_state{},
@@ -23,7 +27,10 @@
     bitmap    :: wxBitmap:wxBitmap() | undefined,
     scale = ?DEFAULT_SCALE :: pos_integer(),
     keyboard  :: tuple(),
-    frame_count = 0 :: non_neg_integer()
+    frame_count = 0 :: non_neg_integer(),
+    aplay_port :: port() | undefined,
+    audio_start_us = 0 :: non_neg_integer(),
+    audio_bytes = 0 :: non_neg_integer()
 }).
 
 start() -> start([]).
@@ -44,7 +51,6 @@ init(_Options) ->
     Frame = wxFrame:new(wx:null(), -1, "ezx - ZX Spectrum emulator",
                         [{size, {?DEFAULT_WIDTH * ?DEFAULT_SCALE,
                                  ?DEFAULT_HEIGHT * ?DEFAULT_SCALE}}]),
-    % Menu bar
     MenuBar = wxMenuBar:new(),
     FileMenu = wxMenu:new(),
     wxMenu:append(FileMenu, ?wxID_OPEN, "Load SNA\tCtrl+O", [{help, "Load a .sna snapshot"}]),
@@ -63,14 +69,18 @@ init(_Options) ->
     wxFrame:show(Frame),
     wxWindow:setFocus(Panel),
 
+    Cmd = "aplay -t raw -f S16_LE -r 44100 -c 1 --buffer-size=441 -q",
+    AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
+
     State = #state{
         machine = Machine2,
         frame = Frame,
         panel = Panel,
         keyboard = Keyboard,
-        frame_count = FC
+        frame_count = FC,
+        aplay_port = AplayPort
     },
-    erlang:send_after(?FRAME_INTERVAL, self(), frame_tick),
+    erlang:send_after(0, self(), frame_tick),
     {ok, State}.
 
 handle_call(_Request, _From, State) ->
@@ -80,11 +90,20 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
-                                 scale = Scale, keyboard = Keyboard,
-                                 bitmap = OldBitmap, frame_count = FC0} = State) ->
+                                  scale = Scale, keyboard = Keyboard,
+                                  bitmap = OldBitmap, frame_count = FC0,
+                                  aplay_port = Port} = State) ->
     try
         Machine1 = ezx_emulator:set_keyboard(Machine0, Keyboard),
         Machine2 = ezx_emulator:run_frame(Machine1),
+        PCM = Machine2#machine_state.beeper_pcm,
+
+        %% Write audio to port
+        port_command(Port, PCM),
+        ByteSize = byte_size(PCM),
+        Now = erlang:monotonic_time(microsecond),
+
+       
         FC = FC0 + 1,
         Changes = Machine2#machine_state.border_changes,
         CB = Machine2#machine_state.border_color,
@@ -101,25 +120,65 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
         DC = wxClientDC:new(Panel),
         wxDC:drawBitmap(DC, NewBitmap, {0, 0}),
         wxClientDC:destroy(DC),
-        erlang:send_after(?FRAME_INTERVAL, self(), frame_tick),
-        {noreply, State#state{machine = Machine2, bitmap = NewBitmap, frame_count = FC}}
+
+
+        %% Initialize audio clock on first write
+        StartUs0 = case State#state.audio_start_us of
+            0 -> Now;
+            S -> S
+        end,
+
+        %% Estimate buffer level: bytes written - bytes consumed
+        Written0 = State#state.audio_bytes + ByteSize,
+        ElapsedUs = Now - StartUs0,
+        BytesConsumed = ElapsedUs * ?AUDIO_RATE div 1000000,
+        BufferLevel0 = Written0 - BytesConsumed,
+
+        %% If there was a long gap (dialog/snapshot load), reset the clock.
+        %% Buffer going very negative means our estimate is stale.
+        {StartUs, Written, BufferLevel} =
+            case BufferLevel0 < -(?BYTES_PER_FRAME * 2) of
+                true ->
+                    {Now, ByteSize, ByteSize};
+                false ->
+                    {StartUs0, Written0, BufferLevel0}
+            end,
+
+        case FC rem ?FCREPORT_INTERVAL of
+            0 ->
+                io:format("Frame ~p: buffer_level=~p bytes~n",
+                          [FC, BufferLevel]);
+            _ -> ok
+        end,
+
+        %% Schedule next frame: when buffer drops to ~3 frames worth
+        %% (absorbs GC pauses and delivery jitter without audible latency)
+        Surplus = BufferLevel - (?BYTES_PER_FRAME * 3),
+        case Surplus > 0 of
+            true ->
+                MsUntilLow = Surplus * 1000 div ?AUDIO_RATE,
+                erlang:send_after(max(1, MsUntilLow), self(), frame_tick);
+            false ->
+                erlang:send_after(0, self(), frame_tick)
+        end,
+
+        {noreply, State#state{machine = Machine2, bitmap = NewBitmap, frame_count = FC,
+                              audio_start_us = StartUs, audio_bytes = Written}}
     catch
-        C:E:S ->
-            io:format("Frame error: ~p:~p~n~p~n", [C, E, S]),
-            erlang:send_after(?FRAME_INTERVAL, self(), frame_tick),
+        C:E:ST ->
+            io:format("Frame error: ~p:~p~n~p~n", [C, E, ST]),
+            erlang:send_after(20, self(), frame_tick),
             {noreply, State}
     end;
 
 handle_info(#wx{event = #wxClose{}}, State) ->
     {stop, normal, State};
 
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = Key, rawCode = RawCode} = E}, State) ->
-%    io:format("Key down: ~p~n", [E]),
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = Key, rawCode = _RawCode} = _E}, State) ->
     Keyboard = press_key(State#state.keyboard, Key),
     {noreply, State#state{keyboard = Keyboard}};
 
-handle_info(#wx{event = #wxKey{type = key_up, keyCode = Key, rawCode = RawCode} = E}, State) ->
-%    io:format("Key up: ~p~n", [E]),
+handle_info(#wx{event = #wxKey{type = key_up, keyCode = Key, rawCode = _RawCode} = _E}, State) ->
     Keyboard = release_key(State#state.keyboard, Key),
     {noreply, State#state{keyboard = Keyboard}};
 
@@ -185,7 +244,8 @@ handle_info(#wx{id = ?wxID_LOAD_TAP, event = #wxCommand{type = command_menu_sele
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{frame = Frame, bitmap = Bitmap}) ->
+terminate(_Reason, #state{frame = Frame, bitmap = Bitmap, aplay_port = Port}) ->
+    catch port_close(Port),
     case Bitmap of undefined -> ok; _ -> wxBitmap:destroy(Bitmap) end,
     wxFrame:destroy(Frame),
     ok.

@@ -20,7 +20,11 @@
     %% served via LD-BYTES (0x0556) trap during execution.
     tape_blocks = [],
     %% Auto-typing queue: [{keyboard_tuple(), frames_to_hold}]
-    keyboard_queue = []
+    keyboard_queue = [],
+    %% Beeper state for audio generation.
+    beeper = undefined,
+    %% PCM audio output from the last completed frame (binary, S16LE mono).
+    beeper_pcm = <<>>
 }).
 
 -record(ext_context, {
@@ -28,5 +32,6 @@
     t_states = 0,
     frame_counter = 0,
     border_changes = [],
-    keyboard = ?KEYBOARD_DEFAULT
+    keyboard = ?KEYBOARD_DEFAULT,
+    beeper = undefined
 }).

@@ -73,8 +73,13 @@ init(Mem, Rom) ->
                     BorderColor = Byte band 16#07,
                     TState = ExtContext#ext_context.t_states,
                     Changes = ExtContext#ext_context.border_changes,
+                    %% Bit 4: beeper speaker output.
+                    BeeperLevel = (Byte bsr 4) band 1,
+                    Beeper0 = ExtContext#ext_context.beeper,
+                    Beeper1 = ezx_beeper:set_level(Beeper0, BeeperLevel, TState),
                     ExtContext#ext_context{
-                        border_changes = [{TState, BorderColor} | Changes]
+                        border_changes = [{TState, BorderColor} | Changes],
+                        beeper = Beeper1
                     };
                 _ ->
                     ExtContext
@@ -85,7 +90,8 @@ init(Mem, Rom) ->
         cpu = Cpu0,
         memory = Mem:new(Rom),
         mem_read_fun = MemReadFun,
-        mem_write_fun = MemWriteFun
+        mem_write_fun = MemWriteFun,
+        beeper = ezx_beeper:init()
     }.
 
 %% @doc Load a program into memory starting at address 0.
@@ -181,7 +187,8 @@ load_tap(_Machine, Data) when is_binary(Data) ->
     Q = make_tap_load_queue(),
     InitMachine#machine_state{
         tape_blocks = Blocks,
-        keyboard_queue = Q
+        keyboard_queue = Q,
+        beeper = ezx_beeper:init()
     }.
 
 parse_tap_blocks(<<>>) -> [];
@@ -309,13 +316,15 @@ step(Machine) ->
 step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
     Memory0 = Machine#machine_state.memory,
+    Beeper0 = Machine#machine_state.beeper,
     %% Build ext_context with current frame position so port callbacks can timestamp events.
     ExtContext0 = #ext_context{
         memory = Memory0,
         t_states = MachineTStates,
         frame_counter = MachineTStates div ?TSTATES_PER_FRAME,
         border_changes = [],
-        keyboard = Machine#machine_state.keyboard
+        keyboard = Machine#machine_state.keyboard,
+        beeper = Beeper0
     },
     Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = 0}),
     Ticks = Cpu1#cpu_state.t_states,
@@ -328,12 +337,14 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
         [{_, Color} | _] -> Color;
         [] -> Machine#machine_state.border_color
     end,
+    Beeper1 = Cpu1#cpu_state.ext_context#ext_context.beeper,
     Machine#machine_state{
         cpu = Cpu1#cpu_state{t_states = NewMachineTStates},
         memory = Memory1,
         t_states = NewMachineTStates,
         border_color = NewBorder,
-        border_changes = MergedChanges
+        border_changes = MergedChanges,
+        beeper = Beeper1
     }.
 
 %% @doc Execute one complete frame (69888 T-states).
@@ -367,8 +378,13 @@ run_frame_1(#machine_state{t_states = StartT} = Machine) ->
 
     %% Reset T-states to 0 (start of next frame).
     %% border_changes are preserved for the renderer.
+    %% Flush beeper to generate PCM audio for this frame.
+    Beeper0 = Machine3#machine_state.beeper,
+    {PCM, Beeper1} = ezx_beeper:flush_frame(Beeper0),
     Machine3#machine_state{
-        t_states = 0
+        t_states = 0,
+        beeper = Beeper1,
+        beeper_pcm = PCM
     }.
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.
