@@ -56,6 +56,14 @@ execute_ed_opcode(Opcode, State) ->
              Op =:= 16#6C; Op =:= 16#74; Op =:= 16#7C ->
             execute_ed_neg(State);
 
+        %% RETN* (undocumented): ED 55, 65, 75 - same as RETN
+        Op when Op =:= 16#55; Op =:= 16#65; Op =:= 16#75 ->
+            execute_ed_retn(State);
+
+        %% RETI* (undocumented): ED 5D, 6D, 7D - functionally same as RETN
+        Op when Op =:= 16#5D; Op =:= 16#6D; Op =:= 16#7D ->
+            execute_ed_retn(State);
+
         %% RRD: 18 T-states total (8 + 10)
         16#67 ->
             execute_ed_rrd(State);
@@ -583,13 +591,22 @@ block_io_loop(State, HL, B, Port, AccT, First, Repeat, Inc) ->
     State1 = z80_cpu_helpers:write_byte(State#cpu_state{ext_context = NewExtCtx}, HL, Val8),
     NewB = (B - 1) band 16#FF,
     NewHL = (HL + (if Inc -> 1; true -> -1 end)) band 16#FFFF,
-    F_S = Val8 band 16#80,
+    %% Undocumented temp: value_from_port + ((C+1)&0xFF) for INI/INIR,
+    %%                    value_from_port + ((C-1)&0xFF) for IND/INDR
+    K = case Inc of
+        true  -> (State#cpu_state.c + 1) band 16#FF;
+        false -> (State#cpu_state.c - 1) band 16#FF
+    end,
+    Temp = Val8 + K,
+    Temp8 = Temp band 16#FF,
+    F_S = Temp8 band 16#80,
     F_Z = if NewB =:= 0 -> ?FLAG_Z; true -> 0 end,
-    F_H = 0,
-    F_V = if ((Val8 bor NewB) band 16#07) =/= 0 -> 0; true -> ?FLAG_V end,
-    F_N = 1,
-    F_C = State#cpu_state.f band ?FLAG_C,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    F_H = if ((Val8 band 16#0F) + (K band 16#0F)) band 16#10 =/= 0 -> ?FLAG_H; true -> 0 end,
+    F_V = z80_cpu_helpers:parity(Temp8),
+    F_N = Val8 band 16#80,
+    F_C = if Temp > 16#FF -> ?FLAG_C; true -> 0 end,
+    F3F5 = Temp8 band 16#28,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F3F5,
     IterT = if Repeat ->
                   if First andalso NewB =:= 0 -> 8;
                          First -> 13;
@@ -643,13 +660,22 @@ block_out_loop(State, HL, B, Port, AccT, First, Repeat, Inc) ->
     NewExtCtx = PortWriteFun(ExtCtx, Port, Val),
     NewB = (B - 1) band 16#FF,
     NewHL = (HL + (if Inc -> 1; true -> -1 end)) band 16#FFFF,
-    F_S = Val band 16#80,
+    %% Undocumented temp: value_from_HL + ((C+1)&0xFF) for OUTI/OTIR,
+    %%                    value_from_HL + ((C-1)&0xFF) for OUTD/OTDR
+    K = case Inc of
+        true  -> (State#cpu_state.c + 1) band 16#FF;
+        false -> (State#cpu_state.c - 1) band 16#FF
+    end,
+    Temp = Val + K,
+    Temp8 = Temp band 16#FF,
+    F_S = Temp8 band 16#80,
     F_Z = if NewB =:= 0 -> ?FLAG_Z; true -> 0 end,
-    F_H = 0,
-    F_V = if ((Val bor NewB) band 16#07) =/= 0 -> 0; true -> ?FLAG_V end,
-    F_N = 1,
-    F_C = State1#cpu_state.f band ?FLAG_C,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    F_H = if ((Val band 16#0F) + (K band 16#0F)) band 16#10 =/= 0 -> ?FLAG_H; true -> 0 end,
+    F_V = z80_cpu_helpers:parity(Temp8),
+    F_N = Val band 16#80,
+    F_C = if Temp > 16#FF -> ?FLAG_C; true -> 0 end,
+    F3F5 = Temp8 band 16#28,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F3F5,
     IterT = if Repeat ->
                   if First andalso NewB =:= 0 -> 8;
                          First -> 13;
@@ -698,13 +724,15 @@ execute_ed_in_r_c(State, Reg) ->
     ExtCtx = State#cpu_state.ext_context,
     {Val, NewExtCtx} = PortReadFun(ExtCtx, Port),
     State1 = z80_cpu_helpers:set_reg_byte(Reg, Val band 16#FF, State#cpu_state{ext_context = NewExtCtx}),
-    Flags = State1#cpu_state.f band 16#E7,
+    F_C = State#cpu_state.f band ?FLAG_C,
     F_S = Val band 16#80,
     F_Z = if Val =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(Val),
     F_N = 0,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N,
+    F_F3 = Val band 16#08,
+    F_F5 = Val band 16#20,
+    NewFlags = F_C bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_F3 bor F_F5,
     z80_cpu_helpers:advance_tstates(State1#cpu_state{f = NewFlags}, 4).
 
 %% IN (C) / IN F,(C): 12 T-states (flags affected, result discarded)
@@ -713,13 +741,15 @@ execute_ed_in_f_c(State) ->
     PortReadFun = State#cpu_state.port_read_fun,
     ExtCtx = State#cpu_state.ext_context,
     {Val, NewExtCtx} = PortReadFun(ExtCtx, Port),
-    Flags = State#cpu_state.f band 16#E7,
+    F_C = State#cpu_state.f band ?FLAG_C,
     F_S = Val band 16#80,
     F_Z = if Val =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(Val),
     F_N = 0,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N,
+    F_F3 = Val band 16#08,
+    F_F5 = Val band 16#20,
+    NewFlags = F_C bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_F3 bor F_F5,
     z80_cpu_helpers:advance_tstates(State#cpu_state{f = NewFlags, ext_context = NewExtCtx}, 4).
 
 %% OUT (C),r implementation

@@ -202,7 +202,8 @@ ed_in_f_c_test() ->
     Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#70),  %% IN F,(C) (undocumented)
     Cpu3 = Cpu2#cpu_state{c = 16#10, f = 0},
     Cpu4 = z80_cpu:step(Cpu3),
-    ?assertEqual(16#84, Cpu4#cpu_state.f),
+    %% Port returns 0xFF: S=1, V=parity(0xFF)=1, F3=1, F5=1 -> 0xAC
+    ?assertEqual(16#AC, Cpu4#cpu_state.f),
     ?assertEqual(12, z80_cpu:t_states(Cpu4)).
 
 ed_out_c_b_test() ->
