@@ -169,17 +169,21 @@ execute_cb_bit(Opcode, State) ->
             Byte = z80_cpu_helpers:get_reg_byte(RegAtom, State),
             State1 = State
     end,
-    %% BIT: Z = ~bit, N = 0, H = 1, P/V = ~bit, S = bit, C = preserved
     TestedBit = (Byte band (1 bsl Bit)) =/= 0,
-    Flags = State1#cpu_state.f band ?FLAG_C,  %% Preserve C only
-    F_S = if TestedBit -> ?FLAG_S; true -> 0 end,
+    Flags = State1#cpu_state.f band ?FLAG_C,
+    %% S flag: only set when BIT 7 is tested and bit is set
+    F_S = case Bit of 7 when TestedBit -> ?FLAG_S; _ -> 0 end,
     F_Z = if TestedBit -> 0; true -> ?FLAG_Z end,
     F_H = ?FLAG_H,
     F_V = if TestedBit -> 0; true -> ?FLAG_V end,
     F_N = 0,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N,
+    %% F3/F5: from register value for BIT b,r, from H register for BIT b,(HL)
+    F3F5 = case RegIdx of
+        6 -> (State1#cpu_state.h band 16#28);
+        _ -> (Byte band 16#28)
+    end,
+    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor F3F5,
     NewState = State1#cpu_state{f = NewFlags},
-    %% BIT (HL): 12T total = 8T base + 4T extra
     case RegIdx of
         6 -> z80_cpu_helpers:advance_tstates(NewState, 4);
         _ -> NewState
@@ -246,27 +250,25 @@ reg_index_to_atom(7) -> a.
 rotate_left(Byte, Cpu) ->
     Carry = (Byte band 16#80) bsr 7,
     NewByte = ((Byte bsl 1) band 16#ff) bor Carry,
-    Flags = Cpu#cpu_state.f band 16#E4,
     F_S = NewByte band 16#80,
     F_Z = if NewByte =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = Carry,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 rotate_right(Byte, Cpu) ->
     Carry = Byte band 1,
     NewByte = (Byte bsr 1) bor (Carry bsl 7),
-    Flags = Cpu#cpu_state.f band 16#E4,
     F_S = NewByte band 16#80,
     F_Z = if NewByte =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = Carry,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% RL (Rotate Left through Carry) - 0x10-0x17
@@ -274,14 +276,13 @@ rotate_left_c(Byte, Cpu) ->
     OldCarry = Cpu#cpu_state.f band ?FLAG_C,
     NewCarry = (Byte band 16#80) bsr 7,
     NewByte = ((Byte bsl 1) band 16#ff) bor OldCarry,
-    Flags = Cpu#cpu_state.f band 16#E4,
     F_S = NewByte band 16#80,
     F_Z = if NewByte =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% RR (Rotate Right through Carry) - 0x18-0x1F
@@ -289,70 +290,65 @@ rotate_right_c(Byte, Cpu) ->
     OldCarry = Cpu#cpu_state.f band ?FLAG_C,
     NewCarry = Byte band 1,
     NewByte = (Byte bsr 1) bor (OldCarry bsl 7),
-    Flags = Cpu#cpu_state.f band 16#E4,
     F_S = NewByte band 16#80,
     F_Z = if NewByte =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% SLA (Shift Left Arithmetic) - 0x20-0x27
 sla(Byte, Cpu) ->
     NewCarry = (Byte band 16#80) bsr 7,
     NewByte = (Byte bsl 1) band 16#ff,
-    Flags = Cpu#cpu_state.f band 16#E4,
     F_S = NewByte band 16#80,
     F_Z = if NewByte =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% SRA (Shift Right Arithmetic) - 0x28-0x2F
 sra(Byte, Cpu) ->
     NewCarry = Byte band 1,
     NewByte = (Byte bsr 1) bor (Byte band 16#80),
-    Flags = Cpu#cpu_state.f band 16#E4,
     F_S = NewByte band 16#80,
     F_Z = if NewByte =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% SLL (Shift Left Logical, undocumented) - 0x30-0x37
 sll(Byte, Cpu) ->
     NewCarry = (Byte band 16#80) bsr 7,
     NewByte = ((Byte bsl 1) band 16#ff) bor 1,
-    Flags = Cpu#cpu_state.f band 16#E4,
     F_S = NewByte band 16#80,
     F_Z = if NewByte =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% SRL (Shift Right Logical) - 0x38-0x3F
 srl(Byte, Cpu) ->
     NewCarry = Byte band 1,
     NewByte = Byte bsr 1,
-    Flags = Cpu#cpu_state.f band 16#E4,
     F_S = NewByte band 16#80,
     F_Z = if NewByte =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% @doc Execute a DD CB / FD CB indexed opcode.
@@ -391,7 +387,7 @@ execute_cb_indexed_opcode(Opcode, Reg, State) ->
                 _ -> {Result, NewCpu, true}             %% Copy to register r[z]
             end;
         1 ->  %% BIT: test bit
-            {_, NewCpu} = execute_cb_bit_on_byte(Y, Byte, State1),
+            {_, NewCpu} = execute_cb_bit_on_byte(Y, Byte, Addr, State1),
             {Byte, NewCpu, false};                       %% Memory only, value unchanged
         2 ->  %% RES: reset bit
             {Result, NewCpu} = execute_cb_res_on_byte(Y, Byte, State1),
@@ -443,16 +439,17 @@ execute_cb_rot(RotType, Byte, State) ->
     end.
 
 %% BIT operation for indexed (uses Y for bit position)
-execute_cb_bit_on_byte(BitPos, Byte, State) ->
+execute_cb_bit_on_byte(BitPos, Byte, Addr, State) ->
     Mask = 1 bsl BitPos,
     TestedBit = (Byte band Mask) =/= 0,
-    F_S = if TestedBit -> ?FLAG_S; true -> 0 end,
+    F_S = case BitPos of 7 when TestedBit -> ?FLAG_S; _ -> 0 end,
     F_H = ?FLAG_H,
     F_V = if TestedBit -> 0; true -> ?FLAG_V end,
     F_N = 0,
     F_Z = if TestedBit -> 0; true -> ?FLAG_Z end,
     F = State#cpu_state.f,
-    NewF = (F band ?FLAG_C) bor F_S bor F_Z bor F_H bor F_V bor F_N,
+    AddrHi = (Addr bsr 8) band 16#FF,
+    NewF = (F band ?FLAG_C) bor F_S bor F_Z bor F_H bor F_V bor F_N bor (AddrHi band 16#28),
     {Byte, State#cpu_state{f = NewF}}.
 
 %% RES operation for indexed (uses Y for bit position)

@@ -51,10 +51,10 @@ execute_ed_opcode(Opcode, State) ->
         16#5E ->
             execute_ed_im(State, 2);
 
-        %% Undocumented ED NOPs (2-byte NOPs): 8 T-states total (8 + 0)
+        %% NEG* (undocumented): same as NEG
         Op when Op =:= 16#4C; Op =:= 16#54; Op =:= 16#5C; Op =:= 16#64;
              Op =:= 16#6C; Op =:= 16#74; Op =:= 16#7C ->
-            State;  %% 8 T-states already counted in prefix+fetch
+            execute_ed_neg(State);
 
         %% RRD: 18 T-states total (8 + 10)
         16#67 ->
@@ -103,11 +103,11 @@ execute_ed_neg(State) ->
     Res = Diff band 16#FF,
     F_S = Res band 16#80,
     F_Z = if Res =:= 0 -> ?FLAG_Z; true -> 0 end,
-    F_H = if (0 band 16#0F) < (A band 16#0F) -> ?FLAG_H; true -> 0 end,
+    F_H = if (A band 16#0F) =/= 0 -> ?FLAG_H; true -> 0 end,
     F_V = if A =:= 16#80 -> ?FLAG_V; true -> 0 end,
     F_N = ?FLAG_N,
     F_C = if A =:= 0 -> 0; true -> ?FLAG_C end,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (Res band 16#28),
     State#cpu_state{a = Res, f = NewFlags}.
 
 %% IM 0/1/2: Set interrupt mode (8 T-states total = 8 base + 0 added)
@@ -169,13 +169,12 @@ execute_ed_rrd(State) ->
     NewA = (State1#cpu_state.a band 16#F0) bor LowNibble,
     NewMemByte = (OldALow bsl 4) bor HighNibble,
     State2 = z80_cpu_helpers:write_byte(State1, Addr, NewMemByte),
-    Flags = State2#cpu_state.f band 16#E7,
     F_S = NewA band 16#80,
     F_Z = if NewA =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewA),
     F_N = 0,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N,
+    NewFlags = (State2#cpu_state.f band ?FLAG_C) bor F_S bor F_Z bor F_H bor F_V bor F_N bor (NewA band 16#28),
     z80_cpu_helpers:advance_tstates(State2#cpu_state{a = NewA, f = NewFlags}, 10).
 
 %% RLD: Rotate Left Digit (ED 6F) - 18 T-states total (8 base + 10 added)
@@ -188,13 +187,12 @@ execute_ed_rld(State) ->
     NewA = (State1#cpu_state.a band 16#F0) bor HighNibble,
     NewMemByte = (LowNibble bsl 4) bor OldALow,
     State2 = z80_cpu_helpers:write_byte(State1, Addr, NewMemByte),
-    Flags = State2#cpu_state.f band 16#E7,
     F_S = NewA band 16#80,
     F_Z = if NewA =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewA),
     F_N = 0,
-    NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N,
+    NewFlags = (State2#cpu_state.f band ?FLAG_C) bor F_S bor F_Z bor F_H bor F_V bor F_N bor (NewA band 16#28),
     z80_cpu_helpers:advance_tstates(State2#cpu_state{a = NewA, f = NewFlags}, 10).
 
 %% ADC HL, rr (ED 4A, 5A, 6A, 7A) - 15 T-states total (8 base + 7 added)
@@ -307,7 +305,7 @@ execute_ed_ldd(State) -> execute_ldd(State, false).
 execute_ed_lddr(State) -> execute_lddr(State).
 
 %% LDI: single iteration (16 T-states total = 8 base + 8)
-execute_ldi(State, Repeat) ->
+execute_ldi(State, _Repeat) ->
     HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
     DE = z80_cpu_helpers:pair(State#cpu_state.d, State#cpu_state.e),
     BC = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
@@ -316,13 +314,44 @@ execute_ldi(State, Repeat) ->
     NewHL = (HL + 1) band 16#FFFF,
     NewDE = (DE + 1) band 16#FFFF,
     NewBC = (BC - 1) band 16#FFFF,
-    Flags = State2#cpu_state.f band 16#E9,
-    F_H = 0,
-    F_V = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
-    F_N = 0,
-    NewFlags = Flags bor F_H bor F_V bor F_N,
-    TAdd = if Repeat andalso NewBC =/= 0 -> 13; true -> 8 end,
+    V = (Byte + State2#cpu_state.a) band 16#FF,
+    OldF = State#cpu_state.f band (?FLAG_C bor ?FLAG_Z bor ?FLAG_S),
+    F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_F3 = if V band 16#08 =/= 0 -> 16#08; true -> 0 end,
+    F_F5 = if V band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    NewFlags = OldF bor F_PV bor F_F3 bor F_F5,
     State3 = State2#cpu_state{
+        h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        d = (NewDE bsr 8) band 16#FF, e = (NewDE band 16#FF),
+        b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
+        f = NewFlags
+    },
+    z80_cpu_helpers:advance_tstates(State3, 8).
+
+%% LDIR: single iteration, repeat by PC-=2 if BC≠0
+execute_ldir(State) ->
+    HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
+    DE = z80_cpu_helpers:pair(State#cpu_state.d, State#cpu_state.e),
+    BC = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
+    {Byte, State1} = z80_cpu_helpers:read_byte(State, HL),
+    State2 = z80_cpu_helpers:write_byte(State1, DE, Byte),
+    NewHL = (HL + 1) band 16#FFFF,
+    NewDE = (DE + 1) band 16#FFFF,
+    NewBC = (BC - 1) band 16#FFFF,
+    V = (Byte + State2#cpu_state.a) band 16#FF,
+    OldF = State#cpu_state.f band (?FLAG_C bor ?FLAG_Z bor ?FLAG_S),
+    F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_F3 = if V band 16#08 =/= 0 -> 16#08; true -> 0 end,
+    F_F5 = if V band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    NewFlags = OldF bor F_PV bor F_F3 bor F_F5,
+    PC = State2#cpu_state.pc,
+    NewPC = case NewBC of
+        0 -> PC;          %% Done: 16 T-states
+        _ -> PC - 2       %% Repeat: 21 T-states (PC-2 to re-execute)
+    end,
+    TAdd = case NewBC of 0 -> 8; _ -> 13 end,
+    State3 = State2#cpu_state{
+        pc = NewPC,
         h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
         d = (NewDE bsr 8) band 16#FF, e = (NewDE band 16#FF),
         b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
@@ -330,19 +359,8 @@ execute_ldi(State, Repeat) ->
     },
     z80_cpu_helpers:advance_tstates(State3, TAdd).
 
-%% LDIR: repeat until BC=0 (21 T-states per iteration, 16 for last)
-execute_ldir(State) ->
-    execute_block_transfer(State, true, fun(HL, DE, BC, State1) ->
-        {Byte, State2} = z80_cpu_helpers:read_byte(State1, HL),
-        State3 = z80_cpu_helpers:write_byte(State2, DE, Byte),
-        NewHL = (HL + 1) band 16#FFFF,
-        NewDE = (DE + 1) band 16#FFFF,
-        NewBC = (BC - 1) band 16#FFFF,
-        {NewHL, NewDE, NewBC, State3}
-    end).
-
 %% LDD: single iteration (16 T-states total = 8 base + 8)
-execute_ldd(State, Repeat) ->
+execute_ldd(State, _Repeat) ->
     HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
     DE = z80_cpu_helpers:pair(State#cpu_state.d, State#cpu_state.e),
     BC = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
@@ -351,13 +369,44 @@ execute_ldd(State, Repeat) ->
     NewHL = (HL - 1) band 16#FFFF,
     NewDE = (DE - 1) band 16#FFFF,
     NewBC = (BC - 1) band 16#FFFF,
-    Flags = State2#cpu_state.f band 16#E9,
-    F_H = 0,
-    F_V = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
-    F_N = 0,
-    NewFlags = Flags bor F_H bor F_V bor F_N,
-    TAdd = if Repeat andalso NewBC =/= 0 -> 13; true -> 8 end,
+    V = (Byte + State2#cpu_state.a) band 16#FF,
+    OldF = State#cpu_state.f band (?FLAG_C bor ?FLAG_Z bor ?FLAG_S),
+    F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_F3 = if V band 16#08 =/= 0 -> 16#08; true -> 0 end,
+    F_F5 = if V band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    NewFlags = OldF bor F_PV bor F_F3 bor F_F5,
     State3 = State2#cpu_state{
+        h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        d = (NewDE bsr 8) band 16#FF, e = (NewDE band 16#FF),
+        b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
+        f = NewFlags
+    },
+    z80_cpu_helpers:advance_tstates(State3, 8).
+
+%% LDDR: single iteration, repeat by PC-=2 if BC≠0
+execute_lddr(State) ->
+    HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
+    DE = z80_cpu_helpers:pair(State#cpu_state.d, State#cpu_state.e),
+    BC = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
+    {Byte, State1} = z80_cpu_helpers:read_byte(State, HL),
+    State2 = z80_cpu_helpers:write_byte(State1, DE, Byte),
+    NewHL = (HL - 1) band 16#FFFF,
+    NewDE = (DE - 1) band 16#FFFF,
+    NewBC = (BC - 1) band 16#FFFF,
+    V = (Byte + State2#cpu_state.a) band 16#FF,
+    OldF = State#cpu_state.f band (?FLAG_C bor ?FLAG_Z bor ?FLAG_S),
+    F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_F3 = if V band 16#08 =/= 0 -> 16#08; true -> 0 end,
+    F_F5 = if V band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    NewFlags = OldF bor F_PV bor F_F3 bor F_F5,
+    PC = State2#cpu_state.pc,
+    NewPC = case NewBC of
+        0 -> PC;
+        _ -> PC - 2
+    end,
+    TAdd = case NewBC of 0 -> 8; _ -> 13 end,
+    State3 = State2#cpu_state{
+        pc = NewPC,
         h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
         d = (NewDE bsr 8) band 16#FF, e = (NewDE band 16#FF),
         b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
@@ -365,119 +414,136 @@ execute_ldd(State, Repeat) ->
     },
     z80_cpu_helpers:advance_tstates(State3, TAdd).
 
-%% LDDR: repeat until BC=0 (21 T-states per iteration, 16 for last)
-execute_lddr(State) ->
-    execute_block_transfer(State, false, fun(HL, DE, BC, State1) ->
-        {Byte, State2} = z80_cpu_helpers:read_byte(State1, HL),
-        State3 = z80_cpu_helpers:write_byte(State2, DE, Byte),
-        NewHL = (HL - 1) band 16#FFFF,
-        NewDE = (DE - 1) band 16#FFFF,
-        NewBC = (BC - 1) band 16#FFFF,
-        {NewHL, NewDE, NewBC, State3}
-    end).
-
-%% Generic block transfer loop for LDIR/LDDR
-execute_block_transfer(State, IncDec, UpdateFun) ->
-    HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
-    DE = z80_cpu_helpers:pair(State#cpu_state.d, State#cpu_state.e),
-    BC = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
-    Flags = State#cpu_state.f band 16#E9,
-    {FinalHL, FinalDE, FinalBC, FinalFlags, TotalT, StateFinal} =
-        block_transfer_loop(State, HL, DE, BC, Flags, 0, true, IncDec, UpdateFun),
-    State1 = StateFinal#cpu_state{
-        h = (FinalHL bsr 8) band 16#FF, l = (FinalHL band 16#FF),
-        d = (FinalDE bsr 8) band 16#FF, e = (FinalDE band 16#FF),
-        b = (FinalBC bsr 8) band 16#FF, c = (FinalBC band 16#FF),
-        f = FinalFlags
-    },
-    z80_cpu_helpers:advance_tstates(State1, TotalT).
-
-block_transfer_loop(State, HL, DE, BC, Flags, AccT, First, IncDec, UpdateFun) ->
-    case BC of
-        0 ->
-            {HL, DE, BC, Flags, AccT, State};
-        _ ->
-            {NewHL, NewDE, NewBC, State1} = UpdateFun(HL, DE, BC, State),
-            NewFlags = Flags bor (if NewBC =:= 0 -> 0; true -> ?FLAG_V end),
-            IterT = if
-                First andalso NewBC =:= 0 -> 8;
-                First -> 13;
-                NewBC =:= 0 -> 16;
-                true -> 21
-            end,
-            block_transfer_loop(State1, NewHL, NewDE, NewBC, NewFlags, AccT + IterT, false, IncDec, UpdateFun)
-    end.
-
 %% Block Search: CPI/CPD/CPIR/CPDR
-execute_ed_cpi(State) -> execute_cpi(State, false).
-execute_ed_cpir(State) -> execute_cpi(State, true).
-execute_ed_cpd(State) -> execute_cpd(State, false).
-execute_ed_cpdr(State) -> execute_cpd(State, true).
+execute_ed_cpi(State) -> execute_cpi(State).
+execute_ed_cpir(State) -> execute_cpir(State).
+execute_ed_cpd(State) -> execute_cpd(State).
+execute_ed_cpdr(State) -> execute_cpdr(State).
 
-execute_cpi(State, Repeat) ->
+%% CPI: Compare A with (HL), increment HL, decrement BC
+execute_cpi(State) ->
     HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
     BC = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
-    Flags = State#cpu_state.f band 16#E9,
-    Carry = State#cpu_state.f band ?FLAG_C,
-    {FinalHL, FinalBC, FinalFlags, TotalT, StateFinal} =
-        block_search_loop(State, HL, BC, Flags, Carry, 0, true, Repeat, true),
-    State1 = StateFinal#cpu_state{
-        h = (FinalHL bsr 8) band 16#FF, l = (FinalHL band 16#FF),
-        b = (FinalBC bsr 8) band 16#FF, c = (FinalBC band 16#FF),
-        f = FinalFlags
+    {Byte, State1} = z80_cpu_helpers:read_byte(State, HL),
+    A = State#cpu_state.a,
+    Diff = (A - Byte) band 16#FF,
+    HFlag = case (A band 16#0F) < (Byte band 16#0F) of true -> 1; false -> 0 end,
+    Tmp = (A - Byte - HFlag) band 16#FF,
+    NewHL = (HL + 1) band 16#FFFF,
+    NewBC = (BC - 1) band 16#FFFF,
+    OldF = State#cpu_state.f band ?FLAG_C,
+    F_S = Diff band 16#80,
+    F_Z = if Diff =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = if HFlag =:= 1 -> ?FLAG_H; true -> 0 end,
+    F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_N = ?FLAG_N,
+    F_F3 = if Tmp band 16#08 =/= 0 -> 16#08; true -> 0 end,
+    F_F5 = if Tmp band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    NewFlags = OldF bor F_S bor F_Z bor F_H bor F_PV bor F_N bor F_F3 bor F_F5,
+    State2 = State1#cpu_state{
+        h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
+        f = NewFlags
     },
-    z80_cpu_helpers:advance_tstates(State1, TotalT).
+    z80_cpu_helpers:advance_tstates(State2, 8).
 
-execute_cpd(State, Repeat) ->
+%% CPIR: Compare A with (HL), repeat if no match and BC≠0
+execute_cpir(State) ->
     HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
     BC = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
-    Flags = State#cpu_state.f band 16#E9,
-    Carry = State#cpu_state.f band ?FLAG_C,
-    {FinalHL, FinalBC, FinalFlags, TotalT, StateFinal} =
-        block_search_loop(State, HL, BC, Flags, Carry, 0, true, Repeat, false),
-    State1 = StateFinal#cpu_state{
-        h = (FinalHL bsr 8) band 16#FF, l = (FinalHL band 16#FF),
-        b = (FinalBC bsr 8) band 16#FF, c = (FinalBC band 16#FF),
-        f = FinalFlags
+    {Byte, State1} = z80_cpu_helpers:read_byte(State, HL),
+    A = State#cpu_state.a,
+    Diff = (A - Byte) band 16#FF,
+    HFlag = case (A band 16#0F) < (Byte band 16#0F) of true -> 1; false -> 0 end,
+    Tmp = (A - Byte - HFlag) band 16#FF,
+    NewHL = (HL + 1) band 16#FFFF,
+    NewBC = (BC - 1) band 16#FFFF,
+    Match = (Diff =:= 0),
+    OldF = State#cpu_state.f band ?FLAG_C,
+    F_S = Diff band 16#80,
+    F_Z = if Diff =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = if HFlag =:= 1 -> ?FLAG_H; true -> 0 end,
+    F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_N = ?FLAG_N,
+    F_F3 = if Tmp band 16#08 =/= 0 -> 16#08; true -> 0 end,
+    F_F5 = if Tmp band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    NewFlags = OldF bor F_S bor F_Z bor F_H bor F_PV bor F_N bor F_F3 bor F_F5,
+    %% Repeat if no match and BC≠0
+    PC = State1#cpu_state.pc,
+    NewPC = case Match orelse NewBC =:= 0 of
+        true -> PC;
+        _ -> PC - 2
+    end,
+    TAdd = case Match orelse NewBC =:= 0 of true -> 8; _ -> 13 end,
+    State2 = State1#cpu_state{
+        pc = NewPC,
+        h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
+        f = NewFlags
     },
-    z80_cpu_helpers:advance_tstates(State1, TotalT).
+    z80_cpu_helpers:advance_tstates(State2, TAdd).
 
-block_search_loop(State, HL, BC, Flags, Carry, AccT, First, Repeat, Inc) ->
-    case BC of
-        0 ->
-            {HL, BC, Flags, AccT, State};
-        _ ->
-            {Byte, State1} = z80_cpu_helpers:read_byte(State, HL),
-            A = State1#cpu_state.a,
-            Diff = A - Byte,
-            Res = Diff band 16#FF,
-            NewHL = (HL + (if Inc -> 1; true -> -1 end)) band 16#FFFF,
-            Match = (Res =:= 0),
-            %% For CPI/CPD (non-repeat): always decrement BC
-            %% For CPIR/CPDR (Repeat=true): decrement BC except on match iteration
-            NewBC = if Repeat andalso Match -> BC; true -> (BC - 1) band 16#FFFF end,
-            F_S = Res band 16#80,
-            F_Z = if Res =:= 0 -> ?FLAG_Z; true -> 0 end,
-            F_H = if (A band 16#0F) < (Byte band 16#0F) -> ?FLAG_H; true -> 0 end,
-            F_V = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
-            F_N = ?FLAG_N,
-            NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor Carry,
-            IterT = if Repeat ->
-                          if First andalso (NewBC =:= 0 orelse Match) -> 8;
-                               First -> 13;
-                               NewBC =:= 0 orelse Match -> 16;
-                               true -> 21
-                          end;
-                         true ->
-                              8
-                         end,
-            case Repeat andalso NewBC =/= 0 andalso not Match of
-                true ->
-                    block_search_loop(State1, NewHL, NewBC, NewFlags, Carry, AccT + IterT, false, Repeat, Inc);
-                false ->
-                    {NewHL, NewBC, NewFlags, AccT + IterT, State1}
-            end
-    end.
+%% CPD: Compare A with (HL), decrement HL, decrement BC
+execute_cpd(State) ->
+    HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
+    BC = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
+    {Byte, State1} = z80_cpu_helpers:read_byte(State, HL),
+    A = State#cpu_state.a,
+    Diff = (A - Byte) band 16#FF,
+    HFlag = case (A band 16#0F) < (Byte band 16#0F) of true -> 1; false -> 0 end,
+    Tmp = (A - Byte - HFlag) band 16#FF,
+    NewHL = (HL - 1) band 16#FFFF,
+    NewBC = (BC - 1) band 16#FFFF,
+    OldF = State#cpu_state.f band ?FLAG_C,
+    F_S = Diff band 16#80,
+    F_Z = if Diff =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = if HFlag =:= 1 -> ?FLAG_H; true -> 0 end,
+    F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_N = ?FLAG_N,
+    F_F3 = if Tmp band 16#08 =/= 0 -> 16#08; true -> 0 end,
+    F_F5 = if Tmp band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    NewFlags = OldF bor F_S bor F_Z bor F_H bor F_PV bor F_N bor F_F3 bor F_F5,
+    State2 = State1#cpu_state{
+        h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
+        f = NewFlags
+    },
+    z80_cpu_helpers:advance_tstates(State2, 8).
+
+%% CPDR: Compare A with (HL), repeat if no match and BC≠0
+execute_cpdr(State) ->
+    HL = z80_cpu_helpers:pair(State#cpu_state.h, State#cpu_state.l),
+    BC = z80_cpu_helpers:pair(State#cpu_state.b, State#cpu_state.c),
+    {Byte, State1} = z80_cpu_helpers:read_byte(State, HL),
+    A = State#cpu_state.a,
+    Diff = (A - Byte) band 16#FF,
+    HFlag = case (A band 16#0F) < (Byte band 16#0F) of true -> 1; false -> 0 end,
+    Tmp = (A - Byte - HFlag) band 16#FF,
+    NewHL = (HL - 1) band 16#FFFF,
+    NewBC = (BC - 1) band 16#FFFF,
+    Match = (Diff =:= 0),
+    OldF = State#cpu_state.f band ?FLAG_C,
+    F_S = Diff band 16#80,
+    F_Z = if Diff =:= 0 -> ?FLAG_Z; true -> 0 end,
+    F_H = if HFlag =:= 1 -> ?FLAG_H; true -> 0 end,
+    F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
+    F_N = ?FLAG_N,
+    F_F3 = if Tmp band 16#08 =/= 0 -> 16#08; true -> 0 end,
+    F_F5 = if Tmp band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    NewFlags = OldF bor F_S bor F_Z bor F_H bor F_PV bor F_N bor F_F3 bor F_F5,
+    PC = State1#cpu_state.pc,
+    NewPC = case Match orelse NewBC =:= 0 of
+        true -> PC;
+        _ -> PC - 2
+    end,
+    TAdd = case Match orelse NewBC =:= 0 of true -> 8; _ -> 13 end,
+    State2 = State1#cpu_state{
+        pc = NewPC,
+        h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
+        b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
+        f = NewFlags
+    },
+    z80_cpu_helpers:advance_tstates(State2, TAdd).
 
 %% Block I/O: INI/IND/INIR/INDR
 execute_ed_ini(State) -> execute_ini(State, false).

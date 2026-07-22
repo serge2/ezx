@@ -329,7 +329,7 @@ dd_cb_bit_0_ix_test() ->
     Cpu7 = z80_cpu:step(Cpu6),
     ?assertEqual(16#01, test_helpers:read_mem(Cpu7, 16#4000)),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_Z),
-    ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S),
+    ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_S),
     ?assertEqual(?FLAG_H, Cpu7#cpu_state.f band ?FLAG_H),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_V).
 
@@ -623,7 +623,7 @@ dd_cb_bit_0_b_reg_test() ->
     Cpu6 = Cpu5#cpu_state{b = 16#00, ixh = 16#40, ixl = 16#00, f = 0},
     Cpu7 = z80_cpu:step(Cpu6),
     ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_Z),   %% Z=0 (bit was 1)
-    ?assertEqual(?FLAG_S, Cpu7#cpu_state.f band ?FLAG_S), %% S=1 (bit 0 = 1)
+    ?assertEqual(0, Cpu7#cpu_state.f band ?FLAG_S), %% S=0 (only BIT 7 sets S)
     ?assertEqual(?FLAG_H, Cpu7#cpu_state.f band ?FLAG_H), %% H=1
     ?assertEqual(16#00, Cpu7#cpu_state.b).  %% B unchanged
 

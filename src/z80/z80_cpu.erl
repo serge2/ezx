@@ -751,9 +751,10 @@ execute_cpl(State) ->
     State#cpu_state{a = NewA, f = NewF}.
 
 execute_ccf(State) ->
-    Carry = State#cpu_state.f band ?FLAG_C,
-    NewCarry = Carry bxor ?FLAG_C,
-    NewF = (State#cpu_state.f band 16#F0) bor NewCarry bor ?FLAG_H,
+    A = State#cpu_state.a,
+    OldC = State#cpu_state.f band ?FLAG_C,
+    NewC = OldC bxor ?FLAG_C,
+    NewF = (State#cpu_state.f band 16#C4) bor (A band 16#28) bor (OldC bsl 4) bor NewC,
     State#cpu_state{f = NewF}.
 
 execute_inc_mem_hl(State) ->
@@ -799,11 +800,13 @@ execute_rla(State) ->
     OldCarry = F band ?FLAG_C,
     NewCarry = (A band 16#80) bsr 7,
     NewA = ((A bsl 1) band 16#ff) bor OldCarry,
-    NewF = (F band 16#28) bor NewCarry,
+    NewF = (F band 16#C4) bor NewCarry bor (NewA band 16#28),
     State#cpu_state{a = NewA, f = NewF}.
 
 execute_scf(State) ->
-    NewF = (State#cpu_state.f band 16#F0) bor ?FLAG_C,
+    A = State#cpu_state.a,
+    F = State#cpu_state.f,
+    NewF = (F band 16#C4) bor (A band 16#28) bor ?FLAG_C,
     State#cpu_state{f = NewF}.
 
 execute_ex_af_af(State) ->
@@ -821,7 +824,8 @@ execute_add_hl_rr(State, RegPair) ->
     Res = Sum band 16#FFFF,
     Carry = if Sum > 16#FFFF -> ?FLAG_C; true -> 0 end,
     HalfCarry = if ((HL band 16#0FFF) + (RR band 16#0FFF)) > 16#0FFF -> ?FLAG_H; true -> 0 end,
-    State1 = State#cpu_state{f = (State#cpu_state.f band 16#38) bor Carry bor HalfCarry},
+    ResHi = (Res bsr 8) band 16#FF,
+    State1 = State#cpu_state{f = (State#cpu_state.f band 16#C4) bor Carry bor HalfCarry bor (ResHi band 16#28)},
     State2 = z80_cpu_helpers:set_hl_pair(Res, State1),
     z80_cpu_helpers:advance_tstates(State2, 7).
 
@@ -829,7 +833,7 @@ execute_rrca(State) ->
     A = State#cpu_state.a,
     F = State#cpu_state.f,
     NewA = ((A band 1) bsl 7) bor (A bsr 1),
-    NewF = (F band 16#28) bor (A band 1),
+    NewF = (F band 16#C4) bor (A band 1) bor (NewA band 16#28),
     State#cpu_state{a = NewA, f = NewF}.
 
 execute_rra(State) ->
@@ -837,7 +841,7 @@ execute_rra(State) ->
     F = State#cpu_state.f,
     Carry = F band ?FLAG_C,
     NewA = (Carry bsl 7) bor (A bsr 1),
-    NewF = (F band 16#28) bor (A band 1),
+    NewF = (F band 16#C4) bor (A band 1) bor (NewA band 16#28),
     State#cpu_state{a = NewA, f = NewF}.
 
 execute_daa(State) ->
@@ -846,34 +850,22 @@ execute_daa(State) ->
     N = F band ?FLAG_N,
     H = F band ?FLAG_H,
     C = F band ?FLAG_C,
-    {NewA, NewF} = case N of
-        0 ->  % Addition
-            CarryHigh = (C =/= 0) orelse (A > 16#99),
-            CarryLow = (H =/= 0) orelse ((A band 16#0F) > 16#09),
-            AdjHigh = if CarryHigh -> 16#60; true -> 0 end,
-            AdjLow = if CarryLow -> 16#06; true -> 0 end,
-            Sum = (A + AdjHigh + AdjLow) band 16#FF,
-            NewC = if CarryHigh -> ?FLAG_C; true -> 0 end,
-            NewH = if ((A band 16#0F) + AdjLow) > 16#0F -> ?FLAG_H; true -> 0 end,
-            NewF1 = (F band 16#28) bor NewC bor NewH,
-            {Sum, NewF1};
-        _ ->  % Subtraction (N=1)
-            BorrowHigh = (C =/= 0) orelse (A > 16#99),
-            BorrowLow = (H =/= 0) orelse ((A band 16#0F) > 16#09),
-            AdjHigh = if BorrowHigh -> 16#60; true -> 0 end,
-            AdjLow = if BorrowLow -> 16#06; true -> 0 end,
-            Diff = (A - AdjHigh - AdjLow) band 16#FF,
-            NewC = if BorrowHigh -> ?FLAG_C; true -> 0 end,
-            NewH = 0,
-            NewF1 = (F band 16#28) bor NewC bor NewH,
-            {Diff, NewF1}
+    Lo = A band 16#0F,
+    CorrLo = case H =/= 0 orelse Lo > 9 of true -> 6; false -> 0 end,
+    CorrHi = case C =/= 0 orelse A > 16#99 of true -> 16#60; false -> 0 end,
+    Result = case N of
+        0 -> (A + CorrLo + CorrHi) band 16#FF;
+        _ -> (A - CorrLo - CorrHi) band 16#FF
     end,
-    Parity = z80_cpu_helpers:parity(NewA),
-    NewF2 = (NewF band 16#D7) bor
-            (if NewA =:= 0 -> ?FLAG_Z; true -> 0 end) bor
-            (if NewA band 16#80 =/= 0 -> ?FLAG_S; true -> 0 end) bor
-            (if Parity =/= 0 -> ?FLAG_V; true -> 0 end),
-    State#cpu_state{a = NewA, f = NewF2}.
+    NewC = case C =/= 0 orelse A > 16#99 of true -> ?FLAG_C; false -> 0 end,
+    NewH = (A bxor Result) band 16#10,
+    Parity = z80_cpu_helpers:parity(Result),
+    NewF = (if Result =:= 0 -> ?FLAG_Z; true -> 0 end) bor
+           (if Result band 16#80 =/= 0 -> ?FLAG_S; true -> 0 end) bor
+           (if Parity =/= 0 -> ?FLAG_V; true -> 0 end) bor
+           (Result band 16#28) bor
+           NewH bor NewC bor N,
+    State#cpu_state{a = Result, f = NewF}.
 
 execute_ex_de_hl(State) ->
     HL = z80_cpu_helpers:get_hl_pair(State),
@@ -894,7 +886,7 @@ execute_rlca(State) ->
     F = State#cpu_state.f,
     Carry = A bsr 7,
     NewA = ((A bsl 1) band 16#FF) bor Carry,
-    NewF = (F band 16#28) bor Carry,
+    NewF = (F band 16#C4) bor Carry bor (NewA band 16#28),
     State#cpu_state{a = NewA, f = NewF}.
 
 %% ADD A, r / (HL) group (0x80-0x87)
