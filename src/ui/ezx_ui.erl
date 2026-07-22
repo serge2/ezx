@@ -6,7 +6,7 @@
 -include("z80_records.hrl").
 -include("ezx_emulator.hrl").
 
--export([start/0, start/1, stop/0]).
+-export([start/0, start_link/0, stop/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -define(DEFAULT_WIDTH, 352).
@@ -33,10 +33,12 @@
     audio_bytes = 0 :: non_neg_integer()
 }).
 
-start() -> start([]).
 
-start(Options) ->
-    gen_server:start({local, ?MODULE}, ?MODULE, Options, []).
+start() ->
+    gen_server:start({local, ?MODULE}, ?MODULE, [], []).
+
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 stop() ->
     gen_server:stop(?MODULE).
@@ -172,6 +174,7 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
     end;
 
 handle_info(#wx{event = #wxClose{}}, State) ->
+    init:stop(),
     {stop, normal, State};
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = Key, rawCode = _RawCode} = _E}, State) ->

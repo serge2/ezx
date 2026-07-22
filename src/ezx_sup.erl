@@ -23,5 +23,8 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    {ok, { {one_for_one, 5, 10}, []} }.
+    Children = [
+        ?CHILD(ezx_ui, worker)
+    ],
+    {ok, { {one_for_one, 0, 1}, Children} }.
 
