@@ -155,17 +155,22 @@ execute_ed_ld_a_i(State) ->
     z80_cpu_helpers:advance_tstates(State#cpu_state{a = Val, f = NewFlags}, 1).
 
 %% LD A,R (ED 5F): 9 T-states total (8 base + 1 added)
+%% NOTE: R is incremented during fetch_opcode (M1 cycle) before execution.
+%%       On real Z80, R increments at the END of the instruction, so the value
+%%       seen by LD A,R is one less than what our emulator has at this point.
+%%       We compensate by decrementing bits 0-6 (bit 7 is not part of the counter).
+%%       Flags are based on the compensated value (what actually lands in A).
 execute_ed_ld_a_r(State) ->
     Val = State#cpu_state.r,
-    F_S = Val band 16#80,
-    F_Z = if Val =:= 0 -> ?FLAG_Z; true -> 0 end,
+    CompVal = (Val band 16#80) bor (z80_cpu_helpers:dec_byte(Val band 16#7F) band 16#7F),
+    F_S = CompVal band 16#80,
+    F_Z = if CompVal =:= 0 -> ?FLAG_Z; true -> 0 end,
     F_H = 0,
     F_V = if State#cpu_state.iff2 =/= 0 -> ?FLAG_V; true -> 0 end,
     F_N = 0,
     F_C = State#cpu_state.f band ?FLAG_C,
     NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
-    Val2 = Val band 16#80 bor z80_cpu_helpers:dec_byte(Val band 16#7F) band 16#7F,
-    z80_cpu_helpers:advance_tstates(State#cpu_state{a = Val2, f = NewFlags}, 1).
+    z80_cpu_helpers:advance_tstates(State#cpu_state{a = CompVal, f = NewFlags}, 1).
 
 %% RRD: Rotate Right Digit (ED 67) - 18 T-states total (8 base + 10 added)
 execute_ed_rrd(State) ->

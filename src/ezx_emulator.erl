@@ -419,7 +419,7 @@ decode_keyboard(Keyboard, UpperByte) ->
     decode_keyboard_rows(Keyboard, UpperByte, 16#1F, 0).
 
 decode_keyboard_rows(_Keyboard, _UpperByte, Acc, 8) ->
-    Acc bor 16#A0;
+    Acc bor 16#E0;
 decode_keyboard_rows(Keyboard, UpperByte, Acc, N) ->
     case (UpperByte band 1) of
         0 ->
