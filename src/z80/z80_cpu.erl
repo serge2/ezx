@@ -16,8 +16,12 @@
     set_reg_pair/3
 ]).
 
+-type state() :: #cpu_state{}.
+
+-export_type([state/0]).
+
 %% @doc Create a fresh CPU state with all callback functions.
--spec init_state(function(), function(), function(), function()) -> #cpu_state{}.
+-spec init_state(function(), function(), function(), function()) -> state().
 init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun) ->
     #cpu_state{
         mem_read_fun = MemReadFun,
@@ -27,7 +31,7 @@ init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun) ->
     }.
 
 %% @doc Return the current program counter from the machine state.
--spec pc(#cpu_state{}) -> non_neg_integer().
+-spec pc(state()) -> non_neg_integer().
 pc(#cpu_state{pc = Pc}) ->
     Pc.
 

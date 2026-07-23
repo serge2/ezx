@@ -6,6 +6,11 @@
     write_byte/3
 ]).
 
+-type state() :: #{size => pos_integer(), data => binary()}.
+
+-export_type([state/0]).
+
+
 new(Rom) when is_binary(Rom), byte_size(Rom) =< 65536 ->
     %% Create a new memory state with 64KB. Pad ROM with zeros if needed.
     #{size => 65536,

@@ -24,7 +24,6 @@
     panel     :: wxPanel:wxPanel(),
     bitmap    :: wxBitmap:wxBitmap() | undefined,
     scale = ?DEFAULT_SCALE :: pos_integer(),
-    keyboard  :: tuple(),
     frame_count = 0 :: non_neg_integer(),
     aplay_port :: port() | undefined,
     audio_start_us = 0 :: non_neg_integer(),
@@ -43,10 +42,6 @@ stop() ->
 
 init(_Options) ->
     wx:new(),
-    Machine0 = ezx_emulator:init(),
-    {Machine1, FC} = run_initial_frames(Machine0, 50),
-    Keyboard = ?KEYBOARD_DEFAULT,
-    Machine2 = ezx_emulator:set_keyboard(Machine1, Keyboard),
 
     Frame = wxFrame:new(wx:null(), -1, "ezx - ZX Spectrum emulator",
                         [{size, {?DEFAULT_WIDTH * ?DEFAULT_SCALE,
@@ -71,13 +66,16 @@ init(_Options) ->
     Cmd = "aplay -t raw -f S16_LE -r 44100 -c 1 --buffer-size=441 -q",
     AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
 
+    Machine0 = ezx_emulator:init(),
+    {Machine1, FC} = run_initial_frames(Machine0, 50),
+
     State = #state{
-        machine = Machine2,
+        machine = Machine1,
         frame = Frame,
         panel = Panel,
-        keyboard = Keyboard,
         frame_count = FC,
-        aplay_port = AplayPort
+        aplay_port = AplayPort,
+        audio_start_us = erlang:monotonic_time(microsecond)
     },
     erlang:send_after(0, self(), frame_tick),
     {ok, State}.
@@ -89,12 +87,11 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
-                                  scale = Scale, keyboard = Keyboard,
+                                  scale = Scale, 
                                   bitmap = OldBitmap, frame_count = FC0,
-                                  aplay_port = Port} = State) ->
+                                  aplay_port = Port, audio_start_us = StartUs0} = State) ->
     try
-        Machine1 = ezx_emulator:set_keyboard(Machine0, Keyboard),
-        Machine2 = ezx_emulator:run_frame(Machine1),
+        Machine2 = ezx_emulator:run_frame(Machine0),
         PCM = Machine2#machine_state.beeper_pcm,
 
         %% Write audio to port
@@ -120,13 +117,6 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
         wxDC:drawBitmap(DC, NewBitmap, {0, 0}),
         wxClientDC:destroy(DC),
 
-
-        %% Initialize audio clock on first write
-        StartUs0 = case State#state.audio_start_us of
-            0 -> Now;
-            S -> S
-        end,
-
         %% Estimate buffer level: bytes written - bytes consumed
         Written0 = State#state.audio_bytes + ByteSize,
         ElapsedUs = Now - StartUs0,
@@ -143,12 +133,12 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                     {StartUs0, Written0, BufferLevel0}
             end,
 
-        case FC rem ?FCREPORT_INTERVAL of
-            0 ->
-                io:format("Frame ~p: buffer_level=~p bytes~n",
-                          [FC, BufferLevel]);
-            _ -> ok
-        end,
+        % case FC rem ?FCREPORT_INTERVAL of
+        %     0 ->
+        %         io:format("Frame ~p: buffer_level=~p bytes~n",
+        %                   [FC, BufferLevel]);
+        %     _ -> ok
+        % end,
 
         %% Schedule next frame: when buffer drops to ~3 frames worth
         %% (absorbs GC pauses and delivery jitter without audible latency)
@@ -175,12 +165,16 @@ handle_info(#wx{event = #wxClose{}}, State) ->
     {stop, normal, State};
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = Key, rawCode = _RawCode} = _E}, State) ->
-    Keyboard = press_wx_key(State#state.keyboard, Key),
-    {noreply, State#state{keyboard = Keyboard}};
+    Machine = State#state.machine,
+    NewMachine = ezx_emulator:press_key(Machine, Key),
+    % io:format("Key down: ~p~n", [_E]),
+    {noreply, State#state{machine = NewMachine}};
 
 handle_info(#wx{event = #wxKey{type = key_up, keyCode = Key, rawCode = _RawCode} = _E}, State) ->
-    Keyboard = release_wx_key(State#state.keyboard, Key),
-    {noreply, State#state{keyboard = Keyboard}};
+    Machine = State#state.machine,
+    NewMachine = ezx_emulator:release_key(Machine, Key),
+    % io:format("Key up: ~p~n", [_E]),
+    {noreply, State#state{machine = NewMachine}};
 
 handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected}}, State) ->
     Dialog = wxFileDialog:new(State#state.frame, [{message, "Load snapshot or tape"},
@@ -217,6 +211,7 @@ handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected
     end;
 
 handle_info(#wx{id = ?wxID_EXIT, event = #wxCommand{type = command_menu_selected}}, State) ->
+    init:stop(),    
     {stop, normal, State};
 
 handle_info(_Info, State) ->
@@ -241,67 +236,3 @@ frame_to_image(Frame) ->
     RGB = << <<R, G, B>> || Row <- Frame, {R, G, B} <- Row >>,
     wxImage:new(Width, Height, RGB).
 
-%% --- ZX Spectrum keyboard matrix ---
-
-key_map() ->
-    #{
-        306  => {1, 0},
-        $Z   => {1, 1},
-        $X   => {1, 2},
-        $C   => {1, 3},
-        $V   => {1, 4},
-
-        $A   => {2, 0},
-        $S   => {2, 1},
-        $D   => {2, 2},
-        $F   => {2, 3},
-        $G   => {2, 4},
-
-        $Q   => {3, 0},
-        $W   => {3, 1},
-        $E   => {3, 2},
-        $R   => {3, 3},
-        $T   => {3, 4},
-
-        $1   => {4, 0},
-        $2   => {4, 1},
-        $3   => {4, 2},
-        $4   => {4, 3},
-        $5   => {4, 4},
-
-        $0   => {5, 0},
-        $9   => {5, 1},
-        $8   => {5, 2},
-        $7   => {5, 3},
-        $6   => {5, 4},
-
-        $P   => {6, 0},
-        $O   => {6, 1},
-        $I   => {6, 2},
-        $U   => {6, 3},
-        $Y   => {6, 4},
-
-        13   => {7, 0},
-        $L   => {7, 1},
-        $K   => {7, 2},
-        $J   => {7, 3},
-        $H   => {7, 4},
-
-        32   => {8, 0},
-        307  => {8, 1}, 0 => {8, 1},
-        $M   => {8, 2},
-        $N   => {8, 3},
-        $B   => {8, 4}
-    }.
-
-press_wx_key(Keyboard, WxKey) ->
-    case maps:find(WxKey, key_map()) of
-        {ok, {Row, Bit}} -> ezx_keyboard:press(Keyboard, Row, Bit);
-        error -> Keyboard
-    end.
-
-release_wx_key(Keyboard, WxKey) ->
-    case maps:find(WxKey, key_map()) of
-        {ok, {Row, Bit}} -> ezx_keyboard:release(Keyboard, Row, Bit);
-        error -> Keyboard
-    end.

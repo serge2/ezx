@@ -4,6 +4,7 @@
 -include("ezx_emulator.hrl").
 -include("format/sna.hrl").
 -include("format/tap.hrl").
+-include("input/ezx_keyboard.hrl").
 
 -export([
     init/0,
@@ -17,6 +18,8 @@
     reset/1,
     set_pc/2,
     set_keyboard/2,
+    press_key/2,
+    release_key/2,
     run_until_tstates/2,
     read_byte/2,
     write_byte/3,
@@ -63,7 +66,7 @@ init(Mem, Rom) ->
                     Keyboard = ExtContext#ext_context.keyboard,
                     UpperByte = (Port bsr 8) band 16#FF,
                     Result = ezx_keyboard:decode(Keyboard, UpperByte),
-                    {Result, ExtContext};
+                    {Result bor 16#E0, ExtContext}; % Set high bits 5-7 to 1 (floating bus)
                 _ ->
                     {16#FF, ExtContext}
             end
@@ -93,7 +96,8 @@ init(Mem, Rom) ->
         memory = Mem:new(Rom),
         mem_read_fun = MemReadFun,
         mem_write_fun = MemWriteFun,
-        beeper = ezx_beeper:init()
+        beeper = ezx_beeper:init(),
+        keyboard = ezx_keyboard:default()
     }.
 
 %% @doc Load a program into memory starting at address 0.
@@ -117,6 +121,20 @@ set_pc(#machine_state{cpu = Cpu} = Machine, Addr) ->
 -spec set_keyboard(#machine_state{}, tuple()) -> #machine_state{}.
 set_keyboard(Machine, Keyboard) ->
     Machine#machine_state{keyboard = Keyboard}.
+
+-spec press_key(#machine_state{}, non_neg_integer()) -> #machine_state{}.
+press_key(Machine, OrigKey) ->
+    KB = Machine#machine_state.keyboard,
+    Keys = maps:get(OrigKey, key_map(), []),
+    NewKB = ezx_keyboard:press_keys(KB, Keys),
+    Machine#machine_state{keyboard = NewKB}.
+
+-spec release_key(#machine_state{}, non_neg_integer()) -> #machine_state{}.
+release_key(Machine, OrigKey) ->
+    KB = Machine#machine_state.keyboard,
+    Keys = maps:get(OrigKey, key_map(), []),
+    NewKB = ezx_keyboard:release_keys(KB, Keys),
+    Machine#machine_state{keyboard = NewKB}.
 
 %% @doc Load a 48K SNA snapshot.
 -spec load_sna(#machine_state{}, binary()) -> #machine_state{}.
@@ -226,36 +244,92 @@ write_block(Machine, Addr, [Byte | Rest]) ->
 %% --- Auto-typing keyboard queue for LOAD "" ---
 
 make_load_queue() ->
-    D = ezx_keyboard:default(),
-    J = ezx_keyboard:press(D, 7, 3),
-    Quote = ezx_keyboard:press(ezx_keyboard:press(D, 8, 1), 6, 0),
-    Enter = ezx_keyboard:press(D, 7, 0),
-    [
-        {repeat, 50, release},
-        {repeat, 3, {set, J}},
-        {repeat, 10, release},
-        {repeat, 3, {set, Quote}},
-        {repeat, 5, release},
-        {repeat, 3, {set, Quote}},
-        {repeat, 5, release},
-        {repeat, 3, {set, Enter}},
-        {repeat, 5, release}
+     [
+        {50, release},
+        {3, {set, [?KEY_J]}},                   % LOAD
+        {10, release},
+        {3, {set, [?KEY_SYMB_SHIFT, ?KEY_P]}},  % "
+        {5, release},
+        {3, {set, [?KEY_SYMB_SHIFT, ?KEY_P]}},  % "
+        {5, release},
+        {3, {set, [?KEY_ENTER]}},               % ENTER
+        {5, release}
     ].
 
 %% @doc Process one step of the keyboard auto-typing queue (called per frame).
 %% Queue elements: {repeat, N, Action} where Action is {set, KB} or release.
 %% Each frame consumes one count from the current repeat block.
-process_keyboard_queue(#machine_state{keyboard_queue = [{repeat, N, Action} | Rest]} = Machine) when N > 1 ->
+process_keyboard_queue(#machine_state{keyboard_queue = [{N, Action} | Rest]} = Machine) when N > 1 ->
     KB = apply_kb_action(Machine#machine_state.keyboard, Action),
-    Machine#machine_state{keyboard = KB, keyboard_queue = [{repeat, N - 1, Action} | Rest]};
-process_keyboard_queue(#machine_state{keyboard_queue = [{repeat, 1, Action} | Rest]} = Machine) ->
+    Machine#machine_state{keyboard = KB, keyboard_queue = [{N - 1, Action} | Rest]};
+
+process_keyboard_queue(#machine_state{keyboard_queue = [{1, Action} | Rest]} = Machine) ->
     KB = apply_kb_action(Machine#machine_state.keyboard, Action),
     Machine#machine_state{keyboard = KB, keyboard_queue = Rest};
+
 process_keyboard_queue(Machine) ->
     Machine.
 
-apply_kb_action(_KB, release) -> ?KEYBOARD_DEFAULT;
-apply_kb_action(_KB, {set, NewKB}) -> NewKB.
+apply_kb_action(_KB, release) -> ezx_keyboard:release_all();
+apply_kb_action(KB, {set, Keys}) -> ezx_keyboard:press_keys(KB, Keys).
+
+
+key_map() ->
+    #{
+        306  => [?KEY_CAPS_SHIFT], %SHIFT
+        $Z   => [?KEY_Z],
+        $X   => [?KEY_X],
+        $C   => [?KEY_C],
+        $V   => [?KEY_V],
+
+        $A   => [?KEY_A],
+        $S   => [?KEY_S],
+        $D   => [?KEY_D],
+        $F   => [?KEY_F],
+        $G   => [?KEY_G],
+
+        $Q   => [?KEY_Q],
+        $W   => [?KEY_W],
+        $E   => [?KEY_E],
+        $R   => [?KEY_R],
+        $T   => [?KEY_T],
+
+        $1   => [?KEY_1],
+        $2   => [?KEY_2],
+        $3   => [?KEY_3],
+        $4   => [?KEY_4],
+        $5   => [?KEY_5],
+
+        $0   => [?KEY_0],
+        $9   => [?KEY_9],
+        $8   => [?KEY_8],
+        $7   => [?KEY_7],
+        $6   => [?KEY_6],
+
+        $P   => [?KEY_P],
+        $O   => [?KEY_O],
+        $I   => [?KEY_I],
+        $U   => [?KEY_U],
+        $Y   => [?KEY_Y],
+
+        13   => [?KEY_ENTER], 370 => [?KEY_ENTER],  %% ENTER
+        $L   => [?KEY_L],
+        $K   => [?KEY_K],
+        $J   => [?KEY_J],
+        $H   => [?KEY_H],
+
+        32   => [?KEY_SPACE],
+        307  => [?KEY_SYMB_SHIFT], 0 => [?KEY_SYMB_SHIFT], %% ALT
+        $M   => [?KEY_M],
+        $N   => [?KEY_N],
+        $B   => [?KEY_B],
+
+        8    => [?KEY_CAPS_SHIFT, ?KEY_0],   %% BACKSPACE
+        314  => [?KEY_CAPS_SHIFT, ?KEY_5],   %% LEFT
+        315  => [?KEY_CAPS_SHIFT, ?KEY_7],   %% UP
+        316  => [?KEY_CAPS_SHIFT, ?KEY_8],   %% RIGHT
+        317  => [?KEY_CAPS_SHIFT, ?KEY_6]    %% DOWN
+    }.
 
 -spec read_byte(#machine_state{}, non_neg_integer()) -> {byte(), #machine_state{}}.
 read_byte(#machine_state{memory = Mem, mem_read_fun = MemReadFun} = Machine, Addr) ->
@@ -303,7 +377,7 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
     ExtContext0 = #ext_context{
         memory = Memory0,
         t_states = MachineTStates,
-        frame_counter = MachineTStates div ?TSTATES_PER_FRAME,
+        % frame_counter = MachineTStates div ?TSTATES_PER_FRAME,
         border_changes = [],
         keyboard = Machine#machine_state.keyboard,
         beeper = Beeper0
