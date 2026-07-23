@@ -15,6 +15,7 @@
 -define(FCREPORT_INTERVAL, 100).
 -define(MENU_FULLSCREEN, 2001).
 -define(MENU_FULLSCREEN_CROP, 2002).
+-define(MENU_RESET, 3001).
 
 %% Audio: 44100 Hz * 2 bytes = 88200 bytes/sec
 -define(AUDIO_RATE, 88200).
@@ -61,6 +62,9 @@ init(_Options) ->
     wxMenu:append(ViewMenu, ?MENU_FULLSCREEN, "Fullscreen\tF11", [{help, "Toggle fullscreen mode"}]),
     wxMenu:append(ViewMenu, ?MENU_FULLSCREEN_CROP, "Fullscreen (crop borders)\tShift+F11", [{help, "Fullscreen with border crop"}]),
     wxMenuBar:append(MenuBar, ViewMenu, "View"),
+    ActionsMenu = wxMenu:new(),
+    wxMenu:append(ActionsMenu, ?MENU_RESET, "Reset\tF5", [{help, "Reset the emulator"}]),
+    wxMenuBar:append(MenuBar, ActionsMenu, "Actions"),
     wxFrame:setMenuBar(Frame, MenuBar),
     wxFrame:connect(Frame, command_menu_selected),
 
@@ -200,6 +204,9 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_ESCAPE}},
             #state{fullscreen = true} = State) ->
     toggle_fullscreen(false, State);
 
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F5}}, State) ->
+    do_reset(State);
+
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = Key, rawCode = _RawCode} = _E}, State) ->
     Machine = State#state.machine,
     NewMachine = ezx_emulator:press_key(Machine, Key),
@@ -256,6 +263,9 @@ handle_info(#wx{id = ?MENU_FULLSCREEN, event = #wxCommand{type = command_menu_se
 handle_info(#wx{id = ?MENU_FULLSCREEN_CROP, event = #wxCommand{type = command_menu_selected}}, State) ->
     toggle_fullscreen(true, State);
 
+handle_info(#wx{id = ?MENU_RESET, event = #wxCommand{type = command_menu_selected}}, State) ->
+    do_reset(State);
+
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -265,6 +275,13 @@ terminate(_Reason, #state{frame = Frame, aplay_port = Port}) ->
     ok.
 
 %% --- Internal ---
+
+do_reset(State) ->
+    Machine0 = ezx_emulator:init(),
+    {Machine1, FC} = run_initial_frames(Machine0, 50),
+    {noreply, State#state{machine = Machine1, frame_count = FC,
+                          audio_start_us = erlang:monotonic_time(microsecond),
+                          audio_bytes = 0}}.
 
 toggle_fullscreen(Crop, #state{frame = Frame, fullscreen = false} = State) ->
     wxFrame:showFullScreen(Frame, true),
