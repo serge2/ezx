@@ -526,7 +526,7 @@ execute_inc_r(State, Reg) ->
     F_H = if (OldVal band 16#0F) =:= 16#0F -> ?FLAG_H; true -> 0 end,
     F_V = if OldVal =:= 16#7F -> ?FLAG_V; true -> 0 end,
 
-    NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V,
+    NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V bor (NewVal band 16#28),
 
     set_reg_byte_prefixed(Reg, NewVal, State#cpu_state{f = NewFlags}).
     
@@ -542,7 +542,7 @@ execute_dec_r(State, Reg) ->
     F_H = if (OldVal band 16#0F) =:= 0 -> ?FLAG_H; true -> 0 end,
     F_V = if OldVal =:= 16#80 -> ?FLAG_V; true -> 0 end,
 
-    NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V,
+    NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V bor (NewVal band 16#28),
 
     set_reg_byte_prefixed(Reg, NewVal, State#cpu_state{f = NewFlags}).
 
@@ -747,7 +747,7 @@ execute_ld_sp_hl(State) ->
 
 execute_cpl(State) ->
     NewA = State#cpu_state.a bxor 16#FF,
-    NewF = (State#cpu_state.f band (?FLAG_C bor ?FLAG_V bor ?FLAG_Z bor ?FLAG_S)) bor ?FLAG_H bor ?FLAG_N,
+    NewF = (State#cpu_state.f band (?FLAG_C bor ?FLAG_V bor ?FLAG_Z bor ?FLAG_S)) bor ?FLAG_H bor ?FLAG_N bor (NewA band 16#28),
     State#cpu_state{a = NewA, f = NewF}.
 
 execute_ccf(State) ->
@@ -767,7 +767,7 @@ execute_inc_mem_hl(State) ->
     F_S = NewByte band 16#80,
     F_H = if (Byte band 16#0F) =:= 16#0F -> ?FLAG_H; true -> 0 end,
     F_V = if Byte =:= 16#7F -> ?FLAG_V; true -> 0 end,
-    NewF = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V,
+    NewF = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V bor (NewByte band 16#28),
     State3 = State2#cpu_state{f = NewF},
     z80_cpu_helpers:advance_tstates(State3, 11).
 
@@ -781,7 +781,7 @@ execute_dec_mem_hl(State) ->
     F_S = NewByte band 16#80,
     F_H = if (Byte band 16#0F) =:= 0 -> ?FLAG_H; true -> 0 end,
     F_V = if Byte =:= 16#80 -> ?FLAG_V; true -> 0 end,
-    NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V,
+    NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V bor (NewByte band 16#28),
     State3 = State2#cpu_state{f = NewFlags},
     z80_cpu_helpers:advance_tstates(State3, 11).
 

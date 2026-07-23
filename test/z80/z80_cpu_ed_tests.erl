@@ -272,6 +272,51 @@ ed_ldir_test() ->
     ?assertEqual(16#11, test_helpers:read_mem(Cpu7, 16#5000)),
     ?assertEqual(16#22, test_helpers:read_mem(Cpu7, 16#5001)).
 
+%% LDIR NOP' skip: BC=0 AND PV=0 → instruction skipped entirely
+ed_ldir_nop_skip_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#AA),  %% target memory
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),        %% ED prefix
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#B0),        %% LDIR
+    %% BC=0, PV=0 (F=0x00), HL=source, DE=dest
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, d = 16#50, e = 16#00,
+                           b = 0, c = 0, a = 16#42, f = 16#00},
+    Cpu5 = z80_cpu:step(Cpu4),
+    %% PC must advance past 2-byte opcode (PC=2)
+    ?assertEqual(2, Cpu5#cpu_state.pc),
+    %% No registers changed
+    ?assertEqual(16#4000, z80_cpu:get_reg_pair(hl, Cpu5)),
+    ?assertEqual(16#5000, z80_cpu:get_reg_pair(de, Cpu5)),
+    ?assertEqual(16#0000, z80_cpu:get_reg_pair(bc, Cpu5)),
+    ?assertEqual(16#42, Cpu5#cpu_state.a),
+    %% Flags unchanged (were 0x00)
+    ?assertEqual(16#00, Cpu5#cpu_state.f band 16#FF),
+    %% Memory unchanged
+    ?assertEqual(16#AA, test_helpers:read_mem(Cpu5, 16#4000)),
+    ?assertEqual(0, test_helpers:read_mem(Cpu5, 16#5000)),
+    %% 16 T-states (8 fetch + 8 skip)
+    ?assertEqual(16, z80_cpu:t_states(Cpu5)).
+
+%% LDIR NOP' skip: BC=0 AND PV=1 → NOT skipped, one iteration then loop
+ed_ldir_bc0_pv1_runs_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#BB),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#B0),
+    %% BC=0, PV=1 (F has bit2 set = 0x04)
+    Cpu4 = Cpu3#cpu_state{h = 16#40, l = 16#00, d = 16#50, e = 16#00,
+                           b = 0, c = 0, a = 16#00, f = 16#04},
+    Cpu5 = z80_cpu:step(Cpu4),
+    %% One iteration runs: byte copied, BC becomes 0xFFFF, HL+1, DE+1
+    ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu5)),
+    ?assertEqual(16#5001, z80_cpu:get_reg_pair(de, Cpu5)),
+    ?assertEqual(16#FFFF, z80_cpu:get_reg_pair(bc, Cpu5)),
+    ?assertEqual(16#BB, test_helpers:read_mem(Cpu5, 16#5000)),
+    %% PV set because BC≠0
+    ?assertEqual(?FLAG_V, Cpu5#cpu_state.f band ?FLAG_V),
+    %% PC=0 (looped back via PC-=2)
+    ?assertEqual(0, Cpu5#cpu_state.pc).
+
 ed_lddr_test() ->
     Cpu0 = test_helpers:init_cpu(),
     Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#11),

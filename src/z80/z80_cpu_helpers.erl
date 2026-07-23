@@ -342,7 +342,7 @@ do_add(State, Value) ->
     F_N = 0,
     F_C = if Sum > 16#FF -> ?FLAG_C; true -> 0 end,
 
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (Res band 16#28),
     ?SET_A(?SET_F(State, NewFlags), Res).
 
 %% ADC A, r / (HL) / n
@@ -359,7 +359,7 @@ do_adc(State, Value) ->
     F_N = 0,
     F_C = if Sum > 16#FF -> ?FLAG_C; true -> 0 end,
 
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (Res band 16#28),
     ?SET_A(?SET_F(State, NewFlags), Res).
 
 %% SUB A, r / (HL) / n
@@ -375,7 +375,7 @@ do_sub(State, Value) ->
     F_N = ?FLAG_N,
     F_C = if Diff < 0 -> ?FLAG_C; true -> 0 end,
 
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (Res band 16#28),
     ?SET_A(?SET_F(State, NewFlags), Res).
 
 %% SBC A, r / (HL) / n
@@ -392,7 +392,7 @@ do_sbc(State, Value) ->
     F_N = ?FLAG_N,
     F_C = if Diff < 0 -> ?FLAG_C; true -> 0 end,
 
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (Res band 16#28),
     ?SET_A(?SET_F(State, NewFlags), Res).
 
 %% AND r / (HL) / n
@@ -406,7 +406,7 @@ do_and(State, Value) ->
     F_N = 0,
     F_C = 0,
 
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (Res band 16#28),
     ?SET_A(?SET_F(State, NewFlags), Res).
 
 %% XOR r / (HL) / n
@@ -420,7 +420,7 @@ do_xor(State, Value) ->
     F_N = 0,
     F_C = 0,
 
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (Res band 16#28),
     ?SET_A(?SET_F(State, NewFlags), Res).
 
 %% OR r / (HL) / n
@@ -434,10 +434,11 @@ do_or(State, Value) ->
     F_N = 0,
     F_C = 0,
 
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (Res band 16#28),
     ?SET_A(?SET_F(State, NewFlags), Res).
 
 %% CP r / (HL) / n
+%% NOTE: F3/F5 are copied from the OPERAND (not the result), per real Z80 behavior.
 do_cp(State, Value) ->
     A = ?GET_A(State),
     Diff = A - Value,
@@ -450,5 +451,5 @@ do_cp(State, Value) ->
     F_N = ?FLAG_N,
     F_C = if Diff < 0 -> ?FLAG_C; true -> 0 end,
 
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (Value band 16#28),
     ?SET_F(State, NewFlags).
