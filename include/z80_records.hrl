@@ -1,26 +1,26 @@
 %% CPU register file and execution state for the Z80 core.
 -record(cpu_state, {
     %% Main registers
-    a = 0, f = 0,
-    b = 0, c = 0,
-    d = 0, e = 0,
-    h = 0, l = 0,
+    a = 16#FF, f = 16#FF,
+    b = 16#FF, c = 16#FF,
+    d = 16#FF, e = 16#FF,
+    h = 16#FF, l = 16#FF,
 
     %% Shadow registers (used for EX AF,AF' and EXX)
-    a_alt = 0, f_alt = 0,
-    b_alt = 0, c_alt = 0,
-    d_alt = 0, e_alt = 0,
-    h_alt = 0, l_alt = 0,
+    a_alt = 16#FF, f_alt = 16#FF,
+    b_alt = 16#FF, c_alt = 16#FF,
+    d_alt = 16#FF, e_alt = 16#FF,
+    h_alt = 16#FF, l_alt = 16#FF,
 
     %% Index registers
-    ixh = 0, ixl = 0,
-    iyh = 0, iyl = 0,
+    ixh = 16#FF, ixl = 16#FF,
+    iyh = 16#FF, iyl = 16#FF,
 
     %% Special proposition registers
     pc = 0, %% Program counter register
-    sp = 0, %% Stack pointer register
-    i  = 0, %% Interrupt vector register
-    r  = 0, %% Memory refresh register
+    sp = 16#FFFF, %% Stack pointer register
+    i  = 16#FF, %% Interrupt vector register
+    r  = 16#FF, %% Memory refresh register
 
     %% Prefix state for DD/FD and DD CB/FD CB handling
     prefix = none :: none | dd | fd | dd_cb | fd_cb,

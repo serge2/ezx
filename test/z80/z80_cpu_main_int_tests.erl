@@ -94,8 +94,9 @@ di_ei_timing_test() ->
 
 r_register_increments_on_m1_test() ->
     Cpu0 = test_helpers:init_cpu(),
-    Cpu1 = z80_cpu:step(Cpu0),
-    ?assertEqual(1, Cpu1#cpu_state.r).
+    Cpu1 = Cpu0#cpu_state{r = 0},
+    Cpu2 = z80_cpu:step(Cpu1),
+    ?assertEqual(1, Cpu2#cpu_state.r).
 
 r_register_preserves_bit7_test() ->
     Cpu0 = test_helpers:init_cpu(),
@@ -111,10 +112,11 @@ r_register_wraps_at_7bits_test() ->
 
 r_register_prefix_cb_increments_twice_test() ->
     Cpu0 = test_helpers:init_cpu(),
-    Cpu1 = test_helpers:load_program(Cpu0, 0, [16#CB, 16#00]),  %% RLC B
-    Cpu2 = z80_cpu:step(Cpu1),
-    ?assertEqual(2, Cpu2#cpu_state.r),
-    ?assertEqual(8, z80_cpu:t_states(Cpu2)).
+    Cpu1 = Cpu0#cpu_state{r = 0},
+    Cpu2 = test_helpers:load_program(Cpu1, 0, [16#CB, 16#00]),  %% RLC B
+    Cpu3 = z80_cpu:step(Cpu2),
+    ?assertEqual(2, Cpu3#cpu_state.r),
+    ?assertEqual(8, z80_cpu:t_states(Cpu3)).
 
 r_register_prefix_ed_increments_twice_test() ->
     Cpu0 = test_helpers:init_cpu(),
