@@ -151,7 +151,8 @@ execute_ed_ld_a_i(State) ->
     F_V = if State#cpu_state.iff2 =/= 0 -> ?FLAG_V; true -> 0 end,
     F_N = 0,
     F_C = State#cpu_state.f band ?FLAG_C,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    F_F3F5 = Val band 16#28,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     z80_cpu_helpers:advance_tstates(State#cpu_state{a = Val, f = NewFlags}, 1).
 
 %% LD A,R (ED 5F): 9 T-states total (8 base + 1 added)
@@ -169,7 +170,8 @@ execute_ed_ld_a_r(State) ->
     F_V = if State#cpu_state.iff2 =/= 0 -> ?FLAG_V; true -> 0 end,
     F_N = 0,
     F_C = State#cpu_state.f band ?FLAG_C,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C,
+    F_F3F5 = CompVal band 16#28,
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     z80_cpu_helpers:advance_tstates(State#cpu_state{a = CompVal, f = NewFlags}, 1).
 
 %% RRD: Rotate Right Digit (ED 67) - 18 T-states total (8 base + 10 added)

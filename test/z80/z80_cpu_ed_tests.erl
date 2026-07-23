@@ -48,6 +48,26 @@ ed_ld_a_i_test() ->
     ?assertEqual(16#04, Cpu4#cpu_state.f band 16#04),
     ?assertEqual(9, z80_cpu:t_states(Cpu4)).
 
+%% LD A,I: F3/F5 come from I register
+ed_ld_a_i_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#57),
+    Cpu3 = Cpu2#cpu_state{i = 16#28, iff2 = 0},  %% I=0x28 → F3=1(bit3), F5=1(bit5)
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#28, Cpu4#cpu_state.a),
+    ?assertEqual(16#28, Cpu4#cpu_state.f band 16#28).
+
+%% LD A,I: I=0x08 → F3=1, F5=0
+ed_ld_a_i_f3_only_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#57),
+    Cpu3 = Cpu2#cpu_state{i = 16#08, iff2 = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#08, Cpu4#cpu_state.a),
+    ?assertEqual(16#08, Cpu4#cpu_state.f band 16#28).
+
 ed_ld_r_a_test() ->
     Cpu0 = test_helpers:init_cpu(),
     Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),  %% ED prefix
@@ -67,6 +87,27 @@ ed_ld_a_r_test() ->
     ?assertEqual(16#80, Cpu4#cpu_state.r),
     ?assertEqual(0, Cpu4#cpu_state.f band 16#04),
     ?assertEqual(9, z80_cpu:t_states(Cpu4)).
+
+%% LD A,R: F3/F5 come from compensated R value
+%% R initial=0x27 → after 2 fetch increments → R=0x29 → CompVal=dec_byte(0x29)=0x28
+ed_ld_a_r_f3f5_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#5F),
+    Cpu3 = Cpu2#cpu_state{r = 16#27, iff2 = 1},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#28, Cpu4#cpu_state.a),
+    ?assertEqual(16#28, Cpu4#cpu_state.f band 16#28).
+
+%% LD A,R: R initial=0x1F → after fetch → R=0x21 → CompVal=dec_byte(0x21)=0x20 → F5=1, F3=0
+ed_ld_a_r_f5_only_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#5F),
+    Cpu3 = Cpu2#cpu_state{r = 16#1F, iff2 = 0},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#20, Cpu4#cpu_state.a),
+    ?assertEqual(16#20, Cpu4#cpu_state.f band 16#28).
 
 %% --- ED NEG ---
 
