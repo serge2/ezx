@@ -2,6 +2,8 @@
 
 -include("z80_records.hrl").
 -include("ezx_emulator.hrl").
+-include("format/sna.hrl").
+-include("format/tap.hrl").
 
 -export([
     init/0,
@@ -60,7 +62,7 @@ init(Mem, Rom) ->
                     %% Multiple half-rows can be selected; results are ANDed.
                     Keyboard = ExtContext#ext_context.keyboard,
                     UpperByte = (Port bsr 8) band 16#FF,
-                    Result = decode_keyboard(Keyboard, UpperByte),
+                    Result = ezx_keyboard:decode(Keyboard, UpperByte),
                     {Result, ExtContext};
                 _ ->
                     {16#FF, ExtContext}
@@ -119,7 +121,52 @@ set_keyboard(Machine, Keyboard) ->
 %% @doc Load a 48K SNA snapshot.
 -spec load_sna(#machine_state{}, binary()) -> #machine_state{}.
 load_sna(Machine, Data) ->
-    ezx_sna:load(Machine, Data).
+    H = ezx_sna:parse(Data),
+    MemWriteFun = Machine#machine_state.mem_write_fun,
+    ExtContext0 = #ext_context{memory = Machine#machine_state.memory},
+    MemList = binary:bin_to_list(H#sna_header.mem),
+    {_FinalOffset, ExtContext1} = lists:foldl(
+        fun(Byte, {Offset, Ctx}) ->
+            Addr = 16384 + Offset,
+            {Offset + 1, MemWriteFun(Ctx, Addr, Byte)}
+        end, {0, ExtContext0}, MemList),
+    MemReadFun = Machine#machine_state.mem_read_fun,
+    SP = H#sna_header.sp,
+    ReadCtx0 = #ext_context{memory = ExtContext1#ext_context.memory},
+    {PCL, ReadCtx1} = MemReadFun(ReadCtx0, SP band 16#FFFF),
+    {PCH, _ReadCtx2} = MemReadFun(ReadCtx1, (SP + 1) band 16#FFFF),
+    PC = (PCH bsl 8) bor PCL,
+    AF = H#sna_header.af,
+    BC = H#sna_header.bc,
+    DE = H#sna_header.de,
+    HL = H#sna_header.hl,
+    IX = H#sna_header.ix,
+    IY = H#sna_header.iy,
+    AFp = H#sna_header.af_prime,
+    BCp = H#sna_header.bc_prime,
+    DEp = H#sna_header.de_prime,
+    HLp = H#sna_header.hl_prime,
+    Cpu = Machine#machine_state.cpu,
+    Cpu1 = Cpu#cpu_state{
+        i = H#sna_header.i, r = H#sna_header.r,
+        a = AF bsr 8, f = AF band 16#FF,
+        b = BC bsr 8, c = BC band 16#FF,
+        d = DE bsr 8, e = DE band 16#FF,
+        h = HL bsr 8, l = HL band 16#FF,
+        sp = SP, pc = PC,
+        ixh = IX bsr 8, ixl = IX band 16#FF,
+        iyh = IY bsr 8, iyl = IY band 16#FF,
+        iff1 = H#sna_header.iff2, iff2 = H#sna_header.iff2,
+        a_alt = AFp bsr 8, f_alt = AFp band 16#FF,
+        b_alt = BCp bsr 8, c_alt = BCp band 16#FF,
+        d_alt = DEp bsr 8, e_alt = DEp band 16#FF,
+        h_alt = HLp bsr 8, l_alt = HLp band 16#FF
+    },
+    Machine#machine_state{
+        memory = ExtContext1#ext_context.memory,
+        cpu = Cpu1,
+        border_color = H#sna_header.border
+    }.
 
 %% @doc Reset machine to a fresh boot state (ROM loaded, memory zeroed).
 -spec reset(#machine_state{}) -> #machine_state{}.
@@ -128,8 +175,72 @@ reset(_Machine) ->
 
 %% @doc Load a TAP file using tape traps.
 -spec load_tap(#machine_state{}, binary()) -> #machine_state{}.
-load_tap(Machine, Data) ->
-    ezx_tap:load(Machine, Data).
+load_tap(_Machine, Data) ->
+    Blocks = ezx_tap:parse_blocks(Data),
+    io:format("TAP: parsed ~p blocks~n", [length(Blocks)]),
+    FreshMachine = init(),
+    InitMachine = run_until_tstates(FreshMachine, 4000000),
+    Q = make_load_queue(),
+    InitMachine#machine_state{
+        tape_blocks = Blocks,
+        keyboard_queue = Q,
+        beeper = ezx_beeper:init()
+    }.
+
+%% --- Tape trap: intercept LD-BYTES at PC=0x0556 ---
+
+tape_trap(#machine_state{cpu = Cpu, tape_blocks = [#tap_block{payload = Data} | RestBlocks]} = Machine,
+          MachineTStates) ->
+    IX = (Cpu#cpu_state.ixh bsl 8) bor Cpu#cpu_state.ixl,
+    DE = (Cpu#cpu_state.d bsl 8) bor Cpu#cpu_state.e,
+    DataList = binary:bin_to_list(Data),
+    WriteLen = min(DE, length(DataList)),
+    {WriteData, _} = lists:split(WriteLen, DataList),
+    Machine1 = write_block(Machine, IX, WriteData),
+    NewIX = (IX + WriteLen) band 16#FFFF,
+    Cpu1 = Cpu#cpu_state{
+        pc = 16#05E2,
+        ixh = (NewIX bsr 8) band 16#FF,
+        ixl = NewIX band 16#FF,
+        d = 0, e = 0,
+        b = 16#B0, a = 0,
+        f = 1,  %% carry set = success
+        halted = false,
+        prefix = none
+    },
+    TStatesDelta = 1000,
+    NewMT = MachineTStates + TStatesDelta,
+    io:format("Tape trap: ~p bytes at 0x~.16B (~p left)~n",
+              [WriteLen, IX, length(RestBlocks)]),
+    Machine1#machine_state{
+        cpu = Cpu1#cpu_state{t_states = NewMT},
+        t_states = NewMT,
+        tape_blocks = RestBlocks
+    }.
+
+write_block(Machine, _Addr, []) -> Machine;
+write_block(Machine, Addr, [Byte | Rest]) ->
+    Machine1 = write_byte(Machine, Addr band 16#FFFF, Byte),
+    write_block(Machine1, (Addr + 1) band 16#FFFF, Rest).
+
+%% --- Auto-typing keyboard queue for LOAD "" ---
+
+make_load_queue() ->
+    D = ezx_keyboard:default(),
+    J = ezx_keyboard:press(D, 7, 3),
+    Quote = ezx_keyboard:press(ezx_keyboard:press(D, 8, 1), 6, 0),
+    Enter = ezx_keyboard:press(D, 7, 0),
+    [
+        {repeat, 50, release},
+        {repeat, 3, {set, J}},
+        {repeat, 10, release},
+        {repeat, 3, {set, Quote}},
+        {repeat, 5, release},
+        {repeat, 3, {set, Quote}},
+        {repeat, 5, release},
+        {repeat, 3, {set, Enter}},
+        {repeat, 5, release}
+    ].
 
 %% @doc Process one step of the keyboard auto-typing queue (called per frame).
 %% Queue elements: {repeat, N, Action} where Action is {set, KB} or release.
@@ -178,7 +289,7 @@ write_word(Machine, Addr, Word) ->
 step(#machine_state{t_states = MachineTStates, tape_blocks = [_ | _]} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
     case Cpu0#cpu_state.pc of
-        16#0556 -> ezx_tap:tape_trap(Machine, MachineTStates);
+        16#0556 -> tape_trap(Machine, MachineTStates);
         _ -> step_normal(Machine)
     end;
 step(Machine) ->
@@ -279,23 +390,3 @@ merge_border_changes(Existing, StepChanges) ->
     %% StepChanges are in reverse order (newest first within the step).
     %% We want to prepend them so the combined list remains newest-first.
     StepChanges ++ Existing.
-
-%% Decode ZX Spectrum keyboard state from the keyboard matrix.
-%% Keyboard is a tuple of 8 bytes (half-rows 0-7).
-%% UpperByte: each bit selects a half-row (active low, 0 = selected).
-%% Multiple selected half-rows are ANDed together (open-collector bus).
-%% Bits 5-7 of result are always 1 (floating bus).
--spec decode_keyboard(tuple(), non_neg_integer()) -> non_neg_integer().
-decode_keyboard(Keyboard, UpperByte) ->
-    decode_keyboard_rows(Keyboard, UpperByte, 16#1F, 0).
-
-decode_keyboard_rows(_Keyboard, _UpperByte, Acc, 8) ->
-    Acc bor 16#E0;
-decode_keyboard_rows(Keyboard, UpperByte, Acc, N) ->
-    case (UpperByte band 1) of
-        0 ->
-            RowByte = element(N + 1, Keyboard),
-            decode_keyboard_rows(Keyboard, UpperByte bsr 1, Acc band RowByte, N + 1);
-        1 ->
-            decode_keyboard_rows(Keyboard, UpperByte bsr 1, Acc, N + 1)
-    end.

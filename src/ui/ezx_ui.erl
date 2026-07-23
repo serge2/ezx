@@ -175,11 +175,11 @@ handle_info(#wx{event = #wxClose{}}, State) ->
     {stop, normal, State};
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = Key, rawCode = _RawCode} = _E}, State) ->
-    Keyboard = press_key(State#state.keyboard, Key),
+    Keyboard = press_wx_key(State#state.keyboard, Key),
     {noreply, State#state{keyboard = Keyboard}};
 
 handle_info(#wx{event = #wxKey{type = key_up, keyCode = Key, rawCode = _RawCode} = _E}, State) ->
-    Keyboard = release_key(State#state.keyboard, Key),
+    Keyboard = release_wx_key(State#state.keyboard, Key),
     {noreply, State#state{keyboard = Keyboard}};
 
 handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected}}, State) ->
@@ -294,20 +294,14 @@ key_map() ->
         $B   => {8, 4}
     }.
 
-press_key(Keyboard, WxKey) ->
+press_wx_key(Keyboard, WxKey) ->
     case maps:find(WxKey, key_map()) of
-        {ok, {Row, Bit}} ->
-            Old = element(Row, Keyboard),
-            setelement(Row, Keyboard, Old band (bnot (1 bsl Bit)));
-        error ->
-            Keyboard
+        {ok, {Row, Bit}} -> ezx_keyboard:press(Keyboard, Row, Bit);
+        error -> Keyboard
     end.
 
-release_key(Keyboard, WxKey) ->
+release_wx_key(Keyboard, WxKey) ->
     case maps:find(WxKey, key_map()) of
-        {ok, {Row, Bit}} ->
-            Old = element(Row, Keyboard),
-            setelement(Row, Keyboard, Old bor (1 bsl Bit));
-        error ->
-            Keyboard
+        {ok, {Row, Bit}} -> ezx_keyboard:release(Keyboard, Row, Bit);
+        error -> Keyboard
     end.
