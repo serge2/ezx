@@ -14,8 +14,6 @@
 -define(DEFAULT_SCALE, 2).
 -define(FCREPORT_INTERVAL, 100).
 
--define(wxID_LOAD_TAP, 6000).
-
 %% Audio: 44100 Hz * 2 bytes = 88200 bytes/sec
 -define(AUDIO_RATE, 88200).
 -define(BYTES_PER_FRAME, 1764).  %% 882 samples * 2 bytes
@@ -55,8 +53,7 @@ init(_Options) ->
                                  ?DEFAULT_HEIGHT * ?DEFAULT_SCALE}}]),
     MenuBar = wxMenuBar:new(),
     FileMenu = wxMenu:new(),
-    wxMenu:append(FileMenu, ?wxID_OPEN, "Load SNA\tCtrl+O", [{help, "Load a .sna snapshot"}]),
-    wxMenu:append(FileMenu, ?wxID_LOAD_TAP, "Load TAP\tCtrl+T", [{help, "Load a .tap tape file"}]),
+    wxMenu:append(FileMenu, ?wxID_OPEN, "Load file\tCtrl+O", [{help, "Load a .sna or .tap file"}]),
     wxMenu:appendSeparator(FileMenu),
     wxMenu:append(FileMenu, ?wxID_EXIT, "Quit\tCtrl+Q", [{help, "Exit emulator"}]),
     wxMenuBar:append(MenuBar, FileMenu, "File"),
@@ -186,22 +183,28 @@ handle_info(#wx{event = #wxKey{type = key_up, keyCode = Key, rawCode = _RawCode}
     {noreply, State#state{keyboard = Keyboard}};
 
 handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected}}, State) ->
-    Dialog = wxFileDialog:new(State#state.frame, [{message, "Load SNA snapshot"},
-                                                   {wildCard, "SNA files (*.sna)|*.sna"},
+    Dialog = wxFileDialog:new(State#state.frame, [{message, "Load snapshot or tape"},
+                                                   {wildCard, "ZX Spectrum files (*.sna,*.tap)|*.sna;*.tap|SNA files (*.sna)|*.sna|TAP files (*.tap)|*.tap"},
                                                    {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}]),
     case wxFileDialog:showModal(Dialog) of
         ?wxID_OK ->
             File = wxFileDialog:getPath(Dialog),
             wxFileDialog:destroy(Dialog),
+            Ext = string:lowercase(filename:extension(File)),
             case file:read_file(File) of
                 {ok, Data} ->
                     try
-                        NewMachine = ezx_emulator:load_sna(State#state.machine, Data),
-                        io:format("Loaded snapshot: ~s~n", [File]),
+                        NewMachine = case Ext of
+                            ".sna" -> ezx_emulator:load_sna(State#state.machine, Data);
+                            ".tap" -> ezx_emulator:load_tap(State#state.machine, Data);
+                            _ -> io:format("Unknown file type: ~s~n", [File]),
+                                 State#state.machine
+                        end,
+                        io:format("Loaded: ~s~n", [File]),
                         {noreply, State#state{machine = NewMachine}}
                     catch
                         C:E:S ->
-                            io:format("Failed to load snapshot: ~s~n  ~p:~p~n~p~n", [File, C, E, S]),
+                            io:format("Failed to load: ~s~n  ~p:~p~n~p~n", [File, C, E, S]),
                             {noreply, State}
                     end;
                 _ ->
@@ -215,34 +218,6 @@ handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected
 
 handle_info(#wx{id = ?wxID_EXIT, event = #wxCommand{type = command_menu_selected}}, State) ->
     {stop, normal, State};
-
-handle_info(#wx{id = ?wxID_LOAD_TAP, event = #wxCommand{type = command_menu_selected}}, State) ->
-    Dialog = wxFileDialog:new(State#state.frame, [{message, "Load TAP tape file"},
-                                                   {wildCard, "TAP files (*.tap)|*.tap"},
-                                                   {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}]),
-    case wxFileDialog:showModal(Dialog) of
-        ?wxID_OK ->
-            File = wxFileDialog:getPath(Dialog),
-            wxFileDialog:destroy(Dialog),
-            case file:read_file(File) of
-                {ok, Data} ->
-                    try
-                        NewMachine = ezx_emulator:load_tap(State#state.machine, Data),
-                        io:format("Loaded TAP: ~s~n", [File]),
-                        {noreply, State#state{machine = NewMachine}}
-                    catch
-                        C:E:S ->
-                            io:format("Failed to load TAP: ~s~n  ~p:~p~n~p~n", [File, C, E, S]),
-                            {noreply, State}
-                    end;
-                _ ->
-                    io:format("Failed to read file: ~s~n", [File]),
-                    {noreply, State}
-            end;
-        _ ->
-            wxFileDialog:destroy(Dialog),
-            {noreply, State}
-    end;
 
 handle_info(_Info, State) ->
     {noreply, State}.
