@@ -118,56 +118,8 @@ set_keyboard(Machine, Keyboard) ->
 
 %% @doc Load a 48K SNA snapshot.
 -spec load_sna(#machine_state{}, binary()) -> #machine_state{}.
-load_sna(Machine, Data) when is_binary(Data) ->
-    case byte_size(Data) of
-        Sz when Sz < 27 + 49152 ->
-            error(bad_sna_header);
-        _ ->
-            load_sna_do(Machine, Data)
-    end.
-
-load_sna_do(Machine, Data) ->
-    <<I:8,
-      HLp:16/little, DEp:16/little, BCp:16/little, AFp:16/little,
-      HL:16/little, DE:16/little, BC:16/little, IY:16/little, IX:16/little,
-      IFF2:8, R:8,
-      AF:16/little, SP:16/little,
-      _IM:8, Border:8,
-      Mem:49152/bytes>> = Data,
-    MemWriteFun = Machine#machine_state.mem_write_fun,
-    ExtContext0 = #ext_context{memory = Machine#machine_state.memory},
-    MemList = binary:bin_to_list(Mem),
-    {_FinalOffset, ExtContext1} = lists:foldl(
-        fun(Byte, {Offset, Ctx}) ->
-            Addr = 16384 + Offset,
-            {Offset + 1, MemWriteFun(Ctx, Addr, Byte)}
-        end, {0, ExtContext0}, MemList),
-    MemReadFun = Machine#machine_state.mem_read_fun,
-    ReadCtx0 = #ext_context{memory = ExtContext1#ext_context.memory},
-    {PCL, ReadCtx1} = MemReadFun(ReadCtx0, SP band 16#FFFF),
-    {PCH, _ReadCtx2} = MemReadFun(ReadCtx1, (SP + 1) band 16#FFFF),
-    PC = (PCH bsl 8) bor PCL,
-    Cpu = Machine#machine_state.cpu,
-    Cpu1 = Cpu#cpu_state{
-        i = I, r = R,
-        a = AF bsr 8, f = AF band 16#FF,
-        b = BC bsr 8, c = BC band 16#FF,
-        d = DE bsr 8, e = DE band 16#FF,
-        h = HL bsr 8, l = HL band 16#FF,
-        sp = SP, pc = PC,
-        ixh = IX bsr 8, ixl = IX band 16#FF,
-        iyh = IY bsr 8, iyl = IY band 16#FF,
-        iff1 = IFF2, iff2 = IFF2,
-        a_alt = AFp bsr 8, f_alt = AFp band 16#FF,
-        b_alt = BCp bsr 8, c_alt = BCp band 16#FF,
-        d_alt = DEp bsr 8, e_alt = DEp band 16#FF,
-        h_alt = HLp bsr 8, l_alt = HLp band 16#FF
-    },
-    Machine#machine_state{
-        memory = ExtContext1#ext_context.memory,
-        cpu = Cpu1,
-        border_color = Border
-    }.
+load_sna(Machine, Data) ->
+    ezx_sna:load(Machine, Data).
 
 %% @doc Reset machine to a fresh boot state (ROM loaded, memory zeroed).
 -spec reset(#machine_state{}) -> #machine_state{}.
@@ -175,90 +127,9 @@ reset(_Machine) ->
     init().
 
 %% @doc Load a TAP file using tape traps.
-%% Parses TAP into {flag, data} block list, resets machine, lets ROM boot,
-%% then stores blocks for interception at LD-BYTES (0x0556).
-%% A keyboard queue types LOAD "" automatically.
 -spec load_tap(#machine_state{}, binary()) -> #machine_state{}.
-load_tap(_Machine, Data) when is_binary(Data) ->
-    Blocks = parse_tap_blocks(Data),
-    io:format("TAP: parsed ~p blocks~n", [length(Blocks)]),
-    FreshMachine = init(),
-    InitMachine = run_until_tstates(FreshMachine, 4000000),
-    Q = make_tap_load_queue(),
-    InitMachine#machine_state{
-        tape_blocks = Blocks,
-        keyboard_queue = Q,
-        beeper = ezx_beeper:init()
-    }.
-
-parse_tap_blocks(<<>>) -> [];
-parse_tap_blocks(<<Len:16/little, Flag:8, PayloadAndChecksum/binary>>) when byte_size(PayloadAndChecksum) >= Len - 1 ->
-    PayloadLen = Len - 2,
-    <<Payload:PayloadLen/binary, _Checksum:8, Remaining/binary>> = PayloadAndChecksum,
-    [{Flag, Payload} | parse_tap_blocks(Remaining)];
-parse_tap_blocks(_) -> [].
-
-%% @doc Tape trap: intercept LD-BYTES at PC=0x0556.
-%% Copies block data to memory at IX, sets registers for success, jumps to RET (0x05E2).
-tape_trap(#machine_state{cpu = Cpu, tape_blocks = [{_Flag, Data} | RestBlocks]} = Machine,
-          MachineTStates) ->
-    IX = (Cpu#cpu_state.ixh bsl 8) bor Cpu#cpu_state.ixl,
-    DE = (Cpu#cpu_state.d bsl 8) bor Cpu#cpu_state.e,
-    DataList = binary:bin_to_list(Data),
-    WriteLen = min(DE, length(DataList)),
-    {WriteData, _} = lists:split(WriteLen, DataList),
-    Machine1 = write_block(Machine, IX, WriteData),
-    NewIX = (IX + WriteLen) band 16#FFFF,
-    Cpu1 = Cpu#cpu_state{
-        pc = 16#05E2,
-        ixh = (NewIX bsr 8) band 16#FF,
-        ixl = NewIX band 16#FF,
-        d = 0, e = 0,
-        b = 16#B0, a = 0,
-        f = 1,  %% carry set = success
-        halted = false,
-        prefix = none
-    },
-    TStatesDelta = 1000,
-    NewMT = MachineTStates + TStatesDelta,
-    io:format("Tape trap: ~p bytes at 0x~.16B (~p left)~n",
-              [WriteLen, IX, length(RestBlocks)]),
-    Machine1#machine_state{
-        cpu = Cpu1#cpu_state{t_states = NewMT},
-        t_states = NewMT,
-        tape_blocks = RestBlocks
-    }.
-
-write_block(Machine, _Addr, []) -> Machine;
-write_block(Machine, Addr, [Byte | Rest]) ->
-    Machine1 = write_byte(Machine, Addr band 16#FFFF, Byte),
-    write_block(Machine1, (Addr + 1) band 16#FFFF, Rest).
-
-%% --- Auto-typing keyboard queue for LOAD "" ---
-%% Queue is a list of per-frame keyboard actions.
-%% Each element is consumed in one frame: {set, KeyboardTuple} or release.
--type kb_action() :: {set, tuple()} | release.
-
-make_tap_load_queue() ->
-    D = ?KEYBOARD_DEFAULT,
-    J = key_pressed(D, {7, 3}),
-    Quote = key_pressed(key_pressed(D, {8, 1}), {6, 0}),
-    Enter = key_pressed(D, {7, 0}),
-    [
-        {repeat, 50, release},            %% wait for ROM init (6 sec)
-        {repeat, 3, {set, J}},            %% press J → LOAD keyword
-        {repeat, 10, release},            %% release, let ROM process LOAD token
-        {repeat, 3, {set, Quote}},        %% first "
-        {repeat, 5, release},             %% explicit release
-        {repeat, 3, {set, Quote}},        %% second "
-        {repeat, 5, release},             %% release before ENTER
-        {repeat, 3, {set, Enter}},        %% ENTER
-        {repeat, 5, release}              %% final release
-    ].
-
-key_pressed(KB, {Row, Bit}) ->
-    Old = element(Row, KB),
-    setelement(Row, KB, Old band (bnot (1 bsl Bit))).
+load_tap(Machine, Data) ->
+    ezx_tap:load(Machine, Data).
 
 %% @doc Process one step of the keyboard auto-typing queue (called per frame).
 %% Queue elements: {repeat, N, Action} where Action is {set, KB} or release.
@@ -307,7 +178,7 @@ write_word(Machine, Addr, Word) ->
 step(#machine_state{t_states = MachineTStates, tape_blocks = [_ | _]} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
     case Cpu0#cpu_state.pc of
-        16#0556 -> tape_trap(Machine, MachineTStates);
+        16#0556 -> ezx_tap:tape_trap(Machine, MachineTStates);
         _ -> step_normal(Machine)
     end;
 step(Machine) ->
