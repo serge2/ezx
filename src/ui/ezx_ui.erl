@@ -28,7 +28,7 @@
     panel     :: wxPanel:wxPanel(),
     scale = ?DEFAULT_SCALE :: pos_integer(),
     fullscreen = false :: boolean(),
-    fullscreen_crop = true :: boolean(),
+    crop = true :: boolean(),
     crop_off = {0, 0} :: {integer(), integer()},
     crop_exact = false :: boolean(),
     crop_exact_scale = 1.0 :: float(),
@@ -53,8 +53,7 @@ init(_Options) ->
     wx:new(),
 
     Frame = wxFrame:new(wx:null(), -1, "ezx - ZX Spectrum emulator",
-                        [{size, {?DEFAULT_WIDTH * ?DEFAULT_SCALE,
-                                 ?DEFAULT_HEIGHT * ?DEFAULT_SCALE}}]),
+                        [{size, {272 * ?DEFAULT_SCALE, 208 * ?DEFAULT_SCALE}}]),
     MenuBar = wxMenuBar:new(),
     FileMenu = wxMenu:new(),
     wxMenu:append(FileMenu, ?wxID_OPEN, "Load file\tCtrl+O", [{help, "Load a .sna or .tap file"}]),
@@ -81,6 +80,7 @@ init(_Options) ->
     wxPanel:connect(Panel, key_up),
     wxFrame:connect(Frame, close_window),
     wxFrame:show(Frame),
+    wxWindow:setClientSize(Frame, 272 * ?DEFAULT_SCALE, 208 * ?DEFAULT_SCALE),
     wxWindow:setFocus(Panel),
 
     Cmd = "aplay -t raw -f S16_LE -r 44100 -c 1 --buffer-size=441 -q",
@@ -139,13 +139,14 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
         wxDC:setBackground(BufDC, wxBrush:new({0, 0, 0})),
         wxDC:clear(BufDC),
 
-        UseExact = State#state.fullscreen_crop andalso State#state.crop_exact,
-        {Bmp, DX, DY, UseBmpScale} = case UseExact of
-            true ->
+        UseExact = State#state.fullscreen andalso State#state.crop andalso State#state.crop_exact,
+        WindowedCrop = not State#state.fullscreen andalso State#state.crop,
+        {Bmp, DX, DY, UseBmpScale} = case {UseExact, WindowedCrop} of
+            {true, _} ->
                 ES = State#state.crop_exact_scale,
                 B = wxBitmap:new(Image0),
                 wxImage:destroy(Image0),
-                BorderOff = round(40 * ES),  %% 48 border - 8 keep = 40 emu px
+                BorderOff = round(40 * ES),
                 {FSW, FSH} = State#state.fullscreen_size,
                 case FSW / ?DEFAULT_WIDTH >= FSH / ?DEFAULT_HEIGHT of
                     true  ->
@@ -155,7 +156,12 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                         DDY = (PH - round(?DEFAULT_HEIGHT * ES)) div 2,
                         {B, -BorderOff, DDY, ES}
                 end;
-            false ->
+            {_, true} ->
+                B = wxBitmap:new(Image0),
+                wxImage:destroy(Image0),
+                BorderOff = 40 * Scale,
+                {B, -BorderOff, -BorderOff, Scale};
+            {false, false} ->
                 B = wxBitmap:new(Image0),
                 wxImage:destroy(Image0),
                 {OffX, OffY} = State#state.crop_off,
@@ -288,11 +294,16 @@ handle_info(#wx{id = ?MENU_RESET, event = #wxCommand{type = command_menu_selecte
     do_reset(State);
 
 handle_info(#wx{id = ?MENU_CROP, event = #wxCommand{type = command_menu_selected}}, State) ->
-    NewCrop = not State#state.fullscreen_crop,
-    NewState = State#state{fullscreen_crop = NewCrop},
+    NewCrop = not State#state.crop,
+    NewState = State#state{crop = NewCrop},
     case NewState#state.fullscreen of
         true  -> reenter_crop_fullscreen(NewState);
-        false -> {noreply, NewState}
+        false ->
+            Frame = NewState#state.frame,
+            S = NewState#state.scale,
+            {W, H} = windowed_client_size(NewCrop, S),
+            wxWindow:setClientSize(Frame, W, H),
+            {noreply, NewState}
     end;
 
 handle_info(#wx{id = ?MENU_CROP_EXACT, event = #wxCommand{type = command_menu_selected}}, State) ->
@@ -335,7 +346,7 @@ reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = Stat
     {noreply, State#state{scale = NewScale, crop_off = {OffX, OffY},
                           crop_exact_scale = ExactScale}}.
 
-toggle_fullscreen(#state{frame = Frame, fullscreen = false, fullscreen_crop = Crop} = State) ->
+toggle_fullscreen(#state{frame = Frame, fullscreen = false, crop = Crop} = State) ->
     wxFrame:showFullScreen(Frame, true),
     Display = wxDisplay:new(),
     {_, _, SW, SH} = wxDisplay:getGeometry(Display),
@@ -355,6 +366,8 @@ toggle_fullscreen(#state{frame = Frame, fullscreen = false, fullscreen_crop = Cr
                           fullscreen_size = {SW, SH}}};
 toggle_fullscreen(#state{frame = Frame, fullscreen = true} = State) ->
     wxFrame:showFullScreen(Frame, false),
+    {W, H} = windowed_client_size(State#state.crop, ?DEFAULT_SCALE),
+    wxWindow:setClientSize(Frame, W, H),
     {noreply, State#state{fullscreen = false,
                           scale = ?DEFAULT_SCALE, crop_off = {0, 0},
                           fullscreen_size = undefined}}.
@@ -371,6 +384,14 @@ calc_scale_offset(true, SW, SH) ->
         true  -> {S, 0, (288 * S - SH) div (2 * S)};
         false -> {S, (352 * S - SW) div (2 * S), 0}
     end.
+
+%% Client area size for windowed mode.
+windowed_client_size(Crop, S) ->
+    {TW, TH} = case Crop of
+        true  -> {272, 208};
+        false -> {?DEFAULT_WIDTH, ?DEFAULT_HEIGHT}
+    end,
+    {TW * S, TH * S}.
 
 run_initial_frames(Machine, 0) -> {Machine, 0};
 run_initial_frames(Machine, N) ->
