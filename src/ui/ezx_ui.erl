@@ -14,9 +14,9 @@
 -define(DEFAULT_SCALE, 2).
 -define(FCREPORT_INTERVAL, 100).
 -define(MENU_FULLSCREEN, 2001).
--define(MENU_FULLSCREEN_CROP, 2002).
 -define(MENU_RESET, 3001).
 -define(MENU_CROP_EXACT, 4001).
+-define(MENU_CROP, 4002).
 
 %% Audio: 44100 Hz * 2 bytes = 88200 bytes/sec
 -define(AUDIO_RATE, 88200).
@@ -28,7 +28,7 @@
     panel     :: wxPanel:wxPanel(),
     scale = ?DEFAULT_SCALE :: pos_integer(),
     fullscreen = false :: boolean(),
-    fullscreen_crop = false :: boolean(),
+    fullscreen_crop = true :: boolean(),
     crop_off = {0, 0} :: {integer(), integer()},
     crop_exact = false :: boolean(),
     crop_exact_scale = 1.0 :: float(),
@@ -63,12 +63,13 @@ init(_Options) ->
     wxMenuBar:append(MenuBar, FileMenu, "File"),
     ViewMenu = wxMenu:new(),
     wxMenu:append(ViewMenu, ?MENU_FULLSCREEN, "Fullscreen\tF11", [{help, "Toggle fullscreen mode"}]),
-    wxMenu:append(ViewMenu, ?MENU_FULLSCREEN_CROP, "Fullscreen (crop borders)\tShift+F11", [{help, "Fullscreen with border crop"}]),
     wxMenuBar:append(MenuBar, ViewMenu, "View"),
     ActionsMenu = wxMenu:new(),
     wxMenu:append(ActionsMenu, ?MENU_RESET, "Reset\tF5", [{help, "Reset the emulator"}]),
     wxMenuBar:append(MenuBar, ActionsMenu, "Actions"),
     OptionsMenu = wxMenu:new(),
+    wxMenu:appendCheckItem(OptionsMenu, ?MENU_CROP, "Crop borders", [{help, "Crop display borders in fullscreen mode"}]),
+    wxMenu:check(OptionsMenu, ?MENU_CROP, true),
     wxMenu:appendCheckItem(OptionsMenu, ?MENU_CROP_EXACT, "Exact crop scaling", [{help, "Use fractional scale with bilinear smoothing in crop mode"}]),
     wxMenuBar:append(MenuBar, OptionsMenu, "Options"),
     wxFrame:setMenuBar(Frame, MenuBar),
@@ -220,15 +221,12 @@ handle_info(#wx{event = #wxClose{}}, State) ->
     init:stop(),
     {stop, normal, State};
 
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F11, shiftDown = false}}, State) ->
-    toggle_fullscreen(false, State);
-
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F11, shiftDown = true}}, State) ->
-    toggle_fullscreen(true, State);
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F11}}, State) ->
+    toggle_fullscreen(State);
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_ESCAPE}},
             #state{fullscreen = true} = State) ->
-    toggle_fullscreen(false, State);
+    toggle_fullscreen(State);
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F5}}, State) ->
     do_reset(State);
@@ -284,18 +282,23 @@ handle_info(#wx{id = ?wxID_EXIT, event = #wxCommand{type = command_menu_selected
     {stop, normal, State};
 
 handle_info(#wx{id = ?MENU_FULLSCREEN, event = #wxCommand{type = command_menu_selected}}, State) ->
-    toggle_fullscreen(false, State);
-
-handle_info(#wx{id = ?MENU_FULLSCREEN_CROP, event = #wxCommand{type = command_menu_selected}}, State) ->
-    toggle_fullscreen(true, State);
+    toggle_fullscreen(State);
 
 handle_info(#wx{id = ?MENU_RESET, event = #wxCommand{type = command_menu_selected}}, State) ->
     do_reset(State);
 
+handle_info(#wx{id = ?MENU_CROP, event = #wxCommand{type = command_menu_selected}}, State) ->
+    NewCrop = not State#state.fullscreen_crop,
+    NewState = State#state{fullscreen_crop = NewCrop},
+    case NewState#state.fullscreen of
+        true  -> reenter_crop_fullscreen(NewState);
+        false -> {noreply, NewState}
+    end;
+
 handle_info(#wx{id = ?MENU_CROP_EXACT, event = #wxCommand{type = command_menu_selected}}, State) ->
     NewExact = not State#state.crop_exact,
     NewState = State#state{crop_exact = NewExact},
-    case NewState#state.fullscreen_crop of
+    case NewState#state.fullscreen of
         true  -> reenter_crop_fullscreen(NewState);
         false -> {noreply, NewState}
     end;
@@ -332,7 +335,7 @@ reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = Stat
     {noreply, State#state{scale = NewScale, crop_off = {OffX, OffY},
                           crop_exact_scale = ExactScale}}.
 
-toggle_fullscreen(Crop, #state{frame = Frame, fullscreen = false} = State) ->
+toggle_fullscreen(#state{frame = Frame, fullscreen = false, fullscreen_crop = Crop} = State) ->
     wxFrame:showFullScreen(Frame, true),
     Display = wxDisplay:new(),
     {_, _, SW, SH} = wxDisplay:getGeometry(Display),
@@ -346,13 +349,13 @@ toggle_fullscreen(Crop, #state{frame = Frame, fullscreen = false} = State) ->
             end;
         false -> 1.0
     end,
-    {noreply, State#state{fullscreen = true, fullscreen_crop = Crop,
+    {noreply, State#state{fullscreen = true,
                           scale = NewScale, crop_off = {OffX, OffY},
                           crop_exact_scale = ExactScale,
                           fullscreen_size = {SW, SH}}};
-toggle_fullscreen(_Crop, #state{frame = Frame, fullscreen = true} = State) ->
+toggle_fullscreen(#state{frame = Frame, fullscreen = true} = State) ->
     wxFrame:showFullScreen(Frame, false),
-    {noreply, State#state{fullscreen = false, fullscreen_crop = false,
+    {noreply, State#state{fullscreen = false,
                           scale = ?DEFAULT_SCALE, crop_off = {0, 0},
                           fullscreen_size = undefined}}.
 
