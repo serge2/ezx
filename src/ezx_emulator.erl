@@ -90,7 +90,8 @@ init(Mem, Rom) ->
                     ExtContext
             end
         end,
-    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun),
+    BusReadFun = fun() -> 16#FF end,
+    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun),
     #machine_state{
         cpu = Cpu0,
         memory = Mem:new(Rom),

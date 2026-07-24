@@ -180,7 +180,7 @@ dd_prefix_cleared_after_instruction_test() ->
     Cpu4 = test_helpers:write_mem(Cpu3, 3, 16#12),  %% high byte
     Cpu5 = z80_cpu:step(Cpu4),
     ?assertEqual(none, Cpu5#cpu_state.prefix),
-    ?assertEqual(0, Cpu5#cpu_state.displacement).
+    ?assertEqual(undefined, Cpu5#cpu_state.displacement).
 
 fd_prefix_cleared_after_instruction_test() ->
     Cpu0 = test_helpers:init_cpu(),
@@ -190,7 +190,7 @@ fd_prefix_cleared_after_instruction_test() ->
     Cpu4 = test_helpers:write_mem(Cpu3, 3, 16#78),  %% high byte
     Cpu5 = z80_cpu:step(Cpu4),
     ?assertEqual(none, Cpu5#cpu_state.prefix),
-    ?assertEqual(0, Cpu5#cpu_state.displacement).
+    ?assertEqual(undefined, Cpu5#cpu_state.displacement).
 
 %% --- Multiple Prefix Tests ---
 

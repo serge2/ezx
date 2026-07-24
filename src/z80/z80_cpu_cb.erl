@@ -372,7 +372,7 @@ execute_cb_indexed_opcode(Opcode, Reg, State) ->
     
     %% Memory address = IX/IY + displacement (signed)
     BaseAddr = z80_cpu_helpers:get_reg_pair(Reg, State),
-    Disp = ?GET_DISPLACEMENT(State),
+    Disp = ?SIGNED_BYTE(?GET_DISPLACEMENT(State)),
     Addr = (BaseAddr + Disp) band 16#FFFF,
     
     %% Read byte from memory at (IX/IY+d)

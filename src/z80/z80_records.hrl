@@ -24,7 +24,6 @@
 
     %% Prefix state for DD/FD and DD CB/FD CB handling
     prefix = none :: none | dd | fd | dd_cb | fd_cb,
-    displacement = 0 :: integer(),  % Signed displacement for DD CB / FD CB
     ei_block = 0 :: non_neg_integer(),  % EI blocks interrupts for N instructions (counter)
 
     %% Execution state
@@ -33,11 +32,13 @@
     im = 0,     %% Interrupt mode (0, 1, or 2)
     halted = false,
     t_states = 0,
+    displacement = undefined :: integer(),  % Signed displacement for DD CB / FD CB
     ext_context = undefined,
     mem_read_fun = undefined,
     mem_write_fun = undefined,
     port_read_fun = undefined,
     port_write_fun = undefined,
+    bus_read_fun = undefined,
     pending_interrupt = none :: none | nmi | int
 }).
 

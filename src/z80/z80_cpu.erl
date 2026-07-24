@@ -3,7 +3,7 @@
 -include("z80_records.hrl").
 
 -export([
-    init_state/4,
+    init_state/5,
     step/1,
     run/2,
     request_interrupt/2,
@@ -21,13 +21,14 @@
 -export_type([state/0]).
 
 %% @doc Create a fresh CPU state with all callback functions.
--spec init_state(function(), function(), function(), function()) -> state().
-init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun) ->
+-spec init_state(function(), function(), function(), function(), function()) -> state().
+init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun) ->
     #cpu_state{
         mem_read_fun = MemReadFun,
         mem_write_fun = MemWriteFun,
         port_read_fun = PortReadFun,
-        port_write_fun = PortWriteFun
+        port_write_fun = PortWriteFun,
+        bus_read_fun = BusReadFun
     }.
 
 %% @doc Return the current program counter from the machine state.
@@ -78,21 +79,22 @@ maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, ei_block = Ei
   when EiBlock > 0 ->
     {not_handled, State#cpu_state{ei_block = EiBlock - 1}}; 
 
-maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, im = Mode}) ->
+maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, im = Mode,
+                                          bus_read_fun = BusReadFun}) ->
     State1 = z80_cpu_helpers:push_word(State, State#cpu_state.pc),
     State2 = State1#cpu_state{
         iff1 = 0,
         iff2 = 0,
         halted = false,
         prefix = none,
-        displacement = 0,
+        displacement = undefined,
         pending_interrupt = none
     },
     case Mode of
         0 ->
-            %% IM 0: execute instruction from data bus (default RST 38h = 0xFF)
-            BusByte = 16#FF,
-            State3 = execute_opcode_base(BusByte, State2#cpu_state{t_states = State1#cpu_state.t_states + 13}),
+            %% IM 0: execute instruction placed on data bus by interrupting device
+            BusByte = BusReadFun(),
+            State3 = execute_instruction(BusByte, State2#cpu_state{t_states = State1#cpu_state.t_states + 13}),
             {handled, State3};
         1 ->
             %% IM 1: jump to 0x0038
@@ -105,7 +107,7 @@ maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, im = Mode}) -
             %% IM 2: vector table jump
             %% Bus byte provides low byte of address; high byte from I register.
             %% Read 16-bit pointer from (I*256 + BusByte), jump to it.
-            BusByte = 16#FF,
+            BusByte = BusReadFun(),
             VectorAddr = (State2#cpu_state.i bsl 8) bor BusByte,
             {Lo, State3a} = z80_cpu_helpers:read_byte(State2, VectorAddr),
             {Hi, State3b} = z80_cpu_helpers:read_byte(State3a, VectorAddr + 1),
@@ -125,7 +127,7 @@ maybe_handle_interrupt(State = #cpu_state{pending_interrupt = nmi}) ->
         iff1 = 0,
         halted = false,
         prefix = none,
-        displacement = 0,
+        displacement = undefined,
         t_states = State1#cpu_state.t_states + 11,
         pending_interrupt = none
     },
@@ -134,13 +136,16 @@ maybe_handle_interrupt(State = #cpu_state{pending_interrupt = nmi}) ->
 
 execute_next_instruction(State) ->
     {Opcode, State1} = z80_cpu_helpers:fetch_opcode(State),
-    State2 = execute_opcode_base(Opcode, State1),
-    State3 = case Opcode of
-         16#DD -> State2;
-         16#FD -> State2;
-        _     -> State2#cpu_state{prefix = none}
-    end,
-    State3#cpu_state{displacement = 0}.
+    execute_instruction(Opcode, State1).
+
+execute_instruction(Opcode,State) ->
+    case execute_opcode_base(Opcode, State) of
+        {continue, State1} ->
+            execute_next_instruction(State1);
+        State1 ->
+            State1#cpu_state{displacement = undefined, prefix = none}
+    end.
+
  
 
 %% @doc Base opcode implementations (no prefix handling)
@@ -403,12 +408,12 @@ execute_opcode_base(Opcode, State) ->
         16#DD ->
             % DD prefix: set prefix, fetch next opcode, execute it with prefix active
             State1 = State#cpu_state{prefix = dd},
-            execute_next_instruction(State1);
+            {continue, State1};
 
         16#FD ->
             % FD prefix: set prefix, fetch next opcode, execute it with prefix active
             State1 = State#cpu_state{prefix = fd},
-            execute_next_instruction(State1);
+            {continue, State1};
 
         16#CB ->
             Prefix = State#cpu_state.prefix,
@@ -416,27 +421,27 @@ execute_opcode_base(Opcode, State) ->
                 dd ->
                     % DD prefix active: execute with prefix, then clear it
                     {Disp, State1} = z80_cpu_helpers:fetch_byte(State),
-                    State2 = State1#cpu_state{prefix = dd_cb, displacement = z80_cpu_helpers:signed_byte(Disp)},
+                    State2 = State1#cpu_state{prefix = dd_cb, displacement = Disp},
                     {Opcode2, State3} = z80_cpu_helpers:fetch_opcode(State2),
-                    State4 = State3#cpu_state{prefix = none},
-                    z80_cpu_cb:execute_cb_indexed_opcode(Opcode2, ix, State4);
+                    z80_cpu_cb:execute_cb_indexed_opcode(Opcode2, ix, State3);
                 fd ->
                     % FD prefix active: execute with prefix, then clear it
                     {Disp, State1} = z80_cpu_helpers:fetch_byte(State),
-                    State2 = State1#cpu_state{prefix = fd_cb, displacement = z80_cpu_helpers:signed_byte(Disp)},
+                    State2 = State1#cpu_state{prefix = fd_cb, displacement = Disp},
                     {Opcode2, State3} = z80_cpu_helpers:fetch_opcode(State2),
-                    State4 = State3#cpu_state{prefix = none},
-                    z80_cpu_cb:execute_cb_indexed_opcode(Opcode2, iy, State4);
+                    z80_cpu_cb:execute_cb_indexed_opcode(Opcode2, iy, State3);
                 _ ->
                     % CB prefix: 4 T-states already counted, fetch next opcode
-                    {Opcode1, State1} = z80_cpu_helpers:fetch_opcode(State),
-                    z80_cpu_cb:execute_cb_opcode(Opcode1, State1) 
+                    State1 = State#cpu_state{prefix = cb},
+                    {Opcode1, State2} = z80_cpu_helpers:fetch_opcode(State1),
+                    z80_cpu_cb:execute_cb_opcode(Opcode1, State2) 
             end;
 
         16#ED ->
             % ED prefix: 4 T-states already counted, fetch next opcode
-            {Opcode1, State1} = z80_cpu_helpers:fetch_opcode(State),
-            z80_cpu_ed:execute_ed_opcode(Opcode1, State1)
+            State1 = State#cpu_state{prefix = ed},
+            {Opcode1, State2} = z80_cpu_helpers:fetch_opcode(State1),
+            z80_cpu_ed:execute_ed_opcode(Opcode1, State2)
     end.
 
 
@@ -793,8 +798,8 @@ execute_ld_mem_hl_n(State) ->
     %% For DD/FD prefix, byte order is: DD 36 dd n (displacement before immediate).
     %% Consume displacement first, then fetch immediate value.
     State1 = z80_cpu_helpers:fetch_indexed_displacement(State),
-    {Value, State2} = z80_cpu_helpers:fetch_byte(State1),
     Addr = z80_cpu_helpers:get_hl_mem_addr(State1),
+    {Value, State2} = z80_cpu_helpers:fetch_byte(State1),
     State3 = z80_cpu_helpers:write_byte(State2, Addr, Value band 16#FF),
     z80_cpu_helpers:advance_tstates(State3, 10).
 

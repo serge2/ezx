@@ -306,3 +306,92 @@ im2_interrupt_jumps_via_vector_table_test() ->
     Cpu6 = z80_cpu:step(Cpu5),
     ?assertEqual(16#2000, z80_cpu:pc(Cpu6)),
     ?assertEqual(0, Cpu6#cpu_state.iff1).
+
+
+%% --- Bus Read Fun Callback Tests ---
+
+%% IM 0: custom bus_read_fun returning NOP — PC unchanged after interrupt
+im0_bus_read_fun_nop_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    BusReadFun = fun() -> 16#00 end,  %% NOP on the bus
+    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, im = 0, pc = 16#1000,
+                          bus_read_fun = BusReadFun},
+    Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
+    Cpu3 = z80_cpu:step(Cpu2),
+    %% Bus returns NOP → PC stays at 16#1000 (pushed but not jumped)
+    ?assertEqual(16#1000, z80_cpu:pc(Cpu3)),
+    ?assertEqual(0, Cpu3#cpu_state.iff1),
+    ?assertEqual(0, Cpu3#cpu_state.iff2).
+
+%% IM 0: custom bus_read_fun returning INC A — A incremented
+im0_bus_read_fun_inc_a_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    BusReadFun = fun() -> 16#3C end,  %% INC A on the bus
+    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, im = 0, a = 16#41, pc = 16#1000,
+                          bus_read_fun = BusReadFun},
+    Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
+    Cpu3 = z80_cpu:step(Cpu2),
+    %% Bus returns INC A → A becomes 0x42
+    ?assertEqual(16#42, Cpu3#cpu_state.a).
+
+%% IM 0: custom bus_read_fun returning LD B,n — B loaded from immediate
+im0_bus_read_fun_ld_b_n_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#1000, 16#55),  %% immediate at current PC
+    BusReadFun = fun() -> 16#06 end,  %% LD B,n on the bus
+    Cpu2 = Cpu1#cpu_state{iff1 = 1, iff2 = 1, im = 0, pc = 16#1000,
+                          bus_read_fun = BusReadFun},
+    Cpu3 = z80_cpu:request_interrupt(Cpu2, int),
+    Cpu4 = z80_cpu:step(Cpu3),
+    %% Bus returns LD B,n → reads next byte from PC (0x55) into B
+    ?assertEqual(16#55, Cpu4#cpu_state.b).
+
+%% IM 0: bus_read_fun is called exactly once
+im0_bus_read_fun_called_once_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Parent = self(),
+    BusReadFun = fun() ->
+        Parent ! bus_read_called,
+        16#FF
+    end,
+    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, im = 0, pc = 16#1000,
+                          bus_read_fun = BusReadFun},
+    Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
+    Cpu3 = z80_cpu:step(Cpu2),
+    %% Should receive exactly one bus_read_called message
+    receive bus_read_called -> ok
+    after 100 -> error(bus_read_fun_not_called)
+    end,
+    receive _ -> error(too_many_bus_read_calls)
+    after 10 -> ok
+    end.
+
+%% IM 2: custom bus_read_fun providing vector low byte
+im2_bus_read_fun_vector_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    BusReadFun = fun() -> 16#10 end,  %% vector low byte = 0x10
+    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, im = 2, i = 16#A0, pc = 16#1000,
+                          bus_read_fun = BusReadFun},
+    %% Vector table at I*256 + 0x10 = 0xA010. Put target 0x3000 there.
+    Cpu2 = test_helpers:write_mem(Cpu1, 16#A010, 16#00),  %% Low byte of target
+    Cpu3 = test_helpers:write_mem(Cpu2, 16#A011, 16#30),  %% High byte of target
+    Cpu4 = test_helpers:write_mem(Cpu3, 16#3000, 16#00),  %% NOP at target
+    Cpu5 = z80_cpu:request_interrupt(Cpu4, int),
+    Cpu6 = z80_cpu:step(Cpu5),
+    %% Bus returns 0x10 → reads vector from (0xA0*256 + 0x10) = 0xA010 → target 0x3000
+    ?assertEqual(16#3000, z80_cpu:pc(Cpu6)),
+    ?assertEqual(0, Cpu6#cpu_state.iff1).
+
+%% IM 2: different bus byte gives different vector
+im2_bus_read_fun_different_vector_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    BusReadFun = fun() -> 16#20 end,  %% vector low byte = 0x20
+    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, im = 2, i = 16#B0, pc = 16#1000,
+                          bus_read_fun = BusReadFun},
+    %% Vector table at I*256 + 0x20 = 0xB020. Put target 0x4000 there.
+    Cpu2 = test_helpers:write_mem(Cpu1, 16#B020, 16#00),  %% Low byte
+    Cpu3 = test_helpers:write_mem(Cpu2, 16#B021, 16#40),  %% High byte
+    Cpu4 = test_helpers:write_mem(Cpu3, 16#4000, 16#00),
+    Cpu5 = z80_cpu:request_interrupt(Cpu4, int),
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#4000, z80_cpu:pc(Cpu6)).

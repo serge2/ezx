@@ -202,8 +202,13 @@ set_hl_pair(Val, State) ->
 %% Memory address based on HL/IX/IY (with optional displacement for CB prefix or DD/FD indexed addressing)
 get_hl_mem_addr(State) ->
     Base = get_hl_pair(State),
-    Disp = ?SIGNED_BYTE(?GET_DISPLACEMENT(State)),
-    (Base + Disp) band 16#FFFF.
+    if State#cpu_state.prefix == dd orelse State#cpu_state.prefix == fd ->
+        Disp = ?SIGNED_BYTE(?GET_DISPLACEMENT(State)),
+        (Base + Disp) band 16#FFFF;
+    true ->
+        Base    
+    end.
+
 
 %% Fetch displacement byte for DD/FD indexed addressing if needed
 %% The displacement byte follows the opcode in the instruction stream (DD/FD opcode disp)
@@ -212,11 +217,10 @@ fetch_indexed_displacement(State) ->
     Prefix = ?GET_PREFIX(State),
     if
         Prefix == dd orelse Prefix == fd ->
-            case ?GET_DISPLACEMENT(State) of
-                0 ->
+            if ?GET_DISPLACEMENT(State) =:= undefined ->
                     {Disp, State1} = fetch_byte(State),
                     ?SET_DISPLACEMENT(State1, Disp);
-                _ ->
+                true ->
                     State
             end;
         true ->
