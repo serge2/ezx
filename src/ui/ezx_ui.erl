@@ -16,6 +16,7 @@
 -define(MENU_FULLSCREEN, 2001).
 -define(MENU_FULLSCREEN_CROP, 2002).
 -define(MENU_RESET, 3001).
+-define(MENU_CROP_EXACT, 4001).
 
 %% Audio: 44100 Hz * 2 bytes = 88200 bytes/sec
 -define(AUDIO_RATE, 88200).
@@ -29,6 +30,8 @@
     fullscreen = false :: boolean(),
     fullscreen_crop = false :: boolean(),
     crop_off = {0, 0} :: {integer(), integer()},
+    crop_exact = false :: boolean(),
+    crop_exact_scale = 1.0 :: float(),
     fullscreen_size = undefined :: {pos_integer(), pos_integer()} | undefined,
     frame_count = 0 :: non_neg_integer(),
     aplay_port :: port() | undefined,
@@ -65,6 +68,9 @@ init(_Options) ->
     ActionsMenu = wxMenu:new(),
     wxMenu:append(ActionsMenu, ?MENU_RESET, "Reset\tF5", [{help, "Reset the emulator"}]),
     wxMenuBar:append(MenuBar, ActionsMenu, "Actions"),
+    OptionsMenu = wxMenu:new(),
+    wxMenu:appendCheckItem(OptionsMenu, ?MENU_CROP_EXACT, "Exact crop scaling", [{help, "Use fractional scale with bilinear smoothing in crop mode"}]),
+    wxMenuBar:append(MenuBar, OptionsMenu, "Options"),
     wxFrame:setMenuBar(Frame, MenuBar),
     wxFrame:connect(Frame, command_menu_selected),
 
@@ -119,9 +125,7 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
         Mem = Machine2#machine_state.memory,
         ReadFun = fun(Addr) -> ezx_memory_48:read_byte(Mem, Addr band 16#FFFF) end,
         FrameData = ezx_video:decode_full_frame(ReadFun, FC, lists:reverse(Changes), CB),
-        Image = frame_to_image(FrameData),
-        Bmp = wxBitmap:new(Image),
-        wxImage:destroy(Image),
+        Image0 = frame_to_image(FrameData),
 
         ClientDC = wxClientDC:new(Panel),
         {PW0, PH0} = wxWindow:getClientSize(Panel),
@@ -130,15 +134,37 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
             undefined -> {PW0, PH0}
         end,
         BmpDC = wxMemoryDC:new(),
-        wxMemoryDC:selectObject(BmpDC, Bmp),
         BufDC = wxBufferedDC:new(ClientDC, {PW, PH}),
         wxDC:setBackground(BufDC, wxBrush:new({0, 0, 0})),
         wxDC:clear(BufDC),
-        {OffX, OffY} = State#state.crop_off,
-        DX = max(0, (PW - ?DEFAULT_WIDTH * Scale) div 2),
-        DY = max(0, (PH - ?DEFAULT_HEIGHT * Scale) div 2),
-        wxDC:setDeviceOrigin(BufDC, DX - OffX * Scale, DY - OffY * Scale),
-        wxDC:setUserScale(BufDC, Scale, Scale),
+
+        UseExact = State#state.fullscreen_crop andalso State#state.crop_exact,
+        {Bmp, DX, DY, UseBmpScale} = case UseExact of
+            true ->
+                ES = State#state.crop_exact_scale,
+                B = wxBitmap:new(Image0),
+                wxImage:destroy(Image0),
+                BorderOff = round(40 * ES),  %% 48 border - 8 keep = 40 emu px
+                {FSW, FSH} = State#state.fullscreen_size,
+                case FSW / ?DEFAULT_WIDTH >= FSH / ?DEFAULT_HEIGHT of
+                    true  ->
+                        DDX = (PW - round(?DEFAULT_WIDTH * ES)) div 2,
+                        {B, DDX, -BorderOff, ES};
+                    false ->
+                        DDY = (PH - round(?DEFAULT_HEIGHT * ES)) div 2,
+                        {B, -BorderOff, DDY, ES}
+                end;
+            false ->
+                B = wxBitmap:new(Image0),
+                wxImage:destroy(Image0),
+                {OffX, OffY} = State#state.crop_off,
+                DDX = max(0, (PW - ?DEFAULT_WIDTH * Scale) div 2),
+                DDY = max(0, (PH - ?DEFAULT_HEIGHT * Scale) div 2),
+                {B, DDX - OffX * Scale, DDY - OffY * Scale, Scale}
+        end,
+        wxMemoryDC:selectObject(BmpDC, Bmp),
+        wxDC:setDeviceOrigin(BufDC, DX, DY),
+        wxDC:setUserScale(BufDC, UseBmpScale, UseBmpScale),
         wxDC:drawBitmap(BufDC, Bmp, {0, 0}),
         wxDC:setUserScale(BufDC, 1.0, 1.0),
         wxDC:setDeviceOrigin(BufDC, 0, 0),
@@ -266,6 +292,14 @@ handle_info(#wx{id = ?MENU_FULLSCREEN_CROP, event = #wxCommand{type = command_me
 handle_info(#wx{id = ?MENU_RESET, event = #wxCommand{type = command_menu_selected}}, State) ->
     do_reset(State);
 
+handle_info(#wx{id = ?MENU_CROP_EXACT, event = #wxCommand{type = command_menu_selected}}, State) ->
+    NewExact = not State#state.crop_exact,
+    NewState = State#state{crop_exact = NewExact},
+    case NewState#state.fullscreen_crop of
+        true  -> reenter_crop_fullscreen(NewState);
+        false -> {noreply, NewState}
+    end;
+
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -283,14 +317,38 @@ do_reset(State) ->
                           audio_start_us = erlang:monotonic_time(microsecond),
                           audio_bytes = 0}}.
 
+reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = State) ->
+    wxFrame:showFullScreen(Frame, false),
+    wxFrame:showFullScreen(Frame, true),
+    {NewScale, OffX, OffY} = calc_scale_offset(true, SW, SH),
+    ExactScale = case State#state.crop_exact of
+        true  ->
+            case SW / ?DEFAULT_WIDTH >= SH / ?DEFAULT_HEIGHT of
+                true  -> SH / (?DEFAULT_HEIGHT - 80);
+                false -> SW / (?DEFAULT_WIDTH - 80)
+            end;
+        false -> 1.0
+    end,
+    {noreply, State#state{scale = NewScale, crop_off = {OffX, OffY},
+                          crop_exact_scale = ExactScale}}.
+
 toggle_fullscreen(Crop, #state{frame = Frame, fullscreen = false} = State) ->
     wxFrame:showFullScreen(Frame, true),
     Display = wxDisplay:new(),
     {_, _, SW, SH} = wxDisplay:getGeometry(Display),
     wxDisplay:destroy(Display),
     {NewScale, OffX, OffY} = calc_scale_offset(Crop, SW, SH),
+    ExactScale = case Crop andalso State#state.crop_exact of
+        true  ->
+            case SW / ?DEFAULT_WIDTH >= SH / ?DEFAULT_HEIGHT of
+                true  -> SH / (?DEFAULT_HEIGHT - 80);   %% wide screen: 208 visible rows (8px border T+B)
+                false -> SW / (?DEFAULT_WIDTH - 80)     %% tall screen: 272 visible cols (8px border L+R)
+            end;
+        false -> 1.0
+    end,
     {noreply, State#state{fullscreen = true, fullscreen_crop = Crop,
                           scale = NewScale, crop_off = {OffX, OffY},
+                          crop_exact_scale = ExactScale,
                           fullscreen_size = {SW, SH}}};
 toggle_fullscreen(_Crop, #state{frame = Frame, fullscreen = true} = State) ->
     wxFrame:showFullScreen(Frame, false),
