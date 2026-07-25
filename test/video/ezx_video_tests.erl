@@ -39,50 +39,42 @@ tstate_for_frame_line_test() ->
 %% --- render_frame tests ---
 
 render_frame_output_size_test() ->
-    Bin = create_test_screen(16#FF, 16#07),
-    Mem = #{size => 65536, data => Bin},
-    RGB = ezx_video:render_frame(Mem, 0, [], 1),
+    VB = create_video_buffer(16#FF, 16#07),
+    RGB = ezx_video:render_frame(VB, 0, [], 1),
     ?assertEqual(352 * 288 * 3, byte_size(RGB)).
 
 render_frame_white_screen_test() ->
     %% All bitmap=0xFF, attr=ink7/paper0 -> all white pixels
-    Bin = create_test_screen(16#FF, 16#07),
-    Mem = #{size => 65536, data => Bin},
-    RGB = ezx_video:render_frame(Mem, 0, [], 1),
-    %% Screen area pixel at (48, 48) = first screen pixel
+    VB = create_video_buffer(16#FF, 16#07),
+    RGB = ezx_video:render_frame(VB, 0, [], 1),
     {R, G, B} = read_pixel(RGB, 48, 48),
     ?assertEqual({215, 215, 215}, {R, G, B}).
 
 render_frame_black_screen_test() ->
     %% All bitmap=0x00 -> all paper pixels
-    Bin = create_test_screen(16#00, 16#07),
-    Mem = #{size => 65536, data => Bin},
-    RGB = ezx_video:render_frame(Mem, 0, [], 1),
+    VB = create_video_buffer(16#00, 16#07),
+    RGB = ezx_video:render_frame(VB, 0, [], 1),
     {R, G, B} = read_pixel(RGB, 48, 48),
     ?assertEqual({0, 0, 0}, {R, G, B}).
 
 render_frame_border_default_test() ->
     %% Border area should use default border color (1 = blue)
-    Bin = create_test_screen(16#00, 16#00),
-    Mem = #{size => 65536, data => Bin},
-    RGB = ezx_video:render_frame(Mem, 0, [], 1),
-    %% Top-left pixel (0, 0) is border
+    VB = create_video_buffer(16#00, 16#00),
+    RGB = ezx_video:render_frame(VB, 0, [], 1),
     {R, G, B} = read_pixel(RGB, 0, 0),
     ?assertEqual({0, 0, 215}, {R, G, B}).
 
 render_frame_flash_test() ->
     %% Flash=1, ink=7, paper=0, bitmap=0xFF -> flash active should swap
-    Bin = create_test_screen(16#FF, 16#87),
-    Mem = #{size => 65536, data => Bin},
+    VB = create_video_buffer(16#FF, 16#87),
     %% Frame counter 16 -> flash active -> ink/paper swap -> pixel should be paper (black)
-    RGB = ezx_video:render_frame(Mem, 16, [], 1),
+    RGB = ezx_video:render_frame(VB, 16, [], 1),
     {R, G, B} = read_pixel(RGB, 48, 48),
     ?assertEqual({0, 0, 0}, {R, G, B}).
 
 render_frame_bright_test() ->
-    Bin = create_test_screen(16#FF, 16#47),
-    Mem = #{size => 65536, data => Bin},
-    RGB = ezx_video:render_frame(Mem, 0, [], 1),
+    VB = create_video_buffer(16#FF, 16#47),
+    RGB = ezx_video:render_frame(VB, 0, [], 1),
     {R, G, B} = read_pixel(RGB, 48, 48),
     ?assertEqual({255, 255, 255}, {R, G, B}).
 
@@ -94,12 +86,9 @@ read_pixel(RGB, X, Y) ->
     <<_:Off/binary, R:8, G:8, B:8, _/binary>> = RGB,
     {R, G, B}.
 
-create_test_screen(BitmapByte, AttrByte) ->
-    BitmapSize = 6144,
-    Bitmap = <<<<BitmapByte>> || _ <- lists:seq(1, BitmapSize)>>,
-    AttrSize = 768,
-    Attrs = <<<<AttrByte>> || _ <- lists:seq(1, AttrSize)>>,
-    Prefix = <<0:(16#4000)/unit:8>>,
-    Between = <<0:(16#5800 - 16#4000 - BitmapSize)/unit:8>>,
-    Suffix = <<0:(16#10000 - 16#5800 - AttrSize)/unit:8>>,
-    <<Prefix/binary, Bitmap/binary, Between/binary, Attrs/binary, Suffix/binary>>.
+%% Create a 6912-byte video buffer: 6144 bytes bitmap + 768 bytes attributes.
+%% This matches what ezx_memory_48:read_block(Mem, 16#4000, 6912) returns.
+create_video_buffer(BitmapByte, AttrByte) ->
+    Bitmap = << <<BitmapByte>> || _ <- lists:seq(1, 6144) >>,
+    Attrs = << <<AttrByte>> || _ <- lists:seq(1, 768) >>,
+    <<Bitmap/binary, Attrs/binary>>.

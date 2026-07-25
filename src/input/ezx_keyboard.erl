@@ -8,7 +8,7 @@
     set_matrix/2,
     % press/3, release/3,
     press_keys/2, release_keys/2,
-    release_all/0,
+    release_all/1,
     is_pressed/3,
     decode/2
 ]).
@@ -41,8 +41,8 @@ set_matrix(#keyboard{} = State, NewMatrix) when is_tuple(NewMatrix), tuple_size(
 
 
 %% @doc Release all keys.
--spec release_all() -> state().
-release_all() -> default().
+-spec release_all(state()) -> state().
+release_all(#keyboard{}) -> default().
 
 %% @doc Check if a key at the given matrix position is pressed.
 -spec is_pressed(state(), pos_integer(), non_neg_integer()) -> boolean().

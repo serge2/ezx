@@ -60,13 +60,11 @@ border_color(BorderChanges, TState) ->
 %% Uses bulk memory reads via read_block/3 and decodes 8 pixels per bitmap byte.
 %% SortedBorderChanges must be ascending by T-state.
 -spec render_frame(ezx_memory_48:state(), non_neg_integer(), list(), non_neg_integer()) -> binary().
-render_frame(Mem, FrameCounter, SortedBorderChanges, CurrentBorder) ->
-    Bitmap = ezx_memory_48:read_block(Mem, ?SCREEN_BITMAP, 6144),
-    Attrs  = ezx_memory_48:read_block(Mem, ?SCREEN_ATTRS, 768),
+render_frame(VideoBuffer, FrameCounter, SortedBorderChanges, CurrentBorder) ->
+    <<Bitmap:6144/binary, Attrs:768/binary>> = VideoBuffer,
     FlashOn = flash_active(FrameCounter),
     list_to_binary([render_frame_line(Bitmap, Attrs, SortedBorderChanges, CurrentBorder, FlashOn, Y)
                     || Y <- lists:seq(0, ?FULL_HEIGHT - 1)]).
-
 
 %% --- Internal ---
 

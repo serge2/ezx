@@ -93,14 +93,14 @@ init(_Options) ->
     AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
 
     Machine0 = ezx_emulator:init(),
-    {Machine1, FC} = run_initial_frames(Machine0, 50),
+    Machine1 = run_initial_frames(Machine0, 50),
 
     Now = erlang:monotonic_time(microsecond),
     State = #state{
         machine = Machine1,
         frame = Frame,
         panel = Panel,
-        frame_count = FC,
+        frame_count = 50,
         aplay_port = AplayPort,
         audio_start_us = Now,
         perf_start_us = Now
@@ -290,10 +290,15 @@ handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected
                 {ok, Data} ->
                     try
                         NewMachine = case Ext of
-                            ".sna" -> ezx_emulator:load_sna(State#state.machine, Data);
-                            ".tap" -> ezx_emulator:load_tap(State#state.machine, Data);
-                            _ -> io:format("Unknown file type: ~s~n", [File]),
-                                 State#state.machine
+                            ".sna" ->
+                                ezx_emulator:load_sna(State#state.machine, Data);
+                            ".tap" -> 
+                                Machine0 = ezx_emulator:init(),
+                                Machine1 = run_initial_frames(Machine0, 50),
+                                ezx_emulator:load_tap(Machine1, Data);
+                            _ ->
+                                io:format("Unknown file type: ~s~n", [File]),
+                                State#state.machine
                         end,
                         io:format("Loaded: ~s~n", [File]),
                         {noreply, State#state{machine = NewMachine}}
@@ -354,9 +359,9 @@ terminate(_Reason, #state{frame = Frame, aplay_port = Port}) ->
 
 do_reset(State) ->
     Machine0 = ezx_emulator:init(),
-    {Machine1, FC} = run_initial_frames(Machine0, 50),
+    Machine1 = run_initial_frames(Machine0, 50),
     Now = erlang:monotonic_time(microsecond),
-    {noreply, State#state{machine = Machine1, frame_count = FC,
+    {noreply, State#state{machine = Machine1, frame_count = 50,
                           audio_start_us = Now, audio_bytes = 0,
                           perf_acc_us = 0, render_acc_us = 0,
                           perf_frames = 0, perf_start_us = Now}}.
@@ -426,8 +431,8 @@ windowed_client_size(Crop, S) ->
     end,
     {TW * S, TH * S}.
 
-run_initial_frames(Machine, 0) -> {Machine, 0};
+run_initial_frames(Machine, 0) -> Machine;
 run_initial_frames(Machine, N) ->
-    {M, FC} = run_initial_frames(Machine, N - 1),
-    {ezx_emulator:run_frame(M), FC + 1}.
+    Machine2 = ezx_emulator:run_frame(Machine),
+    run_initial_frames(Machine2, N - 1).
 

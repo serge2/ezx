@@ -8,7 +8,7 @@
 
 -export([
     init/0,
-    init/2,
+    init/6,
     step/1,
     run_frame/1,
     render_frame/2,
@@ -41,21 +41,21 @@ init() ->
         filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
     end,
     {ok, Rom} = file:read_file(RomPath),
-    init(ezx_memory_48, Rom).
+    init(z80_cpu, ezx_memory_48, ezx_video2, ezx_keyboard, ezx_beeper, Rom).
 
 %% @doc Create a new machine state with initialized CPU and memory components.
--spec init(module(), binary()) -> #machine_state{}.
-init(Mem, Rom) ->
+-spec init(module(), module(), module(), module(), module(), binary()) -> #machine_state{}.
+init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
     MemReadFun =
         fun(ExtContext, Addr) ->
             Memory = ExtContext#ext_context.memory,
-            Byte = Mem:read_byte(Memory, Addr band 16#ffff),
+            Byte = MemModule:read_byte(Memory, Addr band 16#ffff),
             {Byte, ExtContext}
         end,
     MemWriteFun =
         fun(ExtContext, Addr, Byte) ->
             Memory = ExtContext#ext_context.memory,
-            NewMem = Mem:write_byte(Memory, Addr band 16#ffff, Byte band 16#ff),
+            NewMem = MemModule:write_byte(Memory, Addr band 16#ffff, Byte band 16#ff),
             ExtContext#ext_context{memory = NewMem}
         end,
     PortReadFun =
@@ -66,7 +66,7 @@ init(Mem, Rom) ->
                     %% Multiple half-rows can be selected; results are ANDed.
                     Keyboard = ExtContext#ext_context.keyboard,
                     UpperByte = (Port bsr 8) band 16#FF,
-                    Result = ezx_keyboard:decode(Keyboard, UpperByte),
+                    Result = KeyboardModule:decode(Keyboard, UpperByte),
                     {Result bor 16#E0, ExtContext}; % Set high bits 5-7 to 1 (floating bus)
                 _ ->
                     {16#FF, ExtContext}
@@ -82,9 +82,13 @@ init(Mem, Rom) ->
                     %% Bit 4: beeper speaker output.
                     BeeperLevel = (Byte bsr 4) band 1,
                     Beeper0 = ExtContext#ext_context.beeper,
-                    Beeper1 = ezx_beeper:set_level(Beeper0, BeeperLevel, TState),
+                    Beeper1 = BeeperModule:set_level(Beeper0, BeeperLevel, TState),
+                    NewChanges = case Changes of
+                        [{_, BorderColor} | _] -> Changes;
+                        _ -> [{TState, BorderColor} | Changes]
+                    end,
                     ExtContext#ext_context{
-                        border_changes = [{TState, BorderColor} | Changes],
+                        border_changes = NewChanges,
                         beeper = Beeper1
                     };
                 _ ->
@@ -94,12 +98,17 @@ init(Mem, Rom) ->
     BusReadFun = fun() -> 16#FF end,
     Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun),
     #machine_state{
+        cpu_module = CPUModule,
+        memory_module = MemModule,
+        video_module = VideoModule,
+        keyboard_module = KeyboardModule,
+        beeper_module = BeeperModule,
         cpu = Cpu0,
-        memory = Mem:new(Rom),
-        mem_read_fun = MemReadFun,
-        mem_write_fun = MemWriteFun,
-        beeper = ezx_beeper:init(),
-        keyboard = ezx_keyboard:default()
+        memory = MemModule:new(Rom),
+        % mem_read_fun = MemReadFun,
+        % mem_write_fun = MemWriteFun,
+        beeper = BeeperModule:init(),
+        keyboard = KeyboardModule:default()
     }.
 
 %% @doc Load a program into memory starting at address 0.
@@ -126,35 +135,37 @@ set_keyboard(Machine, Keyboard) ->
 
 -spec press_key(#machine_state{}, non_neg_integer()) -> #machine_state{}.
 press_key(Machine, OrigKey) ->
+    KBModule = Machine#machine_state.keyboard_module,
     KB = Machine#machine_state.keyboard,
     Keys = maps:get(OrigKey, key_map(), []),
-    NewKB = ezx_keyboard:press_keys(KB, Keys),
+    NewKB = KBModule:press_keys(KB, Keys),
     Machine#machine_state{keyboard = NewKB}.
 
 -spec release_key(#machine_state{}, non_neg_integer()) -> #machine_state{}.
 release_key(Machine, OrigKey) ->
+    KBModule = Machine#machine_state.keyboard_module,
     KB = Machine#machine_state.keyboard,
     Keys = maps:get(OrigKey, key_map(), []),
-    NewKB = ezx_keyboard:release_keys(KB, Keys),
+    NewKB = KBModule:release_keys(KB, Keys),
     Machine#machine_state{keyboard = NewKB}.
 
 %% @doc Load a 48K SNA snapshot.
 -spec load_sna(#machine_state{}, binary()) -> #machine_state{}.
 load_sna(Machine, Data) ->
     H = ezx_sna:parse(Data),
-    MemWriteFun = Machine#machine_state.mem_write_fun,
-    ExtContext0 = #ext_context{memory = Machine#machine_state.memory},
+    MemModule = Machine#machine_state.memory_module,
+    Mem = Machine#machine_state.memory,
+
     MemList = binary:bin_to_list(H#sna_header.mem),
-    {_FinalOffset, ExtContext1} = lists:foldl(
-        fun(Byte, {Offset, Ctx}) ->
+    {_FinalOffset, Mem1} = lists:foldl(
+        fun(Byte, {Offset, MemAcc}) ->
             Addr = 16384 + Offset,
-            {Offset + 1, MemWriteFun(Ctx, Addr, Byte)}
-        end, {0, ExtContext0}, MemList),
-    MemReadFun = Machine#machine_state.mem_read_fun,
+            {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
+        end, {0, Mem}, MemList),
+
     SP = H#sna_header.sp,
-    ReadCtx0 = #ext_context{memory = ExtContext1#ext_context.memory},
-    {PCL, ReadCtx1} = MemReadFun(ReadCtx0, SP band 16#FFFF),
-    {PCH, _ReadCtx2} = MemReadFun(ReadCtx1, (SP + 1) band 16#FFFF),
+    PCL = MemModule:read_byte(Mem1, SP band 16#FFFF),
+    PCH = MemModule:read_byte(Mem1, (SP + 1) band 16#FFFF),
     PC = (PCH bsl 8) bor PCL,
     AF = H#sna_header.af,
     BC = H#sna_header.bc,
@@ -183,7 +194,7 @@ load_sna(Machine, Data) ->
         h_alt = HLp bsr 8, l_alt = HLp band 16#FF
     },
     Machine#machine_state{
-        memory = ExtContext1#ext_context.memory,
+        memory = Mem1,
         cpu = Cpu1,
         border_color = H#sna_header.border
     }.
@@ -195,16 +206,13 @@ reset(_Machine) ->
 
 %% @doc Load a TAP file using tape traps.
 -spec load_tap(#machine_state{}, binary()) -> #machine_state{}.
-load_tap(_Machine, Data) ->
+load_tap(Machine, Data) ->
     Blocks = ezx_tap:parse_blocks(Data),
     io:format("TAP: parsed ~p blocks~n", [length(Blocks)]),
-    FreshMachine = init(),
-    InitMachine = run_until_tstates(FreshMachine, 4000000),
     Q = make_load_queue(),
-    InitMachine#machine_state{
+    Machine#machine_state{
         tape_blocks = Blocks,
-        keyboard_queue = Q,
-        beeper = ezx_beeper:init()
+        keyboard_queue = Q
     }.
 
 %% --- Tape trap: intercept LD-BYTES at PC=0x0556 ---
@@ -261,19 +269,21 @@ make_load_queue() ->
 %% @doc Process one step of the keyboard auto-typing queue (called per frame).
 %% Queue elements: {repeat, N, Action} where Action is {set, KB} or release.
 %% Each frame consumes one count from the current repeat block.
-process_keyboard_queue(#machine_state{keyboard_queue = [{N, Action} | Rest]} = Machine) when N > 1 ->
-    KB = apply_kb_action(Machine#machine_state.keyboard, Action),
-    Machine#machine_state{keyboard = KB, keyboard_queue = [{N - 1, Action} | Rest]};
+process_keyboard_queue(#machine_state{keyboard_queue = [{N, Action} | Rest]} = Machine) when N > 0 ->
 
-process_keyboard_queue(#machine_state{keyboard_queue = [{1, Action} | Rest]} = Machine) ->
-    KB = apply_kb_action(Machine#machine_state.keyboard, Action),
-    Machine#machine_state{keyboard = KB, keyboard_queue = Rest};
+    KB = Machine#machine_state.keyboard,
+    KBModule = Machine#machine_state.keyboard_module,
+    KB1 = apply_kb_action(KBModule, KB, Action),
+    Machine#machine_state{keyboard = KB1, keyboard_queue = [{N - 1, Action} | Rest]};
+
+process_keyboard_queue(#machine_state{keyboard_queue = [{0, _Action} | Rest]} = Machine) ->
+    Machine#machine_state{keyboard_queue = Rest};
 
 process_keyboard_queue(Machine) ->
     Machine.
 
-apply_kb_action(_KB, release) -> ezx_keyboard:release_all();
-apply_kb_action(KB, {set, Keys}) -> ezx_keyboard:press_keys(KB, Keys).
+apply_kb_action(KBModule, KB, release) -> KBModule:release_all(KB);
+apply_kb_action(KBModule, KB, {set, Keys}) -> KBModule:press_keys(KB, Keys).
 
 
 key_map() ->
@@ -334,17 +344,15 @@ key_map() ->
     }.
 
 -spec read_byte(#machine_state{}, non_neg_integer()) -> {byte(), #machine_state{}}.
-read_byte(#machine_state{memory = Mem, mem_read_fun = MemReadFun} = Machine, Addr) ->
-    ExtContext = #ext_context{memory = Mem},
-    {Byte, ExtContext2} = MemReadFun(ExtContext, Addr),
-    {Byte, Machine#machine_state{memory = ExtContext2#ext_context.memory}}.
+read_byte(#machine_state{memory = Mem, memory_module = MemoryModule} = Machine, Addr) ->
+    Byte = MemoryModule:read_byte(Mem, Addr),
+    {Byte, Machine}.
 
 %% @doc Write a byte into the machine memory.
 -spec write_byte(#machine_state{}, non_neg_integer(), byte()) -> #machine_state{}.
-write_byte(#machine_state{memory = Mem, mem_write_fun = MemWriteFun} = Machine, Addr, Byte) ->
-    ExtContext = #ext_context{memory = Mem},
-    ExtContext2 = MemWriteFun(ExtContext, Addr, Byte),
-    Machine#machine_state{memory = ExtContext2#ext_context.memory}.
+write_byte(#machine_state{memory = Mem, memory_module = MemoryModule} = Machine, Addr, Byte) ->
+    Mem1 = MemoryModule:write_byte(Mem, Addr, Byte),
+    Machine#machine_state{memory = Mem1}.
 
 %% @doc Read a 16-bit word from the machine memory.
 -spec read_word(#machine_state{}, non_neg_integer()) -> {non_neg_integer(), #machine_state{}}.
@@ -437,8 +445,9 @@ run_frame_1(#machine_state{t_states = StartT} = Machine) ->
     %% Reset T-states to 0 (start of next frame).
     %% border_changes are preserved for the renderer.
     %% Flush beeper to generate PCM audio for this frame.
+    BeeperModule = Machine3#machine_state.beeper_module,
     Beeper0 = Machine3#machine_state.beeper,
-    {PCM, Beeper1} = ezx_beeper:flush_frame(Beeper0),
+    {PCM, Beeper1} = BeeperModule:flush_frame(Beeper0),
     Machine3#machine_state{
         t_states = 0,
         beeper = Beeper1,
@@ -446,12 +455,16 @@ run_frame_1(#machine_state{t_states = StartT} = Machine) ->
     }.
 
 %% @doc Render the current frame to a flat RGB binary (352×288×3 bytes).
-%% Extracts screen memory via bulk read_block and passes to ezx_video.
+%% Extracts screen memory via bulk read_block and passes to a video module.
 -spec render_frame(#machine_state{}, non_neg_integer()) -> binary().
 render_frame(Machine, FrameCounter) ->
+    MemModule = Machine#machine_state.memory_module,
+    VideoModule = Machine#machine_state.video_module,
     Changes = lists:reverse(Machine#machine_state.border_changes),
     CB = Machine#machine_state.border_color,
-    ezx_video:render_frame(Machine#machine_state.memory, FrameCounter, Changes, CB).
+    Mem = Machine#machine_state.memory,
+    Videobuffer = MemModule:read_block(Mem, 16384, 6144 + 768),
+    VideoModule:render_frame(Videobuffer, FrameCounter, Changes, CB).
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.
 -spec run_until_tstates(#machine_state{}, non_neg_integer()) -> #machine_state{}.
