@@ -187,8 +187,8 @@ run_frame_border_stripes_test() ->
     %% --- Verify rendered pixel colors ---
     Mem = M3#machine_state.memory,
     CB = M3#machine_state.border_color,
-    ReadFun = fun(Addr) -> ezx_memory_48:read_byte(Mem, Addr band 16#FFFF) end,
-    Frame = ezx_video:decode_full_frame(ReadFun, 0, Changes, CB),
+    ChangesSorted = lists:keysort(1, Changes),
+    RGB = ezx_video:render_frame(Mem, 0, ChangesSorted, CB),
 
     Palette = {
         {0, 0, 0}, {0, 0, 215}, {215, 0, 0}, {215, 0, 215},
@@ -197,7 +197,9 @@ run_frame_border_stripes_test() ->
 
     lists:foreach(fun(K) ->
         VisY = K * 18,
-        {R, G, B} = lists:nth(5, lists:nth(VisY + 1, Frame)),
+        PX = 5,  %% X=5 -> pixel at column 5 in the row
+        Off = (VisY * 352 + PX) * 3,
+        <<_:Off/binary, R:8, G:8, B:8, _/binary>> = RGB,
         ExpectedColor = lists:nth(K + 1, ExpectedColors),
         ?assertEqual(element(ExpectedColor + 1, Palette), {R, G, B})
     end, lists:seq(0, 15)).

@@ -37,7 +37,11 @@
     frame_count = 0 :: non_neg_integer(),
     aplay_port :: port() | undefined,
     audio_start_us = 0 :: non_neg_integer(),
-    audio_bytes = 0 :: non_neg_integer()
+    audio_bytes = 0 :: non_neg_integer(),
+    perf_acc_us = 0 :: non_neg_integer(),
+    render_acc_us = 0 :: non_neg_integer(),
+    perf_frames = 0 :: non_neg_integer(),
+    perf_start_us = 0 :: non_neg_integer()
 }).
 
 
@@ -91,13 +95,15 @@ init(_Options) ->
     Machine0 = ezx_emulator:init(),
     {Machine1, FC} = run_initial_frames(Machine0, 50),
 
+    Now = erlang:monotonic_time(microsecond),
     State = #state{
         machine = Machine1,
         frame = Frame,
         panel = Panel,
         frame_count = FC,
         aplay_port = AplayPort,
-        audio_start_us = erlang:monotonic_time(microsecond)
+        audio_start_us = Now,
+        perf_start_us = Now
     },
     erlang:send_after(0, self(), frame_tick),
     {ok, State}.
@@ -111,9 +117,13 @@ handle_cast(_Msg, State) ->
 handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                                   scale = Scale,
                                   frame_count = FC0,
-                                  aplay_port = Port, audio_start_us = StartUs0} = State) ->
+                                  aplay_port = Port, audio_start_us = StartUs0,
+                                  perf_acc_us = PerfAcc0, render_acc_us = RenderAcc0,
+                                  perf_frames = PerfFrames0, perf_start_us = PerfStart0} = State) ->
     try
+        PerfT0 = erlang:monotonic_time(microsecond),
         Machine2 = ezx_emulator:run_frame(Machine0),
+        PerfT1 = erlang:monotonic_time(microsecond),
         PCM = Machine2#machine_state.beeper_pcm,
 
         %% Write audio to port
@@ -123,12 +133,10 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
 
        
         FC = FC0 + 1,
-        Changes = Machine2#machine_state.border_changes,
-        CB = Machine2#machine_state.border_color,
-        Mem = Machine2#machine_state.memory,
-        ReadFun = fun(Addr) -> ezx_memory_48:read_byte(Mem, Addr band 16#FFFF) end,
-        FrameData = ezx_video:decode_full_frame(ReadFun, FC, lists:reverse(Changes), CB),
-        Image0 = frame_to_image(FrameData),
+        RenderT0 = erlang:monotonic_time(microsecond),
+        RGB = ezx_emulator:render_frame(Machine2, FC),
+        RenderT1 = erlang:monotonic_time(microsecond),
+        Image0 = wxImage:new(352, 288, RGB),
 
         ClientDC = wxClientDC:new(Panel),
         {PW0, PH0} = wxWindow:getClientSize(Panel),
@@ -216,8 +224,26 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                 erlang:send_after(0, self(), frame_tick)
         end,
 
+        PerfAcc = PerfAcc0 + (PerfT1 - PerfT0),
+        RenderAcc = RenderAcc0 + (RenderT1 - RenderT0),
+        PerfFrames = PerfFrames0 + 1,
+        {PerfFramesN, PerfAccN, RenderAccN, PerfStartN} =
+            case Now - PerfStart0 >= 5000000 of
+                true ->
+                    AvgPerf = PerfAcc / PerfFrames,
+                    AvgRender = RenderAcc / PerfFrames,
+                    io:format("ezx perf: ~p frames in ~.1f s | emulation ~.2f ms  render ~.2f ms  total ~.2f ms~n",
+                              [PerfFrames, (Now - PerfStart0) / 1000000,
+                               AvgPerf / 1000, AvgRender / 1000, (AvgPerf + AvgRender) / 1000]),
+                    {0, 0, 0, Now};
+                false ->
+                    {PerfFrames, PerfAcc, RenderAcc, PerfStart0}
+            end,
+
         {noreply, State#state{machine = Machine2, frame_count = FC,
-                              audio_start_us = StartUs, audio_bytes = Written}}
+                              audio_start_us = StartUs, audio_bytes = Written,
+                              perf_acc_us = PerfAccN, render_acc_us = RenderAccN,
+                              perf_frames = PerfFramesN, perf_start_us = PerfStartN}}
     catch
         C:E:ST ->
             io:format("Frame error: ~p:~p~n~p~n", [C, E, ST]),
@@ -329,9 +355,11 @@ terminate(_Reason, #state{frame = Frame, aplay_port = Port}) ->
 do_reset(State) ->
     Machine0 = ezx_emulator:init(),
     {Machine1, FC} = run_initial_frames(Machine0, 50),
+    Now = erlang:monotonic_time(microsecond),
     {noreply, State#state{machine = Machine1, frame_count = FC,
-                          audio_start_us = erlang:monotonic_time(microsecond),
-                          audio_bytes = 0}}.
+                          audio_start_us = Now, audio_bytes = 0,
+                          perf_acc_us = 0, render_acc_us = 0,
+                          perf_frames = 0, perf_start_us = Now}}.
 
 reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = State) ->
     wxFrame:showFullScreen(Frame, false),
@@ -402,10 +430,4 @@ run_initial_frames(Machine, 0) -> {Machine, 0};
 run_initial_frames(Machine, N) ->
     {M, FC} = run_initial_frames(Machine, N - 1),
     {ezx_emulator:run_frame(M), FC + 1}.
-
-frame_to_image(Frame) ->
-    Height = length(Frame),
-    Width = length(hd(Frame)),
-    RGB = << <<R, G, B>> || Row <- Frame, {R, G, B} <- Row >>,
-    wxImage:new(Width, Height, RGB).
 

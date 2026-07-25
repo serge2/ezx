@@ -11,6 +11,7 @@
     init/2,
     step/1,
     run_frame/1,
+    render_frame/2,
     load_program/2,
     load_program/3,
     load_sna/2,
@@ -443,6 +444,14 @@ run_frame_1(#machine_state{t_states = StartT} = Machine) ->
         beeper = Beeper1,
         beeper_pcm = PCM
     }.
+
+%% @doc Render the current frame to a flat RGB binary (352×288×3 bytes).
+%% Extracts screen memory via bulk read_block and passes to ezx_video.
+-spec render_frame(#machine_state{}, non_neg_integer()) -> binary().
+render_frame(Machine, FrameCounter) ->
+    Changes = lists:reverse(Machine#machine_state.border_changes),
+    CB = Machine#machine_state.border_color,
+    ezx_video:render_frame(Machine#machine_state.memory, FrameCounter, Changes, CB).
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.
 -spec run_until_tstates(#machine_state{}, non_neg_integer()) -> #machine_state{}.

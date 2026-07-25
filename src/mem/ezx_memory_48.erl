@@ -3,6 +3,7 @@
 -export([
     new/1,
     read_byte/2,
+    read_block/3,
     write_byte/3
 ]).
 
@@ -23,6 +24,14 @@ read_byte(State, Addr) ->
     case Data of
         <<_:Index/binary, Byte:8/integer, _/binary>> -> Byte;
         _ -> 0
+    end.
+
+read_block(State, Addr, Size) ->
+    Index = Addr band 16#ffff,
+    Data = maps:get(data, State),
+    case Data of
+        <<_:Index/binary, Block:Size/binary, _/binary>> -> Block;
+        _ -> <<0:Size/unit:8>>
     end.
 
 write_byte(State, Addr, Byte) ->
