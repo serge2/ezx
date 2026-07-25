@@ -456,16 +456,47 @@ ed_ind_test() ->
     ?assertEqual(16, z80_cpu:t_states(Cpu4)).
 
 ed_inir_test() ->
+    %% INIR with B=1: one iteration (13 T-states), then terminates
     Cpu0 = test_helpers:init_cpu(),
     Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),  %% ED prefix
     Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#B2),  %% INIR
-    Cpu3 = Cpu2#cpu_state{b = 16#02, c = 16#10, h = 16#40, l = 16#00},
+    Cpu3 = Cpu2#cpu_state{b = 1, c = 16#10, h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    %% B=0 after decrement, HL incremented, memory written
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu4, 16#4000)),
+    ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu4)),
+    ?assertEqual(16#00, Cpu4#cpu_state.b),
+    %% 8 (ED fetch) + 8 (last iteration terminate) = 16 T-states
+    ?assertEqual(16, z80_cpu:t_states(Cpu4)).
+
+ed_inir_multi_step_test() ->
+    %% INIR with B=2: first step loops (21 T), second step terminates (16 T)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#B2),  %% INIR
+    Cpu3 = Cpu2#cpu_state{b = 2, c = 16#10, h = 16#40, l = 16#00},
+    %% Step 1: B=2→1, HL 0x4000→0x4001, repeats (PC-=2), 21 T-states
     Cpu4 = z80_cpu:step(Cpu3),
     ?assertEqual(16#FF, test_helpers:read_mem(Cpu4, 16#4000)),
-    ?assertEqual(16#FF, test_helpers:read_mem(Cpu4, 16#4001)),
-    ?assertEqual(16#4002, z80_cpu:get_reg_pair(hl, Cpu4)),
-    ?assertEqual(16#00, Cpu4#cpu_state.b),
-    ?assertEqual(37, z80_cpu:t_states(Cpu4)).
+    ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu4)),
+    ?assertEqual(1, Cpu4#cpu_state.b),
+    ?assertEqual(21, z80_cpu:t_states(Cpu4)),
+    %% Step 2: B=1→0, HL 0x4001→0x4002, terminates (16 T-states)
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu5, 16#4001)),
+    ?assertEqual(16#4002, z80_cpu:get_reg_pair(hl, Cpu5)),
+    ?assertEqual(0, Cpu5#cpu_state.b),
+    ?assertEqual(37, z80_cpu:t_states(Cpu5)).
+
+ed_inir_nop_test() ->
+    %% INIR with B=0, PV=0: no-op (8+8=16 T-states)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#B2),
+    Cpu3 = Cpu2#cpu_state{b = 0, f = 0, c = 16#10, h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(0, Cpu4#cpu_state.b),
+    ?assertEqual(16, z80_cpu:t_states(Cpu4)).
 
 ed_outi_test() ->
     Cpu0 = test_helpers:init_cpu(),
@@ -479,16 +510,90 @@ ed_outi_test() ->
     ?assertEqual(16, z80_cpu:t_states(Cpu5)).
 
 ed_otir_test() ->
+    %% OTIR with B=1: one iteration (13 T-states), then terminates
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#11),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),  %% ED prefix
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#B3),  %% OTIR
+    Cpu4 = Cpu3#cpu_state{b = 1, c = 16#10, h = 16#40, l = 16#00},
+    Cpu5 = z80_cpu:step(Cpu4),
+    %% B=0 after decrement, HL incremented
+    ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu5)),
+    ?assertEqual(16#00, Cpu5#cpu_state.b),
+    %% 8 (ED fetch) + 8 (last iteration terminate) = 16 T-states
+    ?assertEqual(16, z80_cpu:t_states(Cpu5)).
+
+ed_otir_multi_step_test() ->
+    %% OTIR with B=2: first step loops (21 T), second step terminates (16 T)
     Cpu0 = test_helpers:init_cpu(),
     Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#11),
     Cpu2 = test_helpers:write_mem(Cpu1, 16#4001, 16#22),
-    Cpu3 = test_helpers:write_mem(Cpu2, 0, 16#ED),  %% ED prefix
+    Cpu3 = test_helpers:write_mem(Cpu2, 0, 16#ED),
     Cpu4 = test_helpers:write_mem(Cpu3, 1, 16#B3),  %% OTIR
-    Cpu5 = Cpu4#cpu_state{b = 16#02, c = 16#10, h = 16#40, l = 16#00},
+    Cpu5 = Cpu4#cpu_state{b = 2, c = 16#10, h = 16#40, l = 16#00},
+    %% Step 1: B=2→1, HL 0x4000→0x4001, repeats, 21 T-states
     Cpu6 = z80_cpu:step(Cpu5),
-    ?assertEqual(16#4002, z80_cpu:get_reg_pair(hl, Cpu6)),
-    ?assertEqual(16#00, Cpu6#cpu_state.b),
-    ?assertEqual(37, z80_cpu:t_states(Cpu6)).
+    ?assertEqual(16#4001, z80_cpu:get_reg_pair(hl, Cpu6)),
+    ?assertEqual(1, Cpu6#cpu_state.b),
+    ?assertEqual(21, z80_cpu:t_states(Cpu6)),
+    %% Step 2: B=1→0, HL 0x4001→0x4002, terminates, 16 T-states
+    Cpu7 = z80_cpu:step(Cpu6),
+    ?assertEqual(16#4002, z80_cpu:get_reg_pair(hl, Cpu7)),
+    ?assertEqual(0, Cpu7#cpu_state.b),
+    ?assertEqual(37, z80_cpu:t_states(Cpu7)).
+
+ed_otir_nop_test() ->
+    %% OTIR with B=0, PV=0: no-op (8+8=16 T-states)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#B3),
+    Cpu3 = Cpu2#cpu_state{b = 0, f = 0, c = 16#10, h = 16#40, l = 16#00},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(0, Cpu4#cpu_state.b),
+    ?assertEqual(16, z80_cpu:t_states(Cpu4)).
+
+ed_indr_test() ->
+    %% INDR with B=1: one iteration, HL decremented
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 0, 16#ED),
+    Cpu2 = test_helpers:write_mem(Cpu1, 1, 16#BA),  %% INDR
+    Cpu3 = Cpu2#cpu_state{b = 1, c = 16#10, h = 16#40, l = 16#01},
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#FF, test_helpers:read_mem(Cpu4, 16#4001)),
+    ?assertEqual(16#4000, z80_cpu:get_reg_pair(hl, Cpu4)),
+    ?assertEqual(16#00, Cpu4#cpu_state.b),
+    ?assertEqual(16, z80_cpu:t_states(Cpu4)).
+
+ed_outd_test() ->
+    %% OUTD with B=1: one iteration, HL decremented
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#55),
+    Cpu2 = test_helpers:write_mem(Cpu1, 0, 16#ED),
+    Cpu3 = test_helpers:write_mem(Cpu2, 1, 16#AB),  %% OUTD
+    Cpu4 = Cpu3#cpu_state{b = 1, c = 16#10, h = 16#40, l = 16#01},
+    Cpu5 = z80_cpu:step(Cpu4),
+    ?assertEqual(16#4000, z80_cpu:get_reg_pair(hl, Cpu5)),
+    ?assertEqual(16#00, Cpu5#cpu_state.b),
+    ?assertEqual(16, z80_cpu:t_states(Cpu5)).
+
+ed_otdr_test() ->
+    %% OTDR with B=2: first step loops (21 T), second step terminates (16 T)
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = test_helpers:write_mem(Cpu0, 16#4000, 16#11),
+    Cpu2 = test_helpers:write_mem(Cpu1, 16#3FFF, 16#22),
+    Cpu3 = test_helpers:write_mem(Cpu2, 0, 16#ED),
+    Cpu4 = test_helpers:write_mem(Cpu3, 1, 16#BB),  %% OTDR
+    Cpu5 = Cpu4#cpu_state{b = 2, c = 16#10, h = 16#40, l = 16#01},
+    %% Step 1: B=2→1, HL 0x4001→0x4000, repeats, 21 T-states
+    Cpu6 = z80_cpu:step(Cpu5),
+    ?assertEqual(16#4000, z80_cpu:get_reg_pair(hl, Cpu6)),
+    ?assertEqual(1, Cpu6#cpu_state.b),
+    ?assertEqual(21, z80_cpu:t_states(Cpu6)),
+    %% Step 2: B=1→0, HL 0x4000→0x3FFF, terminates, 16 T-states
+    Cpu7 = z80_cpu:step(Cpu6),
+    ?assertEqual(16#3FFF, z80_cpu:get_reg_pair(hl, Cpu7)),
+    ?assertEqual(0, Cpu7#cpu_state.b),
+    ?assertEqual(37, z80_cpu:t_states(Cpu7)).
 
 %% --- ED RETN/RETI ---
 
