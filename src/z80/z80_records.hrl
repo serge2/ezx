@@ -22,8 +22,11 @@
     i  = 16#FF, %% Interrupt vector register
     r  = 16#FF, %% Memory refresh register
 
+    %% Internal registers
+    memptr = 16#FFFF, %% The internal memory pointer register (takes part in same undocumented behaviors)
+
     %% Prefix state for DD/FD and DD CB/FD CB handling
-    prefix = none :: none | dd | fd | dd_cb | fd_cb,
+    prefix = none :: none | dd | fd | dd_cb | fd_cb | cb | ed,
     ei_block = 0 :: non_neg_integer(),  % EI blocks interrupts for N instructions (counter)
 
     %% Execution state
@@ -47,7 +50,9 @@
 -define(FLAG_C, 16#01). % Carry
 -define(FLAG_N, 16#02). % Add/Subtract
 -define(FLAG_V, 16#04). % Parity/Overflow
+-define(FLAG_F3, 16#08). % Undocumented flag 3
 -define(FLAG_H, 16#10). % Half Carry
+-define(FLAG_F5, 16#20). % Undocumented flag 5
 -define(FLAG_Z, 16#40). % Zero
 -define(FLAG_S, 16#80). % Sign
 
@@ -71,6 +76,7 @@
 -define(GET_R(Cpu), (Cpu)#cpu_state.r).
 -define(GET_PC(Cpu), (Cpu)#cpu_state.pc).
 -define(GET_SP(Cpu), (Cpu)#cpu_state.sp).
+-define(GET_MEMPTR(Cpu), (Cpu)#cpu_state.memptr).
 -define(GET_IFF1(Cpu), (Cpu)#cpu_state.iff1).
 -define(GET_IFF2(Cpu), (Cpu)#cpu_state.iff2).
 -define(GET_IM(Cpu), (Cpu)#cpu_state.im).
@@ -96,6 +102,7 @@
 -define(SET_R(Cpu, Val), (Cpu)#cpu_state{r = (Val) band 16#ff}).
 -define(SET_PC(Cpu, Val), (Cpu)#cpu_state{pc = (Val) band 16#ffff}).
 -define(SET_SP(Cpu, Val), (Cpu)#cpu_state{sp = (Val) band 16#ffff}).
+-define(SET_MEMPTR(Cpu, Val), (Cpu)#cpu_state{memptr = (Val) band 16#ffff}).
 -define(SET_IFF1(Cpu, Val), (Cpu)#cpu_state{iff1 = (Val)}).
 -define(SET_IFF2(Cpu, Val), (Cpu)#cpu_state{iff2 = (Val)}).
 -define(SET_IM(Cpu, Val), (Cpu)#cpu_state{im = (Val)}).

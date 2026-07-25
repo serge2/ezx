@@ -36,6 +36,9 @@
 
 -export([parse/1]).
 
+-type sna_header() :: #sna_header{}.
+-export_type([sna_header/0]).
+
 %% @doc Parse a 48K SNA snapshot binary into a header record.
 %%
 %% Raises `bad_sna_header' if the binary is smaller than 49179 bytes.
@@ -44,18 +47,18 @@ parse(Data) when byte_size(Data) < 27 + 49152 ->
     error(bad_sna_header);
 parse(Data) ->
     <<I:8,
-      HLp:16/little, DEp:16/little, BCp:16/little, AFp:16/little,
+      HLa:16/little, DEa:16/little, BCa:16/little, AFa:16/little,
       HL:16/little, DE:16/little, BC:16/little, IY:16/little, IX:16/little,
       IFF2:8, R:8,
       AF:16/little, SP:16/little,
-      _IM:8, Border:8,
+      IM:8, Border:8,
       Mem:49152/bytes>> = Data,
     #sna_header{
         i = I, r = R,
         af = AF, bc = BC, de = DE, hl = HL,
         ix = IX, iy = IY,
-        af_prime = AFp, bc_prime = BCp, de_prime = DEp, hl_prime = HLp,
-        sp = SP, iff2 = IFF2,
+        af_alt = AFa, bc_alt = BCa, de_alt = DEa, hl_alt = HLa,
+        sp = SP, iff2 = IFF2, im = IM,
         border = Border,
         mem = Mem
     }.

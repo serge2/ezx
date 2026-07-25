@@ -179,8 +179,8 @@ execute_cb_bit(Opcode, State) ->
     F_N = 0,
     %% F3/F5: from register value for BIT b,r, from H register for BIT b,(HL)
     F3F5 = case RegIdx of
-        6 -> (State1#cpu_state.h band 16#28);
-        _ -> (Byte band 16#28)
+        6 -> (State1#cpu_state.h band (?FLAG_F3 bor ?FLAG_F5));
+        _ -> (Byte band (?FLAG_F3 bor ?FLAG_F5))
     end,
     NewFlags = Flags bor F_S bor F_Z bor F_H bor F_V bor F_N bor F3F5,
     NewState = State1#cpu_state{f = NewFlags},
@@ -256,7 +256,8 @@ rotate_left(Byte, Cpu) ->
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = Carry,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
+    F_F3F5= NewByte band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 rotate_right(Byte, Cpu) ->
@@ -268,7 +269,8 @@ rotate_right(Byte, Cpu) ->
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = Carry,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
+    F_F3F5 = NewByte band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% RL (Rotate Left through Carry) - 0x10-0x17
@@ -282,7 +284,8 @@ rotate_left_c(Byte, Cpu) ->
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
+    F_F3F5 = NewByte band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% RR (Rotate Right through Carry) - 0x18-0x1F
@@ -296,7 +299,8 @@ rotate_right_c(Byte, Cpu) ->
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
+    F_F3F5 = NewByte band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% SLA (Shift Left Arithmetic) - 0x20-0x27
@@ -309,7 +313,8 @@ sla(Byte, Cpu) ->
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
+    F_F3F5 = NewByte band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% SRA (Shift Right Arithmetic) - 0x28-0x2F
@@ -322,7 +327,8 @@ sra(Byte, Cpu) ->
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
+    F_F3F5 = NewByte band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% SLL (Shift Left Logical, undocumented) - 0x30-0x37
@@ -335,7 +341,8 @@ sll(Byte, Cpu) ->
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
+    F_F3F5 = NewByte band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% SRL (Shift Right Logical) - 0x38-0x3F
@@ -348,7 +355,8 @@ srl(Byte, Cpu) ->
     F_V = z80_cpu_helpers:parity(NewByte),
     F_N = 0,
     F_C = NewCarry,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (NewByte band 16#28),
+    F_F3F5 = NewByte band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     {NewByte, Cpu#cpu_state{f = NewFlags}}.
 
 %% @doc Execute a DD CB / FD CB indexed opcode.
@@ -449,7 +457,8 @@ execute_cb_bit_on_byte(BitPos, Byte, Addr, State) ->
     F_Z = if TestedBit -> 0; true -> ?FLAG_Z end,
     F = State#cpu_state.f,
     AddrHi = (Addr bsr 8) band 16#FF,
-    NewF = (F band ?FLAG_C) bor F_S bor F_Z bor F_H bor F_V bor F_N bor (AddrHi band 16#28),
+    F_F3F5 = AddrHi band (?FLAG_F3 bor ?FLAG_F5),
+    NewF = (F band ?FLAG_C) bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_F3F5,
     {Byte, State#cpu_state{f = NewF}}.
 
 %% RES operation for indexed (uses Y for bit position)

@@ -20,6 +20,11 @@
 
 -export([parse_blocks/1, block_flag/1, block_payload/1]).
 
+-type tap_block() :: #tap_block{}.
+-type tap_blocks() :: [tap_block()].
+-export_type([tap_block/0, tap_blocks/0]).
+
+
 %% @doc Parse a TAP binary into a list of blocks.
 %%
 %% Returns an empty list for empty or malformed input.

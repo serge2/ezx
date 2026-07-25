@@ -115,7 +115,8 @@ execute_ed_neg(State) ->
     F_V = if A =:= 16#80 -> ?FLAG_V; true -> 0 end,
     F_N = ?FLAG_N,
     F_C = if A =:= 0 -> 0; true -> ?FLAG_C end,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor (Res band 16#28),
+    F_F3F5 = Res band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     State#cpu_state{a = Res, f = NewFlags}.
 
 %% IM 0/1/2: Set interrupt mode (8 T-states total = 8 base + 0 added)
@@ -151,7 +152,7 @@ execute_ed_ld_a_i(State) ->
     F_V = if State#cpu_state.iff2 =/= 0 -> ?FLAG_V; true -> 0 end,
     F_N = 0,
     F_C = State#cpu_state.f band ?FLAG_C,
-    F_F3F5 = Val band 16#28,
+    F_F3F5 = Val band (?FLAG_F3 bor ?FLAG_F5),
     NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     z80_cpu_helpers:advance_tstates(State#cpu_state{a = Val, f = NewFlags}, 1).
 
@@ -170,7 +171,7 @@ execute_ed_ld_a_r(State) ->
     F_V = if State#cpu_state.iff2 =/= 0 -> ?FLAG_V; true -> 0 end,
     F_N = 0,
     F_C = State#cpu_state.f band ?FLAG_C,
-    F_F3F5 = CompVal band 16#28,
+    F_F3F5 = CompVal band (?FLAG_F3 bor ?FLAG_F5),
     NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     z80_cpu_helpers:advance_tstates(State#cpu_state{a = CompVal, f = NewFlags}, 1).
 
@@ -189,7 +190,8 @@ execute_ed_rrd(State) ->
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewA),
     F_N = 0,
-    NewFlags = (State2#cpu_state.f band ?FLAG_C) bor F_S bor F_Z bor F_H bor F_V bor F_N bor (NewA band 16#28),
+    F_F3F5 = NewA band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = (State2#cpu_state.f band ?FLAG_C) bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_F3F5,
     z80_cpu_helpers:advance_tstates(State2#cpu_state{a = NewA, f = NewFlags}, 10).
 
 %% RLD: Rotate Left Digit (ED 6F) - 18 T-states total (8 base + 10 added)
@@ -207,7 +209,8 @@ execute_ed_rld(State) ->
     F_H = 0,
     F_V = z80_cpu_helpers:parity(NewA),
     F_N = 0,
-    NewFlags = (State2#cpu_state.f band ?FLAG_C) bor F_S bor F_Z bor F_H bor F_V bor F_N bor (NewA band 16#28),
+    F_F3F5 = NewA band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = (State2#cpu_state.f band ?FLAG_C) bor F_S bor F_Z bor F_H bor F_V bor F_N bor F_F3F5,
     z80_cpu_helpers:advance_tstates(State2#cpu_state{a = NewA, f = NewFlags}, 10).
 
 %% ADC HL, rr (ED 4A, 5A, 6A, 7A) - 15 T-states total (8 base + 7 added)
@@ -223,7 +226,8 @@ execute_ed_adc_hl_rr(State, RegPair) ->
     F_V = if ((HL bxor NewVal) band (RR bxor NewVal) band 16#8000) =/= 0 -> ?FLAG_V; true -> 0 end,
     F_N = 0,
     F_C = if Res > 16#FFFF -> ?FLAG_C; true -> 0 end,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor ((NewVal bsr 8) band 16#28),
+    F_F3F5 = (NewVal bsr 8) band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     State1 = State#cpu_state{
         h = (NewVal bsr 8) band 16#FF,
         l = NewVal band 16#FF,
@@ -244,7 +248,8 @@ execute_ed_sbc_hl_rr(State, RegPair) ->
     F_V = if ((HL bxor NewVal) band (HL bxor RR) band 16#8000) =/= 0 -> ?FLAG_V; true -> 0 end,
     F_N = ?FLAG_N,
     F_C = if Res < 0 -> ?FLAG_C; true -> 0 end,
-    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor ((NewVal bsr 8) band 16#28),
+    F_F3F5 = (NewVal bsr 8) band (?FLAG_F3 bor ?FLAG_F5),
+    NewFlags = F_S bor F_Z bor F_H bor F_V bor F_N bor F_C bor F_F3F5,
     State1 = State#cpu_state{
         h = (NewVal bsr 8) band 16#FF,
         l = NewVal band 16#FF,
@@ -322,8 +327,8 @@ execute_ldi(State, _Repeat) ->
     V = (Byte + State2#cpu_state.a) band 16#FF,
     OldF = State#cpu_state.f band (?FLAG_C bor ?FLAG_Z bor ?FLAG_S),
     F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
-    F_F3 = if V band 16#08 =/= 0 -> 16#08; true -> 0 end,
-    F_F5 = if V band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    F_F3 = if V band 16#08 =/= 0 -> ?FLAG_F3; true -> 0 end,
+    F_F5 = if V band 16#02 =/= 0 -> ?FLAG_F5; true -> 0 end,
     NewFlags = OldF bor F_PV bor F_F3 bor F_F5,
     State3 = State2#cpu_state{
         h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
@@ -353,8 +358,8 @@ execute_ldir(State) ->
             V = (Byte + State2#cpu_state.a) band 16#FF,
             OldF = State#cpu_state.f band (?FLAG_C bor ?FLAG_Z bor ?FLAG_S),
             F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
-            F_F3 = if V band 16#08 =/= 0 -> 16#08; true -> 0 end,
-            F_F5 = if V band 16#02 =/= 0 -> 16#20; true -> 0 end,
+            F_F3 = if V band 16#08 =/= 0 -> ?FLAG_F3; true -> 0 end,
+            F_F5 = if V band 16#02 =/= 0 -> ?FLAG_F5; true -> 0 end,
             NewFlags = OldF bor F_PV bor F_F3 bor F_F5,
             PC = State2#cpu_state.pc,
             NewPC =  PC - 2,       %% Repeat: 21 T-states (PC-2 to re-execute)
@@ -381,8 +386,8 @@ execute_ldd(State, _Repeat) ->
     V = (Byte + State2#cpu_state.a) band 16#FF,
     OldF = State#cpu_state.f band (?FLAG_C bor ?FLAG_Z bor ?FLAG_S),
     F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
-    F_F3 = if V band 16#08 =/= 0 -> 16#08; true -> 0 end,
-    F_F5 = if V band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    F_F3 = if V band 16#08 =/= 0 -> ?FLAG_F3; true -> 0 end,
+    F_F5 = if V band 16#02 =/= 0 -> ?FLAG_F5; true -> 0 end,
     NewFlags = OldF bor F_PV bor F_F3 bor F_F5,
     State3 = State2#cpu_state{
         h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
@@ -411,8 +416,8 @@ execute_lddr(State) ->
             V = (Byte + State2#cpu_state.a) band 16#FF,
             OldF = State#cpu_state.f band (?FLAG_C bor ?FLAG_Z bor ?FLAG_S),
             F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
-            F_F3 = if V band 16#08 =/= 0 -> 16#08; true -> 0 end,
-            F_F5 = if V band 16#02 =/= 0 -> 16#20; true -> 0 end,
+            F_F3 = if V band 16#08 =/= 0 -> ?FLAG_F3; true -> 0 end,
+            F_F5 = if V band 16#02 =/= 0 -> ?FLAG_F5; true -> 0 end,
             NewFlags = OldF bor F_PV bor F_F3 bor F_F5,
             PC = State2#cpu_state.pc,
             NewPC = case NewBC of
@@ -449,8 +454,8 @@ execute_ed_cpi(State) ->
     F_H = if HFlag =:= 1 -> ?FLAG_H; true -> 0 end,
     F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
     F_N = ?FLAG_N,
-    F_F3 = if Tmp band 16#08 =/= 0 -> 16#08; true -> 0 end,
-    F_F5 = if Tmp band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    F_F3 = if Tmp band 16#08 =/= 0 -> ?FLAG_F3; true -> 0 end,
+    F_F5 = if Tmp band 16#02 =/= 0 -> ?FLAG_F5; true -> 0 end,
     NewFlags = OldF bor F_S bor F_Z bor F_H bor F_PV bor F_N bor F_F3 bor F_F5,
     State2 = State1#cpu_state{
         h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
@@ -483,8 +488,8 @@ execute_ed_cpir(State) ->
             F_H = if HFlag =:= 1 -> ?FLAG_H; true -> 0 end,
             F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
             F_N = ?FLAG_N,
-            F_F3 = if Tmp band 16#08 =/= 0 -> 16#08; true -> 0 end,
-            F_F5 = if Tmp band 16#02 =/= 0 -> 16#20; true -> 0 end,
+            F_F3 = if Tmp band 16#08 =/= 0 -> ?FLAG_F3; true -> 0 end,
+            F_F5 = if Tmp band 16#02 =/= 0 -> ?FLAG_F5; true -> 0 end,
             NewFlags = OldF bor F_S bor F_Z bor F_H bor F_PV bor F_N bor F_F3 bor F_F5,
             PC = State1#cpu_state.pc,
             NewPC = case Match orelse NewBC =:= 0 of
@@ -518,8 +523,8 @@ execute_ed_cpd(State) ->
     F_H = if HFlag =:= 1 -> ?FLAG_H; true -> 0 end,
     F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
     F_N = ?FLAG_N,
-    F_F3 = if Tmp band 16#08 =/= 0 -> 16#08; true -> 0 end,
-    F_F5 = if Tmp band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    F_F3 = if Tmp band 16#08 =/= 0 -> ?FLAG_F3; true -> 0 end,
+    F_F5 = if Tmp band 16#02 =/= 0 -> ?FLAG_F5; true -> 0 end,
     NewFlags = OldF bor F_S bor F_Z bor F_H bor F_PV bor F_N bor F_F3 bor F_F5,
     State2 = State1#cpu_state{
         h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
@@ -552,8 +557,8 @@ execute_ed_cpdr(State) ->
             F_H = if HFlag =:= 1 -> ?FLAG_H; true -> 0 end,
             F_PV = if NewBC =:= 0 -> 0; true -> ?FLAG_V end,
             F_N = ?FLAG_N,
-            F_F3 = if Tmp band 16#08 =/= 0 -> 16#08; true -> 0 end,
-            F_F5 = if Tmp band 16#02 =/= 0 -> 16#20; true -> 0 end,
+            F_F3 = if Tmp band 16#08 =/= 0 -> ?FLAG_F3; true -> 0 end,
+            F_F5 = if Tmp band 16#02 =/= 0 -> ?FLAG_F5; true -> 0 end,
             NewFlags = OldF bor F_S bor F_Z bor F_H bor F_PV bor F_N bor F_F3 bor F_F5,
             PC = State1#cpu_state.pc,
             NewPC = case Match orelse NewBC =:= 0 of
@@ -575,8 +580,8 @@ execute_ed_cpdr(State) ->
 %% Flags for LDI/LDD/LDIR/LDDR: V from (Byte+A)&0xFF, F3/F5 from that temp value.
 undoc_flags_transfer(Byte, A, OldFlags) ->
     V = (Byte + A) band 16#FF,
-    F_F3 = if V band 16#08 =/= 0 -> 16#08; true -> 0 end,
-    F_F5 = if V band 16#02 =/= 0 -> 16#20; true -> 0 end,
+    F_F3 = if V band 16#08 =/= 0 -> ?FLAG_F3; true -> 0 end,
+    F_F5 = if V band 16#02 =/= 0 -> ?FLAG_F5; true -> 0 end,
     OldFlags bor F_F3 bor F_F5.
 
 %% Flags for OUTI/OUTD/OTIR/OTDR: Temp = Val + ((C±1)&0xFF)
@@ -592,7 +597,7 @@ undoc_flags_out(Val, C, Inc) ->
     F_V = z80_cpu_helpers:parity(Temp8),
     F_N = Val band 16#80,
     F_C = if Temp > 16#FF -> ?FLAG_C; true -> 0 end,
-    F3F5 = Temp8 band 16#28,
+    F3F5 = Temp8 band (?FLAG_F3 bor ?FLAG_F5),
     F_S bor F_H bor F_V bor F_N bor F_C bor F3F5.
 
 %% Flags for INI/IND/INIR/INDR: Temp = Val + ((C±1)&0xFF)
@@ -608,7 +613,7 @@ undoc_flags_in(Val, C, Inc) ->
     F_V = z80_cpu_helpers:parity(Temp8),
     F_N = Val band 16#80,
     F_C = if Temp > 16#FF -> ?FLAG_C; true -> 0 end,
-    F3F5 = Temp8 band 16#28,
+    F3F5 = Temp8 band (?FLAG_F3 bor ?FLAG_F5),
     F_S bor F_H bor F_V bor F_N bor F_C bor F3F5.
 
 %% Block I/O: INI/IND/INIR/INDR — single iteration per step, repeat by PC-=2

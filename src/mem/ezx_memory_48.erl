@@ -18,20 +18,21 @@ new(Rom) when is_binary(Rom), byte_size(Rom) =< 65536 ->
       data => <<Rom/binary, 0:(65536-byte_size(Rom))/unit:8>>
     }.
 
-read_byte(State, Addr) ->
-    Index = Addr band 16#ffff,
-    Data = maps:get(data, State),
-    case Data of
-        <<_:Index/binary, Byte:8/integer, _/binary>> -> Byte;
-        _ -> 0
-    end.
-
 read_block(State, Addr, Size) ->
     Index = Addr band 16#ffff,
     Data = maps:get(data, State),
     case Data of
         <<_:Index/binary, Block:Size/binary, _/binary>> -> Block;
         _ -> <<0:Size/unit:8>>
+    end.
+
+
+read_byte(State, Addr) ->
+    Index = Addr band 16#ffff,
+    Data = maps:get(data, State),
+    case Data of
+        <<_:Index/binary, Byte:8/integer, _/binary>> -> Byte;
+        _ -> 0
     end.
 
 write_byte(State, Addr, Byte) ->
@@ -44,4 +45,5 @@ write_byte(State, Addr, Byte) ->
             Data1 = <<Prefix/binary, (Byte band 16#ff):8/integer, Suffix/binary>>,
             maps:put(data, Data1, State)
     end.
+
 
