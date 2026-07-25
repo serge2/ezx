@@ -40,6 +40,7 @@
     audio_bytes = 0 :: non_neg_integer(),
     perf_acc_us = 0 :: non_neg_integer(),
     render_acc_us = 0 :: non_neg_integer(),
+    beeper_acc_us = 0 :: non_neg_integer(),
     perf_frames = 0 :: non_neg_integer(),
     perf_start_us = 0 :: non_neg_integer()
 }).
@@ -118,13 +119,20 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                                   scale = Scale,
                                   frame_count = FC0,
                                   aplay_port = Port, audio_start_us = StartUs0,
-                                  perf_acc_us = PerfAcc0, render_acc_us = RenderAcc0,
+                                  perf_acc_us = PerfAcc0, render_acc_us = RenderAcc0, beeper_acc_us = BeeperAcc0,
                                   perf_frames = PerfFrames0, perf_start_us = PerfStart0} = State) ->
     try
         PerfT0 = erlang:monotonic_time(microsecond),
         Machine2 = ezx_emulator:run_frame(Machine0),
         PerfT1 = erlang:monotonic_time(microsecond),
-        PCM = Machine2#machine_state.beeper_pcm,
+
+
+        BeepT0 = erlang:monotonic_time(microsecond),
+        {PCM, Machine3} = ezx_emulator:render_beeper(Machine2),
+        BeepT1 = erlang:monotonic_time(microsecond),
+        % Machine3 = Machine2,
+        % PCM = Machine3#machine_state.beeper_pcm,
+
 
         %% Write audio to port
         port_command(Port, PCM),
@@ -134,8 +142,10 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
        
         FC = FC0 + 1,
         RenderT0 = erlang:monotonic_time(microsecond),
-        RGB = ezx_emulator:render_frame(Machine2, FC),
+        RGB = ezx_emulator:render_frame(Machine3),
+        % RGB = Machine3#machine_state.screen,
         RenderT1 = erlang:monotonic_time(microsecond),
+
         Image0 = wxImage:new(352, 288, RGB),
 
         ClientDC = wxClientDC:new(Panel),
@@ -226,23 +236,25 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
 
         PerfAcc = PerfAcc0 + (PerfT1 - PerfT0),
         RenderAcc = RenderAcc0 + (RenderT1 - RenderT0),
+        BeeperAcc = BeeperAcc0 + (BeepT1 - BeepT0),
         PerfFrames = PerfFrames0 + 1,
-        {PerfFramesN, PerfAccN, RenderAccN, PerfStartN} =
+        {PerfFramesN, PerfAccN, RenderAccN, BeeperAccN, PerfStartN} =
             case Now - PerfStart0 >= 5000000 of
                 true ->
                     AvgPerf = PerfAcc / PerfFrames,
                     AvgRender = RenderAcc / PerfFrames,
-                    io:format("ezx perf: ~p frames in ~.1f s | emulation ~.2f ms  render ~.2f ms  total ~.2f ms~n",
+                    AvgBeeper = BeeperAcc / PerfFrames,
+                    io:format("ezx perf: ~p frames in ~.1f s | emulation ~.2f ms  render ~.2f ms  beeper ~.2f ms total ~.2f ms~n",
                               [PerfFrames, (Now - PerfStart0) / 1000000,
-                               AvgPerf / 1000, AvgRender / 1000, (AvgPerf + AvgRender) / 1000]),
-                    {0, 0, 0, Now};
+                               AvgPerf / 1000, AvgRender / 1000, AvgBeeper / 1000, (AvgPerf + AvgRender + AvgBeeper) / 1000]),
+                    {0, 0, 0, 0, Now};
                 false ->
-                    {PerfFrames, PerfAcc, RenderAcc, PerfStart0}
+                    {PerfFrames, PerfAcc, RenderAcc, BeeperAcc, PerfStart0}
             end,
 
-        {noreply, State#state{machine = Machine2, frame_count = FC,
+        {noreply, State#state{machine = Machine3, frame_count = FC,
                               audio_start_us = StartUs, audio_bytes = Written,
-                              perf_acc_us = PerfAccN, render_acc_us = RenderAccN,
+                              perf_acc_us = PerfAccN, render_acc_us = RenderAccN, beeper_acc_us = BeeperAccN,
                               perf_frames = PerfFramesN, perf_start_us = PerfStartN}}
     catch
         C:E:ST ->

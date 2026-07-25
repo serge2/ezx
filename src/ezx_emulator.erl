@@ -11,7 +11,8 @@
     init/6,
     step/1,
     run_frame/1,
-    render_frame/2,
+    render_frame/1,
+    render_beeper/1,
     load_program/2,
     load_program/3,
     load_sna/2,
@@ -446,28 +447,44 @@ run_frame_1(#machine_state{t_states = StartT} = Machine) ->
     Machine3 = run_until_tstates(Machine2, Phase2End),
 
     %% Reset T-states to 0 (start of next frame).
-    %% border_changes are preserved for the renderer.
-    %% Flush beeper to generate PCM audio for this frame.
-    BeeperModule = Machine3#machine_state.beeper_module,
-    Beeper0 = Machine3#machine_state.beeper,
-    {PCM, Beeper1} = BeeperModule:flush_frame(Beeper0),
+
+    % BeeperModule = Machine3#machine_state.beeper_module,
+    % Beeper0 = Machine3#machine_state.beeper,
+    % {PCM, Beeper1} = BeeperModule:flush_frame(Beeper0),
+
+    FlashCounter = Machine3#machine_state.flash_counter,
+    NewFlashCounter = (FlashCounter + 1) rem 32,
+
+    % Screen = render_frame(Machine3),
     Machine3#machine_state{
         t_states = 0,
-        beeper = Beeper1,
-        beeper_pcm = PCM
+        % beeper = Beeper1,
+        % beeper_pcm = PCM,
+        flash_counter = NewFlashCounter
+        % screen = Screen
     }.
 
 %% @doc Render the current frame to a flat RGB binary (352×288×3 bytes).
 %% Extracts screen memory via bulk read_block and passes to a video module.
--spec render_frame(#machine_state{}, non_neg_integer()) -> binary().
-render_frame(Machine, FrameCounter) ->
+-spec render_frame(#machine_state{}) -> binary().
+render_frame(Machine) ->
     MemModule = Machine#machine_state.memory_module,
     VideoModule = Machine#machine_state.video_module,
+    FlashOn = Machine#machine_state.flash_counter div 16 =:= 1,
     Changes = lists:reverse(Machine#machine_state.border_changes),
     CB = Machine#machine_state.border_color,
     Mem = Machine#machine_state.memory,
     Videobuffer = MemModule:read_block(Mem, 16384, 6144 + 768),
-    VideoModule:render_frame(Videobuffer, FrameCounter, Changes, CB).
+    VideoModule:render_frame(Videobuffer, FlashOn, Changes, CB).
+
+%% @doc Render the beeper sound for the current frame to a flat PCM binary.
+-spec render_beeper(#machine_state{}) -> {binary(), #machine_state{}}.
+render_beeper(Machine) ->
+    BeeperModule = Machine#machine_state.beeper_module,
+    Beeper = Machine#machine_state.beeper,
+    {PCM, Beeper1} = BeeperModule:flush_frame(Beeper),
+    {PCM, Machine#machine_state{beeper = Beeper1, beeper_pcm = PCM}}.
+
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.
 -spec run_until_tstates(#machine_state{}, non_neg_integer()) -> #machine_state{}.

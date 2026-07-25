@@ -59,10 +59,9 @@ border_color(BorderChanges, TState) ->
 %% @doc Render full frame to a flat RGB binary (352×288×3 bytes).
 %% Uses bulk memory reads via read_block/3 and decodes 8 pixels per bitmap byte.
 %% SortedBorderChanges must be ascending by T-state.
--spec render_frame(ezx_memory_48:state(), non_neg_integer(), list(), non_neg_integer()) -> binary().
-render_frame(VideoBuffer, FrameCounter, SortedBorderChanges, CurrentBorder) ->
+-spec render_frame(ezx_memory_48:state(), boolean(), list(), non_neg_integer()) -> binary().
+render_frame(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder) ->
     <<Bitmap:6144/binary, Attrs:768/binary>> = VideoBuffer,
-    FlashOn = flash_active(FrameCounter),
     list_to_binary([render_frame_line(Bitmap, Attrs, SortedBorderChanges, CurrentBorder, FlashOn, Y)
                     || Y <- lists:seq(0, ?FULL_HEIGHT - 1)]).
 
@@ -153,9 +152,6 @@ find_border_color_acc([{T, Color} | Rest], CurrentBorder, TState, Acc) ->
         true -> find_border_color_acc(Rest, CurrentBorder, TState, Color);
         false -> color(Acc, false)
     end.
-
-flash_active(FrameCounter) ->
-    (FrameCounter div 16) rem 2 =:= 1.
 
 find_border_color([], _TState, Default) ->
     Default;

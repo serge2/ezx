@@ -28,10 +28,9 @@
     {0, 255, 0}, {0, 255, 255}, {255, 255, 0}, {255, 255, 255}
 }).
 
--spec render_frame(binary(), non_neg_integer(), list(), non_neg_integer()) -> binary().
-render_frame(VideoBuffer, FrameCounter, SortedBorderChanges, CurrentBorder) ->
+-spec render_frame(binary(), boolean(), list(), non_neg_integer()) -> binary().
+render_frame(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder) ->
     <<Bitmap:6144/binary, Attrs:768/binary>> = VideoBuffer,
-    FlashOn = flash_active(FrameCounter),
     Lines = [render_line(Bitmap, Attrs, SortedBorderChanges, CurrentBorder, FlashOn, Y)
              || Y <- lists:seq(0, ?FULL_HEIGHT - 1)],
     list_to_binary(Lines).
@@ -131,8 +130,6 @@ pixel_tstate(X, Y) ->
         RX when RX >= ?BORDER_RIGHT ->
             LineT + 152 + (RX - ?BORDER_RIGHT) div 2
     end.
-
-flash_active(FC) -> (FC div 16) rem 2 =:= 1.
 
 color(Idx, Bright) ->
     element(Idx + 1, case Bright of true -> ?COLORS_BRIGHT; false -> ?COLORS_NORMAL end).

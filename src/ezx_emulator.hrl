@@ -23,7 +23,9 @@
     beeper_module :: module(),
     beeper,
     %% PCM audio output from the last completed frame (binary, S16LE mono).
-    beeper_pcm = <<>>
+    beeper_pcm = <<>>,
+    flash_counter = 0, %Used for flash attribute toggling (0..31)
+    screen = <<>>
 }).
 
 -record(ext_context, {
