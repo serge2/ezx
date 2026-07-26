@@ -165,10 +165,9 @@ load_sna(Machine, Data) ->
         end, {0, Mem}, MemList),
 
     SP = H#sna_header.sp,
-    PC = MemModule:read_word(Mem1, SP),
-    % PCL = MemModule:read_byte(Mem1, SP band 16#FFFF),
-    % PCH = MemModule:read_byte(Mem1, (SP + 1) band 16#FFFF),
-    % PC = (PCH bsl 8) bor PCL,
+    PCL = MemModule:read_byte(Mem1, SP band 16#FFFF),
+    PCH = MemModule:read_byte(Mem1, (SP + 1) band 16#FFFF),
+    PC = (PCH bsl 8) bor PCL,
     AF = H#sna_header.af,
     BC = H#sna_header.bc,
     DE = H#sna_header.de,

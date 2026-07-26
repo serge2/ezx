@@ -93,7 +93,7 @@ init(_Options) ->
     Cmd = "aplay -t raw -f S16_LE -r 44100 -c 1 --buffer-size=441 -q",
     AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
 
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_virtual_machine(),
     Machine1 = run_initial_frames(Machine0, 50),
 
     Now = erlang:monotonic_time(microsecond),
@@ -305,7 +305,7 @@ handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected
                             ".sna" ->
                                 ezx_emulator:load_sna(State#state.machine, Data);
                             ".tap" -> 
-                                Machine0 = ezx_emulator:init(),
+                                Machine0 = init_virtual_machine(),
                                 Machine1 = run_initial_frames(Machine0, 50),
                                 ezx_emulator:load_tap(Machine1, Data);
                             _ ->
@@ -370,7 +370,7 @@ terminate(_Reason, #state{frame = Frame, aplay_port = Port}) ->
 %% --- Internal ---
 
 do_reset(State) ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_virtual_machine(),
     Machine1 = run_initial_frames(Machine0, 50),
     Now = erlang:monotonic_time(microsecond),
     {noreply, State#state{machine = Machine1, frame_count = 50,
@@ -448,3 +448,12 @@ run_initial_frames(Machine, N) ->
     Machine2 = ezx_emulator:run_frame(Machine),
     run_initial_frames(Machine2, N - 1).
 
+init_virtual_machine() ->
+    RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
+    catch error:badarg ->
+        %% Fallback: priv is a sibling of ebin in the OTP lib structure
+        BeamDir = filename:dirname(code:which(?MODULE)),
+        filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
+    end,
+    {ok, Rom} = file:read_file(RomPath),
+    ezx_emulator:init(z80_cpu, ezx_memory_48_array4, ezx_video2, ezx_keyboard, ezx_beeper, Rom).

@@ -106,9 +106,8 @@ resolve_color([{T, Color} | Rest], _CB, TState) when T =< TState ->
 resolve_color(Changes, CB, _TState) -> {CB, Changes}.
 
 find_color([], _TState, Default) -> Default;
-find_color([{T, Color} | Rest], TState, _) when T =< TState ->
-    find_color(Rest, TState, Color);
-find_color(_, _, Default) -> Default.
+find_color([{T, Color} | _Rest], TState, _Default) when T =< TState -> Color;
+find_color([_ | Rest], TState, Default) -> find_color(Rest, TState, Default).
 
 attr_colors(AttrByte, FlashOn) ->
     Ink = AttrByte band 16#07,
