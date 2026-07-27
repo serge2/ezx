@@ -16,7 +16,6 @@
     load_program/3,
     load_sna/2,
     load_tap/2,
-    reset/1,
     set_pc/2,
     set_keyboard/2,
     press_key/2,
@@ -190,24 +189,6 @@ load_sna(Machine, Data) ->
         cpu = Cpu1,
         border_color = H#sna_header.border
     }.
-
-%% @doc Reset machine to a fresh boot state (ROM loaded, memory zeroed).
--spec reset(#machine_state{}) -> #machine_state{}.
-reset(Machine) ->
-    RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
-    catch error:badarg ->
-        BeamDir = filename:dirname(code:which(?MODULE)),
-        filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
-    end,
-    {ok, Rom} = file:read_file(RomPath),
-    init(
-        Machine#machine_state.cpu_module,
-        Machine#machine_state.memory_module,
-        Machine#machine_state.video_module,
-        Machine#machine_state.keyboard_module,
-        Machine#machine_state.beeper_module,
-        Rom
-    ).
 
 %% @doc Load a TAP file using tape traps.
 -spec load_tap(#machine_state{}, binary()) -> #machine_state{}.
