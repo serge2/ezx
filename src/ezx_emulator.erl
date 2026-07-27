@@ -42,7 +42,7 @@ init() ->
         filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
     end,
     {ok, Rom} = file:read_file(RomPath),
-    init(z80_cpu, ezx_memory_48, ezx_video2, ezx_keyboard, ezx_beeper, Rom).
+    init(z80_cpu, ezx_memory_48, ezx_screen, ezx_keyboard, ezx_beeper, Rom).
 
 %% @doc Create a new machine state with initialized CPU and memory components.
 -spec init(module(), module(), module(), module(), module(), binary()) -> #machine_state{}.

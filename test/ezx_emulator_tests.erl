@@ -189,7 +189,7 @@ run_frame_border_stripes_test() ->
     CB = M3#machine_state.border_color,
     ChangesSorted = lists:keysort(1, Changes),
     VB = ezx_memory_48:read_block(Mem, 16384, 6912),
-    RGB = ezx_video2:render_frame(VB, 0, ChangesSorted, CB),
+    RGB = ezx_screen:render_frame(VB, false, ChangesSorted, CB),
 
     Palette = {
         {0, 0, 0}, {0, 0, 215}, {215, 0, 0}, {215, 0, 215},
