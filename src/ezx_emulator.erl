@@ -2,8 +2,8 @@
 
 -include("z80_records.hrl").
 -include("ezx_emulator.hrl").
--include("format/sna.hrl").
--include("format/tap.hrl").
+-include("lib/sna.hrl").
+-include("lib/tap.hrl").
 -include("input/ezx_keyboard.hrl").
 
 -export([
