@@ -5,7 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 machine_step_advances_state_test() ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_machine(),
     Program = #{16#4000 => 16#00},
     Machine1 = ezx_emulator:load_program(Machine0, Program),
     Machine1b = ezx_emulator:set_pc(Machine1, 16#4000),
@@ -15,7 +15,7 @@ machine_step_advances_state_test() ->
     ?assertEqual(4, Machine2#machine_state.t_states).
 
 machine_run_until_tstates_test() ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_machine(),
     Program = #{16#4000 => 16#00, 16#4001 => 16#00, 16#4002 => 16#00},
     Machine1 = ezx_emulator:load_program(Machine0, Program),
     Machine1b = ezx_emulator:set_pc(Machine1, 16#4000),
@@ -25,7 +25,7 @@ machine_run_until_tstates_test() ->
     ?assertEqual(12, Machine2#machine_state.t_states).
 
 machine_loads_byte_lists_into_memory_test() ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_machine(),
     Machine1 = ezx_emulator:load_program(Machine0, 16#4000, [16#3E, 16#41]),
     {Byte0, _} = ezx_emulator:read_byte(Machine1, 16#4000),
     ?assertEqual(16#3E, Byte0),
@@ -33,7 +33,7 @@ machine_loads_byte_lists_into_memory_test() ->
     ?assertEqual(16#41, Byte1).
 
 machine_executes_program_from_memory_test() ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_machine(),
     Program = [16#3E, 16#41],
     Machine1 = ezx_emulator:load_program(Machine0, 16#4000, Program),
     Machine1b = ezx_emulator:set_pc(Machine1, 16#4000),
@@ -42,7 +42,7 @@ machine_executes_program_from_memory_test() ->
     ?assertEqual(16#41, z80_cpu:get_reg_byte(a, Machine2#machine_state.cpu)).
 
 machine_state_keeps_cpu_and_memory_separate_test() ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_machine(),
     Machine1 = ezx_emulator:load_program(Machine0, 16#4000, [16#3E, 16#41]),
     ?assertEqual(0, z80_cpu:pc(Machine1#machine_state.cpu)),
     ?assertEqual(16#3E, ezx_memory_48:read_byte(Machine1#machine_state.memory, 16#4000)),
@@ -63,7 +63,7 @@ memory_reset_to_zero_test() ->
 %% --- run_frame tests ---
 
 run_frame_completes_one_frame_test() ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_machine(),
     %% NOP loop at RAM address 0x4000.
     Machine1 = ezx_emulator:load_program(Machine0, #{16#4000 => 16#00}),
     Machine1b = ezx_emulator:set_pc(Machine1, 16#4000),
@@ -71,7 +71,7 @@ run_frame_completes_one_frame_test() ->
     ?assertEqual(0, Machine2#machine_state.t_states).
 
 run_frame_int_fires_test() ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_machine(),
     Machine1 = ezx_emulator:load_program(Machine0, #{16#4000 => 16#FB, 16#4001 => 16#00, 16#4002 => 16#00}),
     Machine1b = ezx_emulator:set_pc(Machine1, 16#4000),
     Machine2 = ezx_emulator:run_frame(Machine1b),
@@ -80,7 +80,7 @@ run_frame_int_fires_test() ->
     ?assert(Pc >= 16#0038).
 
 run_frame_border_changes_cleared_test() ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_machine(),
     Machine1 = ezx_emulator:load_program(Machine0, #{16#4000 => 16#3E, 16#4001 => 16#04, 16#4002 => 16#D3, 16#4003 => 16#FE}),
     Machine1b = ezx_emulator:set_pc(Machine1, 16#4000),
     Machine2 = ezx_emulator:run_frame(Machine1b),
@@ -90,7 +90,7 @@ run_frame_border_changes_cleared_test() ->
     ?assertEqual([{7, 4}], Machine2#machine_state.border_changes).
 
 run_frame_multiple_nops_test() ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_machine(),
     Nops = lists:duplicate(200, 16#00),
     Machine1 = ezx_emulator:load_program(Machine0, 16#4000, Nops),
     Machine1b = ezx_emulator:set_pc(Machine1, 16#4000),
@@ -99,7 +99,7 @@ run_frame_multiple_nops_test() ->
     ?assert(Pc >= 16#0038).
 
 run_frame_two_frames_test() ->
-    Machine0 = ezx_emulator:init(),
+    Machine0 = init_machine(),
     Machine1 = ezx_emulator:load_program(Machine0, #{16#4000 => 16#00}),
     Machine1b = ezx_emulator:set_pc(Machine1, 16#4000),
     Machine2 = ezx_emulator:run_frame(Machine1b),
@@ -141,7 +141,7 @@ run_frame_two_frames_test() ->
 %%   16 × 4032 = 64512 = visible area. Perfect fit.
 
 run_frame_border_stripes_test() ->
-    M0 = ezx_emulator:init(),
+    M0 = init_machine(),
     M0r = ezx_emulator:run_frame(M0),
 
     Pgm = [
@@ -204,3 +204,14 @@ run_frame_border_stripes_test() ->
         ExpectedColor = lists:nth(K + 1, ExpectedColors),
         ?assertEqual(element(ExpectedColor + 1, Palette), {R, G, B})
     end, lists:seq(0, 15)).
+
+%% --- Helpers ---
+
+init_machine() ->
+    RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
+    catch error:badarg ->
+        BeamDir = filename:dirname(code:which(?MODULE)),
+        filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
+    end,
+    {ok, Rom} = file:read_file(RomPath),
+    ezx_emulator:init(z80_cpu, ezx_memory_48, ezx_screen, ezx_keyboard, ezx_beeper, Rom).

@@ -7,7 +7,6 @@
 -include("input/ezx_keyboard.hrl").
 
 -export([
-    init/0,
     init/6,
     step/1,
     run_frame/1,
@@ -33,16 +32,6 @@
 -define(TSTATES_PER_FRAME, 69888).
 -define(INT_TSTATE, 32).
 -define(DEFAULT_BORDER, 1).
-
-init() ->
-    RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
-    catch error:badarg ->
-        %% Fallback: priv is a sibling of ebin in the OTP lib structure
-        BeamDir = filename:dirname(code:which(?MODULE)),
-        filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
-    end,
-    {ok, Rom} = file:read_file(RomPath),
-    init(z80_cpu, ezx_memory_48, ezx_screen, ezx_keyboard, ezx_beeper, Rom).
 
 %% @doc Create a new machine state with initialized CPU and memory components.
 -spec init(module(), module(), module(), module(), module(), binary()) -> #machine_state{}.
@@ -204,8 +193,21 @@ load_sna(Machine, Data) ->
 
 %% @doc Reset machine to a fresh boot state (ROM loaded, memory zeroed).
 -spec reset(#machine_state{}) -> #machine_state{}.
-reset(_Machine) ->
-    init().
+reset(Machine) ->
+    RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
+    catch error:badarg ->
+        BeamDir = filename:dirname(code:which(?MODULE)),
+        filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
+    end,
+    {ok, Rom} = file:read_file(RomPath),
+    init(
+        Machine#machine_state.cpu_module,
+        Machine#machine_state.memory_module,
+        Machine#machine_state.video_module,
+        Machine#machine_state.keyboard_module,
+        Machine#machine_state.beeper_module,
+        Rom
+    ).
 
 %% @doc Load a TAP file using tape traps.
 -spec load_tap(#machine_state{}, binary()) -> #machine_state{}.
