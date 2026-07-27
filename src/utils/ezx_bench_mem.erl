@@ -6,7 +6,6 @@
 -export([
     run/0,
     run/1,
-    run/2,
     compare/0,
     compare/1
 ]).
@@ -35,15 +34,20 @@ compare() -> compare(?DEFAULT_DURATION_SEC).
 -spec compare(pos_integer()) -> ok.
 compare(DurationSec) ->
     Rom = load_rom(),
-    SnaPath = default_sna_path(),
-    case filelib:is_file(SnaPath) of
-        false ->
-            io:format("SNA not found: ~s~nUsing ROM-only mode.~n~n", [SnaPath]),
-            run_rom_only(Rom, DurationSec);
-        true ->
-            {ok, SnaData} = file:read_file(SnaPath),
-            run_with_sna(Rom, SnaData, SnaPath, DurationSec)
-    end.
+    io:format("~n"),
+    io:format("========================================================~n"),
+    io:format("  Memory Backend Benchmark — ROM boot~n"),
+    io:format("  Duration: ~B seconds per backend~n", [DurationSec]),
+    io:format("========================================================~n~n"),
+
+    Results = lists:map(fun({Mod, Desc}) ->
+        io:format("[~s] ~s ...~n", [Mod, Desc]),
+        Data = bench_one(Mod, Rom, DurationSec),
+        {Mod, Desc, Data}
+    end, ?MEM_MODS),
+
+    print_comparison(Results),
+    ok.
 
 %% @doc Quick run with default settings (for erlang shell).
 -spec run() -> ok.
@@ -53,96 +57,36 @@ run() -> run(?DEFAULT_DURATION_SEC).
 -spec run(pos_integer()) -> ok.
 run(DurationSec) -> compare(DurationSec).
 
-%% @doc Quick run for N seconds with explicit SNA path.
--spec run(pos_integer(), string()) -> ok.
-run(DurationSec, SnaPath) ->
-    Rom = load_rom(),
-    {ok, SnaData} = file:read_file(SnaPath),
-    run_with_sna(Rom, SnaData, SnaPath, DurationSec).
-
-%% --- Internal: ROM-only mode ---
-
-run_rom_only(Rom, DurationSec) ->
-    io:format("~n"),
-    io:format("========================================================~n"),
-    io:format("  Memory Backend Benchmark — ROM boot (no SNA)~n"),
-    io:format("  Duration: ~B seconds per backend~n", [DurationSec]),
-    io:format("========================================================~n~n"),
-
-    Results = lists:map(fun({Mod, Desc}) ->
-        io:format("[~s] ~s ...~n", [Mod, Desc]),
-        Data = bench_one(Mod, Rom, undefined, DurationSec),
-        {Mod, Desc, Data}
-    end, ?MEM_MODS),
-
-    print_comparison(Results),
-    ok.
-
-%% --- Internal: SNA mode ---
-
-run_with_sna(Rom, SnaData, SnaPath, DurationSec) ->
-    io:format("~n"),
-    io:format("========================================================~n"),
-    io:format("  Memory Backend Benchmark — ~s~n", [filename:basename(SnaPath)]),
-    io:format("  Duration: ~B seconds per backend~n", [DurationSec]),
-    io:format("========================================================~n~n"),
-
-    Results = lists:map(fun({Mod, Desc}) ->
-        io:format("[~s] ~s ...~n", [Mod, Desc]),
-        Data = bench_one(Mod, Rom, SnaData, DurationSec),
-        {Mod, Desc, Data}
-    end, ?MEM_MODS),
-
-    print_comparison(Results),
-    ok.
-
 %% --- Benchmark a single backend ---
 
-bench_one(MemMod, Rom, SnaData, DurationSec) ->
-    %% Initialize with real ROM, default video/beeper/keyboard.
+bench_one(MemMod, Rom, DurationSec) ->
     M0 = ezx_emulator:init(z80_cpu, MemMod, ezx_screen, ezx_keyboard, ezx_beeper, Rom),
 
-    %% Optionally load SNA snapshot.
-    M1 = case SnaData of
-        undefined -> M0;
-        _ -> ezx_emulator:load_sna(M0, SnaData)
-    end,
+    M1 = warmup(M0, 100),
 
-    %% Warm up: run 100 frames so CPU reaches steady-state code paths.
-    M2 = warmup(M1, 100),
-
-    %% Force GC to get clean baselines.
     erlang:garbage_collect(),
 
-    %% === Phase 1: CPU-only (run_frame) ===
-    CpuStats = bench_cpu_timed(M2, deadline_us(DurationSec), []),
+    CpuStats = bench_cpu_timed(M1, deadline_us(DurationSec), []),
 
-    %% Force GC between phases.
     erlang:garbage_collect(),
 
-    %% === Phase 2: CPU + render_frame ===
-    %% Reset state for fair comparison.
-    M3 = case SnaData of
-        undefined -> ezx_emulator:init(z80_cpu, MemMod, ezx_screen, ezx_keyboard, ezx_beeper, Rom);
-        _ -> ezx_emulator:load_sna(ezx_emulator:init(z80_cpu, MemMod, ezx_screen, ezx_keyboard, ezx_beeper, Rom), SnaData)
-    end,
-    M4 = warmup(M3, 100),
+    M2 = ezx_emulator:init(z80_cpu, MemMod, ezx_screen, ezx_keyboard, ezx_beeper, Rom),
+    M3 = warmup(M2, 100),
 
-    %% Force GC before full-phase timing.
     erlang:garbage_collect(),
 
-    FullStats = bench_full_timed(MemMod, M4, deadline_us(DurationSec), [], []),
+    FullStats = bench_full_timed(MemMod, M3, deadline_us(DurationSec), [], []),
 
     %% Force GC before read_block benchmark.
     erlang:garbage_collect(),
 
     %% === Phase 3: Video memory read_block throughput ===
-    Mem4 = M4#machine_state.memory,
-    MemModRef = M4#machine_state.memory_module,
-    VideoStats = bench_read_block(MemModRef, Mem4, 16384, 6912, 10000),
+    Mem3 = M3#machine_state.memory,
+    MemModRef = M3#machine_state.memory_module,
+    VideoStats = bench_read_block(MemModRef, Mem3, 16384, 6912, 10000),
 
     %% Collect final CPU state for correctness check.
-    FinalCpu = M2#machine_state.cpu,
+    FinalCpu = M3#machine_state.cpu,
     FinalState = #{
         pc   => z80_cpu:pc(FinalCpu),
         sp   => FinalCpu#cpu_state.sp,
@@ -152,7 +96,7 @@ bench_one(MemMod, Rom, SnaData, DurationSec) ->
         hl   => (FinalCpu#cpu_state.h bsl 8) bor FinalCpu#cpu_state.l,
         ix   => (FinalCpu#cpu_state.ixh bsl 8) bor FinalCpu#cpu_state.ixl,
         iy   => (FinalCpu#cpu_state.iyh bsl 8) bor FinalCpu#cpu_state.iyl,
-        frames => M2#machine_state.flash_counter
+        frames => M3#machine_state.flash_counter
     },
 
     #{cpu_only => CpuStats, full => FullStats, video_read => VideoStats, state => FinalState}.
@@ -363,16 +307,3 @@ load_rom() ->
     end,
     {ok, Rom} = file:read_file(RomPath),
     Rom.
-
-default_sna_path() ->
-    %% Try relative to project root first, then common locations.
-    Candidates = [
-        filename:join(["..", "Spectrum", "Games", "s",
-                       "Saboteur! (1985)(Durell).sna"]),
-        filename:join([os:getenv("HOME"), "Spectrum", "Games", "s",
-                       "Saboteur! (1985)(Durell).sna"])
-    ],
-    case [P || P <- Candidates, filelib:is_file(P)] of
-        [Found | _] -> Found;
-        [] -> "Saboteur! (1985)(Durell).sna"
-    end.
