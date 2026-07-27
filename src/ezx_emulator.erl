@@ -14,7 +14,6 @@
     render_beeper/1,
     load_sna/2,
     load_tap/2,
-    set_pc/2,
     set_keyboard/2,
     press_key/2,
     release_key/2,
@@ -97,10 +96,6 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
         beeper = BeeperModule:init(),
         keyboard = KeyboardModule:default()
     }.
-
--spec set_pc(#machine_state{}, non_neg_integer()) -> #machine_state{}.
-set_pc(#machine_state{cpu = Cpu} = Machine, Addr) ->
-    Machine#machine_state{cpu = Cpu#cpu_state{pc = Addr}}.
 
 %% @doc Update the keyboard matrix state.
 -spec set_keyboard(#machine_state{}, tuple()) -> #machine_state{}.
