@@ -12,8 +12,6 @@
     run_frame/1,
     render_frame/1,
     render_beeper/1,
-    load_program/2,
-    load_program/3,
     load_sna/2,
     load_tap/2,
     set_pc/2,
@@ -99,19 +97,6 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
         beeper = BeeperModule:init(),
         keyboard = KeyboardModule:default()
     }.
-
-%% @doc Load a program into memory starting at address 0.
--spec load_program(#machine_state{}, [byte()] | map()) -> #machine_state{}.
-load_program(Machine, Program) when is_list(Program) ->
-    load_program(Machine, 0, Program);
-load_program(Machine, Program) when is_map(Program) ->
-    maps:fold(fun(Addr, Byte, M) ->
-        write_byte(M, Addr, Byte)
-    end, Machine, Program).
-
--spec load_program(#machine_state{}, non_neg_integer(), [byte()]) -> #machine_state{}.
-load_program(Machine, BaseAddr, Program) when is_list(Program) ->
-    load_program(Machine, maps:from_list(lists:enumerate(BaseAddr, Program))).
 
 -spec set_pc(#machine_state{}, non_neg_integer()) -> #machine_state{}.
 set_pc(#machine_state{cpu = Cpu} = Machine, Addr) ->
