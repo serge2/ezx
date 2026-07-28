@@ -9,7 +9,7 @@ init_virtual_machine() ->
         filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
     end,
     {ok, Rom} = file:read_file(RomPath),
-    ezx_emulator:init(z80_cpu, ezx_memory_48_pages512, ezx_screen, ezx_keyboard, ezx_beeper, Rom).
+    ezx_emulator:init(z80_cpu, ezx_memory_48_pages512, ezx_screen, ezx_keyboard, ezx_beeper2, Rom).
 
 run_initial_frames(Machine, 0) -> Machine;
 run_initial_frames(Machine, N) ->
