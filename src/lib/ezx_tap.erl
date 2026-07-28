@@ -31,6 +31,8 @@
 %% Blocks with insufficient data for the declared length are skipped.
 -spec parse_blocks(binary()) -> tap_blocks().
 parse_blocks(<<>>) -> [];
+parse_blocks(<<0:16/little, Rest/binary>>) ->
+    parse_blocks(Rest);
 parse_blocks(<<Len:16/little, Flag:8, PayloadAndChecksum/binary>> = _Data)
   when byte_size(PayloadAndChecksum) >= Len - 1 ->
     PayloadLen = Len - 2,

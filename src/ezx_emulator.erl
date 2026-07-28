@@ -34,13 +34,13 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
     MemReadFun =
         fun(ExtContext, Addr) ->
             Memory = ExtContext#ext_context.memory,
-            Byte = MemModule:read_byte(Memory, Addr band 16#ffff),
+            Byte = MemModule:read_byte(Memory, Addr),
             {Byte, ExtContext}
         end,
     MemWriteFun =
         fun(ExtContext, Addr, Byte) ->
             Memory = ExtContext#ext_context.memory,
-            NewMem = MemModule:write_byte(Memory, Addr band 16#ffff, Byte band 16#ff),
+            NewMem = MemModule:write_byte(Memory, Addr, Byte),
             ExtContext#ext_context{memory = NewMem}
         end,
     PortReadFun =
@@ -113,67 +113,83 @@ release_key(Machine, OrigKey) ->
     Machine#machine_state{keyboard = NewKB}.
 
 %% @doc Load a 48K SNA snapshot.
--spec load_sna(#machine_state{}, binary()) -> #machine_state{}.
+-spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
 load_sna(Machine, Data) ->
-    H = ezx_sna:parse(Data),
-    MemModule = Machine#machine_state.memory_module,
-    Mem = Machine#machine_state.memory,
+    try ezx_sna:parse(Data) of
+        H ->
+            MemModule = Machine#machine_state.memory_module,
+            Mem = Machine#machine_state.memory,
 
-    MemList = binary:bin_to_list(H#sna_header.mem),
-    {_FinalOffset, Mem1} = lists:foldl(
-        fun(Byte, {Offset, MemAcc}) ->
-            Addr = 16384 + Offset,
-            {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
-        end, {0, Mem}, MemList),
+            MemList = binary:bin_to_list(H#sna_header.mem),
+            {_FinalOffset, Mem1} = lists:foldl(
+                fun(Byte, {Offset, MemAcc}) ->
+                    Addr = 16384 + Offset,
+                    {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
+                end, {0, Mem}, MemList),
 
-    SP = H#sna_header.sp,
-    PCL = MemModule:read_byte(Mem1, SP band 16#FFFF),
-    PCH = MemModule:read_byte(Mem1, (SP + 1) band 16#FFFF),
-    PC = (PCH bsl 8) bor PCL,
-    AF = H#sna_header.af,
-    BC = H#sna_header.bc,
-    DE = H#sna_header.de,
-    HL = H#sna_header.hl,
-    IX = H#sna_header.ix,
-    IY = H#sna_header.iy,
-    AFp = H#sna_header.af_alt,
-    BCp = H#sna_header.bc_alt,
-    DEp = H#sna_header.de_alt,
-    HLp = H#sna_header.hl_alt,
-    Cpu = Machine#machine_state.cpu,
-    IM = H#sna_header.im,
-    Cpu1 = Cpu#cpu_state{
-        i = H#sna_header.i, r = H#sna_header.r,
-        a = AF bsr 8, f = AF band 16#FF,
-        b = BC bsr 8, c = BC band 16#FF,
-        d = DE bsr 8, e = DE band 16#FF,
-        h = HL bsr 8, l = HL band 16#FF,
-        sp = SP, pc = PC,
-        ixh = IX bsr 8, ixl = IX band 16#FF,
-        iyh = IY bsr 8, iyl = IY band 16#FF,
-        iff1 = H#sna_header.iff2, iff2 = H#sna_header.iff2,
-        im = IM,
-        a_alt = AFp bsr 8, f_alt = AFp band 16#FF,
-        b_alt = BCp bsr 8, c_alt = BCp band 16#FF,
-        d_alt = DEp bsr 8, e_alt = DEp band 16#FF,
-        h_alt = HLp bsr 8, l_alt = HLp band 16#FF
-    },
-    Machine#machine_state{
-        memory = Mem1,
-        cpu = Cpu1,
-        border_color = H#sna_header.border
-    }.
+            SP = H#sna_header.sp,
+            SP1 = (SP + 2) band 16#FFFF,
+            PCL = MemModule:read_byte(Mem1, SP band 16#FFFF),
+            PCH = MemModule:read_byte(Mem1, (SP + 1) band 16#FFFF),
+            PC = (PCH bsl 8) bor PCL,
+            AF = H#sna_header.af,
+            BC = H#sna_header.bc,
+            DE = H#sna_header.de,
+            HL = H#sna_header.hl,
+            IX = H#sna_header.ix,
+            IY = H#sna_header.iy,
+            AFp = H#sna_header.af_alt,
+            BCp = H#sna_header.bc_alt,
+            DEp = H#sna_header.de_alt,
+            HLp = H#sna_header.hl_alt,
+            Cpu = Machine#machine_state.cpu,
+            IM = H#sna_header.im,
+            Cpu1 = Cpu#cpu_state{
+                i = H#sna_header.i, r = H#sna_header.r,
+                a = AF bsr 8, f = AF band 16#FF,
+                b = BC bsr 8, c = BC band 16#FF,
+                d = DE bsr 8, e = DE band 16#FF,
+                h = HL bsr 8, l = HL band 16#FF,
+                sp = SP1, pc = PC,
+                ixh = IX bsr 8, ixl = IX band 16#FF,
+                iyh = IY bsr 8, iyl = IY band 16#FF,
+                iff1 = H#sna_header.iff2, iff2 = H#sna_header.iff2,
+                im = IM,
+                a_alt = AFp bsr 8, f_alt = AFp band 16#FF,
+                b_alt = BCp bsr 8, c_alt = BCp band 16#FF,
+                d_alt = DEp bsr 8, e_alt = DEp band 16#FF,
+                h_alt = HLp bsr 8, l_alt = HLp band 16#FF
+            },
+            {ok, Machine#machine_state{
+                memory = Mem1,
+                cpu = Cpu1,
+                border_color = H#sna_header.border
+            }}
+    catch
+        error:bad_sna_header ->
+            S = byte_size(Data),
+            {error, {bad_sna_header,
+                     iolist_to_binary(["Expected >= 49179 bytes, got ",
+                                       integer_to_binary(S)])}};
+        C:E:_S ->
+            {error, {parse, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
+    end.
 
 %% @doc Load a TAP file using tape traps.
 -spec load_tap(#machine_state{}, binary()) -> #machine_state{}.
 load_tap(Machine, Data) ->
-    Blocks = ezx_tap:parse_blocks(Data),
-    io:format("TAP: parsed ~p blocks~n", [length(Blocks)]),
-    Q = make_load_queue(),
-    Machine#machine_state{
-        tape_blocks = Blocks,
-        keyboard_queue = Q
-    }.
+    try ezx_tap:parse_blocks(Data) of
+        Blocks ->
+            io:format("TAP: parsed ~p blocks~n", [length(Blocks)]),
+            Q = make_load_queue(),
+            {ok, Machine#machine_state{
+                tape_blocks = Blocks,
+                keyboard_queue = Q
+            }}
+    catch
+        C:E:_S ->
+            {error, {parse, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
+    end.
 
 %% --- Tape trap: intercept LD-BYTES at PC=0x0556 ---
 
@@ -404,21 +420,13 @@ run_frame_1(#machine_state{t_states = StartT} = Machine) ->
 
     %% Reset T-states to 0 (start of next frame).
 
-    % BeeperModule = Machine3#machine_state.beeper_module,
-    % Beeper0 = Machine3#machine_state.beeper,
-    % {PCM, Beeper1} = BeeperModule:flush_frame(Beeper0),
-
     FlashCounter = Machine3#machine_state.flash_counter,
     NewFlashCounter = (FlashCounter + 1) rem 32,
 
-    % Screen = render_frame(Machine3),
     Machine3#machine_state{
         t_states = 0,
-        % beeper = Beeper1,
-        % beeper_pcm = PCM,
         flash_counter = NewFlashCounter
-        % screen = Screen
-    }.
+      }.
 
 %% @doc Render the current frame to a flat RGB binary (352×288×3 bytes).
 %% Extracts screen memory via bulk read_block and passes to a video module.

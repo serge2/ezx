@@ -21,7 +21,7 @@ load_emulator_file(Machine, FilePath) ->
         {ok, Data} ->
             Ext = string:lowercase(filename:extension(FilePath)),
             try
-                NewMachine = case Ext of
+                case Ext of
                     ".sna" ->
                         ezx_emulator:load_sna(Machine, Data);
                     ".tap" ->
@@ -30,10 +30,6 @@ load_emulator_file(Machine, FilePath) ->
                         ezx_emulator:load_tap(Machine1, Data);
                     _ ->
                         {error, {unknown_type, Ext}}
-                end,
-                case NewMachine of
-                    {error, _} = Err -> Err;
-                    _ -> {ok, NewMachine}
                 end
             catch
                 C:E:S ->
