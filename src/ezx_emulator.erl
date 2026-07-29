@@ -116,6 +116,8 @@ release_key(Machine, OrigKey) ->
 -spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
 load_sna(Machine, Data) ->
     try ezx_sna:parse(Data) of
+        #sna_header{is_128k = true} ->
+            {error, {unsupported_version, <<"128K SNA cannot be loaded on a 48K machine">>}};
         H ->
             MemModule = Machine#machine_state.memory_module,
             Mem = Machine#machine_state.memory,
@@ -186,6 +188,8 @@ load_sna(Machine, Data) ->
 load_z80(Machine, Data) ->
     MemModule = Machine#machine_state.memory_module,
     try ezx_z80:parse(Data) of
+        #z80_header{is_128k = true} ->
+            {error, {unsupported_version, <<"128K Z80 snapshot cannot be loaded on a 48K machine">>}};
         H ->
             Mem = Machine#machine_state.memory,
             MemList = binary:bin_to_list(H#z80_header.mem),

@@ -29,6 +29,11 @@
 %%
 %% On load, the emulator reads the return address from [SP] to set PC.
 %%
+%% 128K extended SNA (used by e.g. Fuse):
+%%   After 49152 bytes of RAM:
+%%     4 bytes extended header: PC (le), p7FFD, AY flag
+%%     5 x 16384 bytes extra pages (banks not covered by the 48KB dump)
+%%
 %% @end
 -module(ezx_sna).
 
@@ -39,11 +44,15 @@
 -type sna_header() :: #sna_header{}.
 -export_type([sna_header/0]).
 
-%% @doc Parse a 48K SNA snapshot binary into a header record.
+-define(STANDARD_SIZE, 27 + 49152).
+
+%% @doc Parse a SNA snapshot binary into a header record.
 %%
+%% Returns `#sna_header{is_128k = false}' for standard 48K SNA,
+%% `#sna_header{is_128k = true}' for 128K extended SNA.
 %% Raises `bad_sna_header' if the binary is smaller than 49179 bytes.
 -spec parse(binary()) -> sna_header().
-parse(Data) when byte_size(Data) < 27 + 49152 ->
+parse(Data) when byte_size(Data) < ?STANDARD_SIZE ->
     error(bad_sna_header);
 parse(Data) ->
     <<I:8,
@@ -52,13 +61,25 @@ parse(Data) ->
       IFF2:8, R:8,
       AF:16/little, SP:16/little,
       IM:8, Border:8,
-      Mem:49152/bytes>> = Data,
-    #sna_header{
+      Mem:49152/bytes, Rest/bytes>> = Data,
+    Header = #sna_header{
         i = I, r = R,
         af = AF, bc = BC, de = DE, hl = HL,
         ix = IX, iy = IY,
         af_alt = AFa, bc_alt = BCa, de_alt = DEa, hl_alt = HLa,
         sp = SP, iff2 = IFF2, im = IM,
         border = Border,
-        mem = Mem
-    }.
+        mem = Mem,
+        is_128k = false
+    },
+    parse_extended(Header, Rest).
+
+%% @private
+parse_extended(Header, <<>>) ->
+    Header;
+parse_extended(Header, <<PCL:8, PCH:8, P7FFD:8, AYFlag:8, Extra/binary>>)
+  when byte_size(Extra) >= 5 * 16384 ->
+    PC = (PCH bsl 8) bor PCL,
+    Header#sna_header{is_128k = true, pc = PC, p7ffd = P7FFD, ay_flag = AYFlag, raw_extra = Extra};
+parse_extended(Header, _Rest) ->
+    Header.

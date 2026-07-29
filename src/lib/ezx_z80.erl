@@ -68,6 +68,7 @@ parse(<<A:8, F:8, BC:16/little, HL:16/little, PC:16/little, SP:16/little,
         iff1 = IFF1, iff2 = IFF2,
         im = IM,
         p7ffd = 0,
+        is_128k = false,
         pages = #{}
     },
     case PC of
@@ -107,7 +108,8 @@ parse_v2v3(#z80_header{} = H, <<ExtraLen:16/little, Rest/binary>>) ->
     Version = case ExtraLen of 23 -> 2; _ -> 3 end,
     Pages = parse_blocks(BlockData),
     Mem = build_48k_memory(Pages),
-    H1#z80_header{version = Version, mem = Mem, pages = Pages}.
+    Is128K = (Version =:= 3) andalso H1#z80_header.hw_mode >= 3,
+    H1#z80_header{version = Version, is_128k = Is128K, mem = Mem, pages = Pages}.
 
 %% @doc Parse the extended header section (v2/v3).
 %% Extracts PC, hardware mode, and returns remaining block data.

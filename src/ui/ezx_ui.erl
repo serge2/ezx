@@ -81,7 +81,7 @@ init(_Options) ->
     MachineType = maps:get(machine_type, Cfg0, '128k'),
     EmulatorMenu = wxMenu:new(),
     wxMenu:appendRadioItem(EmulatorMenu, ?MENU_MACHINE_BASE + 0, "ZX Spectrum 48K"),
-    wxMenu:appendRadioItem(EmulatorMenu, ?MENU_MACHINE_BASE + 1, "ZX Spectrum 128"),
+    wxMenu:appendRadioItem(EmulatorMenu, ?MENU_MACHINE_BASE + 1, "ZX Spectrum 128K"),
     wxMenuBar:append(MenuBar, EmulatorMenu, "Emulator"),
     ViewMenu = wxMenu:new(),
     wxMenu:append(ViewMenu, ?MENU_FULLSCREEN, "Fullscreen\tF11", [{help, "Toggle fullscreen mode"}]),
@@ -641,6 +641,7 @@ show_load_error(Frame, File, {error, {Code, Detail}}) ->
     Msg = maps:get(Code, #{
         file_not_found       => "File not found or could not be read.",
         unsupported_format   => "Unsupported file format.",
+        unsupported_version  => "This snapshot requires a 128K machine.",
         bad_sna_header       => "Invalid or corrupted SNA snapshot.",
         sna_load_failed      => "Unexpected error while loading SNA snapshot.",
         bad_z80_header       => "Invalid or corrupted Z80 snapshot.",

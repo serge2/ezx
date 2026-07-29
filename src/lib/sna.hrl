@@ -15,5 +15,10 @@
     iff2     :: byte(),
     im       :: byte(),
     border   :: byte(),
-    mem      :: binary()
+    mem      :: binary(),
+    is_128k  :: boolean(),
+    pc       :: integer() | undefined,
+    p7ffd    :: byte() | undefined,
+    ay_flag  :: byte() | undefined,
+    raw_extra :: binary() | undefined
 }).

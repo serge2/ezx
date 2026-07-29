@@ -349,6 +349,43 @@ load_z80_v2_test() ->
     {ok, Machine1} = ezx_emulator:load_z80(Machine, Data),
     ?assertEqual(16#1234, z80_cpu:pc(Machine1#machine_state.cpu)).
 
+load_z80_v3_48k_test() ->
+    Machine = init_machine(),
+    Header = <<0:30/unit:8>>,
+    ExtraLen = 54,
+    ExtHeader = <<16#34, 16#12,
+                  16#00,         %% HwMode=0 (48K)
+                  16#00,         %% p7FFD=0
+                  0:50/unit:8>>, %% remaining padding
+    Page8 = <<0:16384/unit:8>>,
+    Page4 = <<0:16384/unit:8>>,
+    Page5 = <<0:16384/unit:8>>,
+    Block8 = <<16#FF, 16#FF, 8, Page8/binary>>,
+    Block4 = <<16#FF, 16#FF, 4, Page4/binary>>,
+    Block5 = <<16#FF, 16#FF, 5, Page5/binary>>,
+    Data = <<Header/binary, ExtraLen:16/little, ExtHeader/binary,
+             Block8/binary, Block4/binary, Block5/binary>>,
+    {ok, Machine1} = ezx_emulator:load_z80(Machine, Data),
+    ?assertEqual(16#1234, z80_cpu:pc(Machine1#machine_state.cpu)).
+
+load_z80_v3_128k_on_48k_rejected_test() ->
+    Machine = init_machine(),
+    Header = <<0:30/unit:8>>,
+    ExtraLen = 54,
+    ExtHeader = <<16#00, 16#00,
+                  16#03,         %% HwMode=3 (128K)
+                  16#10,         %% p7FFD=0x10
+                  0:50/unit:8>>,
+    Page8 = <<0:16384/unit:8>>,
+    Page4 = <<0:16384/unit:8>>,
+    Page5 = <<0:16384/unit:8>>,
+    Block8 = <<16#FF, 16#FF, 8, Page8/binary>>,
+    Block4 = <<16#FF, 16#FF, 4, Page4/binary>>,
+    Block5 = <<16#FF, 16#FF, 5, Page5/binary>>,
+    Data = <<Header/binary, ExtraLen:16/little, ExtHeader/binary,
+             Block8/binary, Block4/binary, Block5/binary>>,
+    {error, {unsupported_version, _}} = ezx_emulator:load_z80(Machine, Data).
+
 %% --- TAP loading error tests ---
 
 load_tap_empty_binary_test() ->

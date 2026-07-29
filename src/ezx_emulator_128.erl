@@ -21,6 +21,7 @@
 -include("z80_records.hrl").
 -include("ezx_emulator.hrl").
 -include("lib/z80.hrl").
+-include("lib/sna.hrl").
 -include("input/ezx_keyboard.hrl").
 
 -define(TSTATES_PER_FRAME, 69888).
@@ -105,7 +106,13 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, {Rom0, Rom
 -spec load_z80(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
 load_z80(Machine, Data) ->
     try ezx_z80:parse(Data) of
-        H ->
+        #z80_header{is_128k = false} ->
+            Mem = Machine#machine_state.memory,
+            MemModule = Machine#machine_state.memory_module,
+
+            Mem0 = MemModule:write_port_7ffd(Mem, 16#10),
+            ezx_emulator:load_z80(Machine#machine_state{memory = Mem0}, Data);
+        #z80_header{is_128k = true} = H ->
             Mem = Machine#machine_state.memory,
             MemModule = Machine#machine_state.memory_module,
 
@@ -171,6 +178,91 @@ load_tap(Machine, Data) ->
             {error, {bad_tap_data, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
     end.
 
+%% @doc Load a .sna snapshot (48K or 128K extended).
+-spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
+load_sna(Machine, Data) ->
+    try ezx_sna:parse(Data) of
+        #sna_header{is_128k = false} ->
+            MemMod = Machine#machine_state.memory_module,
+            Mem = Machine#machine_state.memory,
+            Mem0 = MemMod:write_port_7ffd(Mem, 16#10),
+            ezx_emulator:load_sna(Machine#machine_state{memory = Mem0}, Data);
+        #sna_header{is_128k = true} = H ->
+            P7FFD = H#sna_header.p7ffd,
+            MemModule = Machine#machine_state.memory_module,
+            Mem = Machine#machine_state.memory,
+
+            Mem0 = MemModule:write_port_7ffd(Mem, P7FFD),
+
+            MemList = binary:bin_to_list(H#sna_header.mem),
+            {_, Mem1} = lists:foldl(
+                fun(Byte, {Offset, MemAcc}) ->
+                    Addr = 16384 + Offset,
+                    {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
+                end, {0, Mem0}, MemList),
+
+            Mem2 = case H#sna_header.raw_extra of
+                undefined -> Mem1;
+                Extra -> load_extra_pages(Mem1, P7FFD, Extra)
+            end,
+
+            SP = H#sna_header.sp,
+            {PC, SP_Final} = case H#sna_header.pc of
+                undefined ->
+                    PCL = MemModule:read_byte(Mem2, SP band 16#FFFF),
+                    PCH = MemModule:read_byte(Mem2, (SP + 1) band 16#FFFF),
+                    {(PCH bsl 8) bor PCL, (SP + 2) band 16#FFFF};
+                P -> {P, SP}
+            end,
+            AF = H#sna_header.af,
+            BC = H#sna_header.bc,
+            DE = H#sna_header.de,
+            HL = H#sna_header.hl,
+            IX = H#sna_header.ix,
+            IY = H#sna_header.iy,
+            AFp = H#sna_header.af_alt,
+            BCp = H#sna_header.bc_alt,
+            DEp = H#sna_header.de_alt,
+            HLp = H#sna_header.hl_alt,
+            Cpu = Machine#machine_state.cpu,
+            IM = H#sna_header.im,
+            Cpu1 = Cpu#cpu_state{
+                i = H#sna_header.i, r = H#sna_header.r,
+                a = AF bsr 8, f = AF band 16#FF,
+                b = BC bsr 8, c = BC band 16#FF,
+                d = DE bsr 8, e = DE band 16#FF,
+                h = HL bsr 8, l = HL band 16#FF,
+                sp = SP_Final, pc = PC,
+                ixh = IX bsr 8, ixl = IX band 16#FF,
+                iyh = IY bsr 8, iyl = IY band 16#FF,
+                iff1 = H#sna_header.iff2, iff2 = H#sna_header.iff2,
+                im = IM,
+                a_alt = AFp bsr 8, f_alt = AFp band 16#FF,
+                b_alt = BCp bsr 8, c_alt = BCp band 16#FF,
+                d_alt = DEp bsr 8, e_alt = DEp band 16#FF,
+                h_alt = HLp bsr 8, l_alt = HLp band 16#FF,
+                pending_interrupt = none
+            },
+            {ok, Machine#machine_state{
+                memory = Mem2,
+                cpu = Cpu1,
+                border_color = H#sna_header.border,
+                t_states = 0,
+                border_changes = [],
+                flash_counter = 0,
+                beeper_pcm = <<>>,
+                screen = <<>>
+            }}
+    catch
+        error:bad_sna_header ->
+            S = byte_size(Data),
+            {error, {bad_sna_header,
+                     iolist_to_binary(["Expected >= 49179 bytes, got ",
+                                       integer_to_binary(S)])}};
+        C:E:_S ->
+            {error, {sna_load_failed, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
+    end.
+
 %% --- delegation wrappers ---
 
 %% @doc Execute one CPU instruction.
@@ -188,10 +280,6 @@ render_frame(Machine) -> ezx_emulator:render_frame(Machine).
 %% @doc Render accumulated beeper PCM.
 -spec render_beeper(#machine_state{}) -> {binary(), #machine_state{}}.
 render_beeper(Machine) -> ezx_emulator:render_beeper(Machine).
-
-%% @doc Load a .sna snapshot (48K format).
--spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
-load_sna(Machine, Data) -> ezx_emulator:load_sna(Machine, Data).
 
 %% @doc Press a keyboard key.
 -spec press_key(#machine_state{}, non_neg_integer()) -> #machine_state{}.
@@ -222,6 +310,25 @@ read_word(Machine, Addr) -> ezx_emulator:read_word(Machine, Addr).
 write_word(Machine, Addr, Word) -> ezx_emulator:write_word(Machine, Addr, Word).
 
 %% --- internal ---
+
+%% @doc Write extra 16KB pages into banks not covered by the 48KB dump.
+-spec load_extra_pages(any(), byte(), binary()) -> any().
+load_extra_pages(Mem, P7FFD, Extra) ->
+    ScreenBank = case (P7FFD bsr 3) band 1 of 0 -> 5; 1 -> 7 end,
+    Slot3Bank = P7FFD band 16#07,
+    Covered = sets:from_list([2, ScreenBank, Slot3Bank]),
+    Banks = [B || B <- lists:seq(0, 7), not sets:is_element(B, Covered)],
+    load_pages(Mem, Banks, Extra).
+
+load_pages(Mem, [], _Extra) -> Mem;
+load_pages(Mem, [Bank | Banks], Extra) ->
+    case Extra of
+        <<PageData:16384/binary, Rest/binary>> ->
+            Mem1 = ezx_memory_128:write_bank_block(Mem, Bank, PageData),
+            load_pages(Mem1, Banks, Rest);
+        _ ->
+            Mem
+    end.
 
 %% @doc Write Z80 memory pages (3-10) into 128K RAM banks (0-7).
 -spec write_128k_pages(any(), #z80_header{}) -> any().
