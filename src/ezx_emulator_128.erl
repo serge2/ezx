@@ -27,8 +27,8 @@
 -define(INT_TSTATE, 32).
 
 %% @doc Create a 128K machine state with 0x7FFD paging support.
--spec init(module(), module(), module(), module(), module(), binary()) -> #machine_state{}.
-init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
+-spec init(module(), module(), module(), module(), module(), {binary(), binary()}) -> #machine_state{}.
+init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, {Rom0, Rom1}) ->
     MemReadFun =
         fun(ExtContext, _TState, Addr) ->
             Memory = ExtContext#ext_context.memory,
@@ -96,7 +96,7 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
         keyboard_module = KeyboardModule,
         beeper_module = BeeperModule,
         cpu = Cpu0,
-        memory = MemModule:new(Rom),
+        memory = MemModule:new(Rom0, Rom1),
         beeper = BeeperModule:init(),
         keyboard = KeyboardModule:default()
     }.
@@ -107,7 +107,7 @@ load_z80(Machine, Data) ->
     try ezx_z80:parse(Data) of
         H ->
             Mem = Machine#machine_state.memory,
-            MemModule = ezx_memory_128,
+            MemModule = Machine#machine_state.memory_module,
 
             Mem1 = write_128k_pages(Mem, H),
             Mem2 = MemModule:write_port_7ffd(Mem1, H#z80_header.p7ffd),

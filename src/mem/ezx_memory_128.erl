@@ -1,13 +1,12 @@
 -module(ezx_memory_128).
 
 -export([
-    new/1,
+    new/2,
     read_byte/2,
     read_block/3,
     write_byte/3,
     write_port_7ffd/2,
     get_p7ffd/1,
-    write_bank/4,
     write_bank_block/3
 ]).
 
@@ -30,21 +29,15 @@
 -define(ROM1_IDX, 1).
 -define(BANK_SIZE, 16384).
 
--spec new(binary()) -> state().
-new(Rom) ->
+-spec new(binary(), binary()) -> state().
+new(Rom0, Rom1) ->
     Ram = <<0:(8 * ?BANK_SIZE)/unit:8>>,
-    case byte_size(Rom) of
-        32768 ->
-            <<R0:?BANK_SIZE/binary, R1:?BANK_SIZE/binary>> = Rom,
-            #mem128{ram = Ram, rom0 = R0, rom1 = R1, p7ffd = 0};
-        N when N =< 16384 ->
-            R1 = <<Rom/binary, 0:(?BANK_SIZE - N)/unit:8>>,
-            #mem128{ram = Ram, rom0 = R1, rom1 = R1, p7ffd = 16#10};
-        N ->
-            <<R0:?BANK_SIZE/binary, R1_bin/binary>> = Rom,
-            R1 = <<R1_bin/binary, 0:(2 * ?BANK_SIZE - N)/unit:8>>,
-            #mem128{ram = Ram, rom0 = R0, rom1 = R1, p7ffd = 0}
-    end.
+    R0 = pad_16k(Rom0),
+    R1 = pad_16k(Rom1),
+    #mem128{ram = Ram, rom0 = R0, rom1 = R1, p7ffd = 0}.
+
+pad_16k(Bin) when byte_size(Bin) >= ?BANK_SIZE -> binary:part(Bin, 0, ?BANK_SIZE);
+pad_16k(Bin) -> <<Bin/binary, 0:(?BANK_SIZE - byte_size(Bin))/unit:8>>.
 
 -spec read_byte(state(), non_neg_integer()) -> byte().
 read_byte(#mem128{ram = Ram, rom0 = R0, rom1 = R1, p7ffd = P}, Addr) ->
@@ -104,11 +97,6 @@ write_port_7ffd(#mem128{} = State, Value) ->
 
 -spec get_p7ffd(state()) -> byte().
 get_p7ffd(#mem128{p7ffd = P}) -> P.
-
-%% @doc Write a single byte into a specific RAM bank, bypassing p7FFD mapping.
--spec write_bank(state(), non_neg_integer(), non_neg_integer(), byte()) -> state().
-write_bank(#mem128{ram = Ram} = State, Bank, Offset, Byte) ->
-    State#mem128{ram = write_at(Ram, Bank * ?BANK_SIZE + Offset, Byte)}.
 
 %% @doc Write a 16384-byte block into a specific RAM bank.
 -spec write_bank_block(state(), non_neg_integer(), binary()) -> state().

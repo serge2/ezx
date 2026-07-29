@@ -1,4 +1,0 @@
--define(MENU_RECENT_LABEL, 7000).
--define(MENU_RECENT_BASE, 7001).
--define(MAX_RECENT, 10).
--define(MENU_SCALE_BASE, 7050).  %% 7050=1x, 7051=2x, 7052=3x, 7053=4x
