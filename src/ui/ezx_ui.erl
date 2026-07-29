@@ -457,7 +457,7 @@ do_reset(State) ->
 
 handle_open_file(State) ->
     Dialog = wxFileDialog:new(State#state.frame, [{message, "Load snapshot or tape"},
-                                                   {wildCard, "ZX Spectrum files (*.sna,*.tap)|*.sna;*.tap|SNA files (*.sna)|*.sna|TAP files (*.tap)|*.tap"},
+                                                   {wildCard, "ZX Spectrum files (*.sna,*.z80,*.tap)|*.sna;*.z80;*.tap|SNA files (*.sna)|*.sna|Z80 files (*.z80)|*.z80|TAP files (*.tap)|*.tap"},
                                                    {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}]),
     case wxFileDialog:showModal(Dialog) of
         ?wxID_OK ->
@@ -552,6 +552,8 @@ show_load_error(Frame, File, {error, {Code, Detail}}) ->
         unsupported_format   => "Unsupported file format.",
         bad_sna_header       => "Invalid or corrupted SNA snapshot.",
         sna_load_failed      => "Unexpected error while loading SNA snapshot.",
+        bad_z80_header       => "Invalid or corrupted Z80 snapshot.",
+        z80_load_failed      => "Unexpected error while loading Z80 snapshot.",
         bad_tap_data         => "Invalid or corrupted TAP file.",
         tap_load_failed      => "Unexpected error while loading TAP file."
     }, "Unknown error."),

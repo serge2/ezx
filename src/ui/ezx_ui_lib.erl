@@ -1,7 +1,10 @@
 -module(ezx_ui_lib).
 
+-include("ezx_emulator.hrl").
+
 -export([init_virtual_machine/0, run_initial_frames/2, load_emulator_file/2]).
 
+-spec init_virtual_machine() -> #machine_state{}.
 init_virtual_machine() ->
     RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
     catch error:badarg ->
@@ -11,12 +14,14 @@ init_virtual_machine() ->
     {ok, Rom} = file:read_file(RomPath),
     ezx_emulator:init(z80_cpu, ezx_memory_48_pages512, ezx_screen, ezx_keyboard, ezx_beeper2, Rom).
 
+-spec run_initial_frames(#machine_state{}, non_neg_integer()) -> #machine_state{}.
 run_initial_frames(Machine, 0) -> Machine;
 run_initial_frames(Machine, N) ->
     Machine2 = ezx_emulator:run_frame(Machine),
     {_PCM, Machine3} = ezx_emulator:render_beeper(Machine2),
     run_initial_frames(Machine3, N - 1).
 
+-spec load_emulator_file(#machine_state{}, string()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
 load_emulator_file(Machine, FilePath) ->
     case file:read_file(FilePath) of
         {ok, Data} ->
@@ -24,6 +29,8 @@ load_emulator_file(Machine, FilePath) ->
             case Ext of
                 ".sna" ->
                     ezx_emulator:load_sna(Machine, Data);
+                ".z80" ->
+                    ezx_emulator:load_z80(Machine, Data);
                 ".tap" ->
                     Machine0 = init_virtual_machine(),
                     Machine1 = run_initial_frames(Machine0, 50),

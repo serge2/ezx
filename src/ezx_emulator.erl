@@ -3,6 +3,7 @@
 -include("z80_records.hrl").
 -include("ezx_emulator.hrl").
 -include("lib/sna.hrl").
+-include("lib/z80.hrl").
 -include("lib/tap.hrl").
 -include("input/ezx_keyboard.hrl").
 
@@ -13,6 +14,7 @@
     render_frame/1,
     render_beeper/1,
     load_sna/2,
+    load_z80/2,
     load_tap/2,
     press_key/2,
     release_key/2,
@@ -172,6 +174,53 @@ load_sna(Machine, Data) ->
                                        integer_to_binary(S)])}};
         C:E:_S ->
             {error, {sna_load_failed, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
+    end.
+
+%% @doc Load a 48K Z80 snapshot (v1/v2/v3).
+-spec load_z80(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
+load_z80(Machine, Data) ->
+    try ezx_z80:parse(Data) of
+        H ->
+            MemModule = Machine#machine_state.memory_module,
+            Mem = Machine#machine_state.memory,
+
+            MemList = binary:bin_to_list(H#z80_header.mem),
+            {_FinalOffset, Mem1} = lists:foldl(
+                fun(Byte, {Offset, MemAcc}) ->
+                    Addr = 16384 + Offset,
+                    {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
+                end, {0, Mem}, MemList),
+
+            Cpu = Machine#machine_state.cpu,
+            Cpu1 = Cpu#cpu_state{
+                a = H#z80_header.a, f = H#z80_header.f,
+                b = H#z80_header.bc bsr 8, c = H#z80_header.bc band 16#FF,
+                d = H#z80_header.de bsr 8, e = H#z80_header.de band 16#FF,
+                h = H#z80_header.hl bsr 8, l = H#z80_header.hl band 16#FF,
+                sp = H#z80_header.sp, pc = H#z80_header.pc,
+                ixh = H#z80_header.ix bsr 8, ixl = H#z80_header.ix band 16#FF,
+                iyh = H#z80_header.iy bsr 8, iyl = H#z80_header.iy band 16#FF,
+                iff1 = H#z80_header.iff1, iff2 = H#z80_header.iff2,
+                im = H#z80_header.im,
+                i = H#z80_header.i, r = H#z80_header.r,
+                a_alt = H#z80_header.a_alt, f_alt = H#z80_header.f_alt,
+                b_alt = H#z80_header.bc_alt bsr 8, c_alt = H#z80_header.bc_alt band 16#FF,
+                d_alt = H#z80_header.de_alt bsr 8, e_alt = H#z80_header.de_alt band 16#FF,
+                h_alt = H#z80_header.hl_alt bsr 8, l_alt = H#z80_header.hl_alt band 16#FF
+            },
+            {ok, Machine#machine_state{
+                memory = Mem1,
+                cpu = Cpu1,
+                border_color = H#z80_header.border
+            }}
+    catch
+        error:bad_z80_header ->
+            S = byte_size(Data),
+            {error, {bad_z80_header,
+                     iolist_to_binary(["Expected valid Z80 snapshot, got ",
+                                       integer_to_binary(S), " bytes"])}};
+        C:E:_S ->
+            {error, {z80_load_failed, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
     end.
 
 %% @doc Load a TAP file using tape traps.

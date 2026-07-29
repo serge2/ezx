@@ -246,8 +246,126 @@ load_sna_valid_binary_test() ->
     Data = <<0: (27 + 49152)/unit:8>>,
     {ok, _Machine1} = ezx_emulator:load_sna(Machine, Data).
 
+%% --- Z80 loading tests ---
+
+load_z80_empty_binary_test() ->
+    Machine = init_machine(),
+    {error, {bad_z80_header, _}} = ezx_emulator:load_z80(Machine, <<>>).
+
+load_z80_short_binary_test() ->
+    Machine = init_machine(),
+    Data = <<0:29/unit:8>>,
+    {error, {bad_z80_header, _}} = ezx_emulator:load_z80(Machine, Data).
+
+load_z80_v1_uncompressed_test() ->
+    Machine = init_machine(),
+    Header = build_v1_header(16#100, 0),
+    Data = <<Header/binary, 0:49152/unit:8>>,
+    {ok, Machine1} = ezx_emulator:load_z80(Machine, Data),
+    ?assertEqual(16#100, z80_cpu:pc(Machine1#machine_state.cpu)).
+
+load_z80_v1_compressed_test() ->
+    Machine = init_machine(),
+    Header = build_v1_header(16#200, 16#20),
+    RleParts = lists:duplicate(192, <<16#ED, 16#ED, 16#FF, 16#00>>) ++
+               [<<16#ED, 16#ED, 16#C0, 16#00>>,
+                <<16#00, 16#ED, 16#ED, 16#00>>],
+    RleData = iolist_to_binary(RleParts),
+    Data = <<Header/binary, RleData/binary>>,
+    {ok, Machine1} = ezx_emulator:load_z80(Machine, Data),
+    ?assertEqual(16#200, z80_cpu:pc(Machine1#machine_state.cpu)).
+
+load_z80_v1_sets_registers_test() ->
+    Machine = init_machine(),
+    Header = <<16#12:8, 16#34:8,                   %% A=0x12, F=0x34
+              16#34, 16#56, 16#12, 16#78,           %% BC=0x5634 (B=0x56, C=0x34), HL=0x7812 (H=0x78, L=0x12)
+              16#01, 16#10, 16#00, 16#10,           %% PC=0x1001, SP=0x1000
+              16#01, 16#02,                         %% I=0x01, R=0x02
+              16#00,                                 %% Flags=0
+              16#9A, 16#78,                         %% DE=0x789A (D=0x78, E=0x9A)
+              16#00, 16#00, 16#00, 16#00,           %% BC'=0, DE'=0
+              16#00, 16#00,                         %% HL'=0
+              16#AB, 16#CD,                         %% A'=0xAB, F'=0xCD
+              16#F0, 16#DE, 16#00, 16#BC,           %% IY=0xDEF0, IX=0xBC00
+              16#01, 16#01, 16#01>>,                %% IFF1=1, IFF2=1, IM=1
+    Data = <<Header/binary, 0:49152/unit:8>>,
+    {ok, Machine1} = ezx_emulator:load_z80(Machine, Data),
+    Cpu = Machine1#machine_state.cpu,
+    ?assertEqual(16#12, Cpu#cpu_state.a),
+    ?assertEqual(16#34, Cpu#cpu_state.f),
+    ?assertEqual(16#56, Cpu#cpu_state.b),
+    ?assertEqual(16#34, Cpu#cpu_state.c),
+    ?assertEqual(16#78, Cpu#cpu_state.d),
+    ?assertEqual(16#9A, Cpu#cpu_state.e),
+    ?assertEqual(16#78, Cpu#cpu_state.h),
+    ?assertEqual(16#12, Cpu#cpu_state.l),
+    ?assertEqual(16#1001, z80_cpu:pc(Cpu)),
+    ?assertEqual(16#1000, Cpu#cpu_state.sp),
+    ?assertEqual(16#01, Cpu#cpu_state.i),
+    ?assertEqual(16#02, Cpu#cpu_state.r),
+    ?assertEqual(16#01, Cpu#cpu_state.iff1),
+    ?assertEqual(16#01, Cpu#cpu_state.iff2),
+    ?assertEqual(16#01, Cpu#cpu_state.im),
+    ?assertEqual(16#AB, Cpu#cpu_state.a_alt),
+    ?assertEqual(16#CD, Cpu#cpu_state.f_alt),
+    ?assertEqual(16#DE, Cpu#cpu_state.iyh),
+    ?assertEqual(16#F0, Cpu#cpu_state.iyl),
+    ?assertEqual(16#BC, Cpu#cpu_state.ixh),
+    ?assertEqual(16#00, Cpu#cpu_state.ixl).
+
+load_z80_v1_compressed_trailing_ed_test() ->
+    Machine = init_machine(),
+    Header = build_v1_header(16#300, 16#20),
+    %% 49151 zeros + trailing ED byte
+    %% RLE: 192 × 255 zeros + 191 zeros = 49151 zeros, plus literal ED
+    RleParts = lists:duplicate(192, <<16#ED, 16#ED, 16#FF, 16#00>>) ++
+               [<<16#ED, 16#ED, 16#BF, 16#00>>,
+                <<16#ED, 16#00, 16#00, 16#ED, 16#ED, 16#00>>],
+    RleData = iolist_to_binary(RleParts),
+    Data = <<Header/binary, RleData/binary>>,
+    {ok, Machine1} = ezx_emulator:load_z80(Machine, Data),
+    ?assertEqual(16#300, z80_cpu:pc(Machine1#machine_state.cpu)).
+
+load_z80_v2_test() ->
+    Machine = init_machine(),
+    %% 30-byte header with PC=0 to indicate extended format
+    Header = <<0:8, 0:8, 0:16, 0:16, 0:16, 0:16, 0:8, 0:8, 0:8,
+              0:16, 0:16, 0:16, 0:16, 0:8, 0:8, 0:16, 0:16, 0:8, 0:8, 0:8>>,
+    %% Extended: ExtraLen=23
+    ExtraLen = 23,
+    %% Extended header: PC=0x1234, HwMode=0 (48K), rest = padding
+    ExtHeader = <<16#34, 16#12,  %% PC=0x1234 LE
+                  16#00,         %% HwMode=0 (48K)
+                  0:20/unit:8>>, %% remaining 20 bytes of extended header
+    %% Blocks: 3 raw pages (8, 4, 5) = 0x4000, 0x8000, 0xC000
+    Page8 = <<0:16384/unit:8>>,
+    Page4 = <<0:16384/unit:8>>,
+    Page5 = <<0:16384/unit:8>>,
+    Block8 = <<16#FF, 16#FF, 8, Page8/binary>>,
+    Block4 = <<16#FF, 16#FF, 4, Page4/binary>>,
+    Block5 = <<16#FF, 16#FF, 5, Page5/binary>>,
+    Data = <<Header/binary, ExtraLen:16/little, ExtHeader/binary,
+             Block8/binary, Block4/binary, Block5/binary>>,
+    {ok, Machine1} = ezx_emulator:load_z80(Machine, Data),
+    ?assertEqual(16#1234, z80_cpu:pc(Machine1#machine_state.cpu)).
+
 %% --- TAP loading error tests ---
 
 load_tap_empty_binary_test() ->
     Machine = init_machine(),
     {ok, _Machine1} = ezx_emulator:load_tap(Machine, <<>>).
+
+%% --- Helpers ---
+
+build_v1_header(PC, Flags) ->
+    <<0:8, 0:8,
+      0:16, 0:16,
+      PC:16/little,
+      16#FF00:16/little,
+      0:8, 0:8,
+      Flags:8,
+      0:16, 0:16, 0:16, 0:16,
+      0:8, 0:8,
+      0:16, 0:16,
+      0:8, 0:8,
+      0:8>>.
