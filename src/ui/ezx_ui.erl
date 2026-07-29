@@ -31,6 +31,7 @@
     scale = ?DEFAULT_SCALE :: pos_integer(),
     fullscreen = false :: boolean(),
     option_crop_border = true :: boolean(),
+    windowed_scale = ?DEFAULT_SCALE :: pos_integer(),
     crop_off = {0, 0} :: {integer(), integer()},
     option_integer_scaling = false :: boolean(),
     crop_exact_scale = 1.0 :: float(),
@@ -492,7 +493,7 @@ reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = Stat
     {noreply, State#state{scale = NewScale, crop_off = {OffX, OffY},
                           crop_exact_scale = ExactScale}}.
 
-toggle_fullscreen(#state{frame = Frame, fullscreen = false, option_crop_border = Crop} = State) ->
+toggle_fullscreen(#state{frame = Frame, fullscreen = false, scale = WindowedScale, option_crop_border = Crop} = State) ->
     WinSize = wxWindow:getSize(Frame),
     wxFrame:showFullScreen(Frame, true),
     Display = wxDisplay:new(),
@@ -508,16 +509,16 @@ toggle_fullscreen(#state{frame = Frame, fullscreen = false, option_crop_border =
         false -> 1.0
     end,
     {noreply, State#state{fullscreen = true,
-                          scale = NewScale, crop_off = {OffX, OffY},
+                          scale = NewScale, windowed_scale = WindowedScale, crop_off = {OffX, OffY},
                           crop_exact_scale = ExactScale,
                           fullscreen_size = {SW, SH},
                           windowed_size = WinSize}};
-toggle_fullscreen(#state{frame = Frame, fullscreen = true,
+toggle_fullscreen(#state{frame = Frame, fullscreen = true, windowed_scale = WindowedScale,
                          windowed_size = {WW, WH}} = State) ->
     wxFrame:showFullScreen(Frame, false),
     wxFrame:setSize(Frame, WW, WH),
     {noreply, State#state{fullscreen = false,
-                          crop_off = {0, 0},
+                          scale = WindowedScale, crop_off = {0, 0},
                           fullscreen_size = undefined,
                           windowed_size = undefined}}.
 
