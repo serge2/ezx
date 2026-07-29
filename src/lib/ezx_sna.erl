@@ -60,7 +60,7 @@ parse(Data) ->
       HL:16/little, DE:16/little, BC:16/little, IY:16/little, IX:16/little,
       IFF2:8, R:8,
       AF:16/little, SP:16/little,
-      IM:8, Border:8,
+      IM:8, BorderRaw:8,
       Mem:49152/bytes, Rest/bytes>> = Data,
     Header = #sna_header{
         i = I, r = R,
@@ -68,7 +68,7 @@ parse(Data) ->
         ix = IX, iy = IY,
         af_alt = AFa, bc_alt = BCa, de_alt = DEa, hl_alt = HLa,
         sp = SP, iff2 = IFF2, im = IM,
-        border = Border,
+        border = BorderRaw band 16#07,
         mem = Mem,
         is_128k = false
     },

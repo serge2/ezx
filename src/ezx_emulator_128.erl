@@ -116,7 +116,7 @@ load_z80(Machine, Data) ->
             Mem = Machine#machine_state.memory,
             MemModule = Machine#machine_state.memory_module,
 
-            Mem1 = write_128k_pages(Mem, H),
+            Mem1 = write_128k_pages(MemModule, Mem, H),
             Mem2 = MemModule:write_port_7ffd(Mem1, H#z80_header.p7ffd),
 
             Cpu = Machine#machine_state.cpu,
@@ -203,7 +203,7 @@ load_sna(Machine, Data) ->
 
             Mem2 = case H#sna_header.raw_extra of
                 undefined -> Mem1;
-                Extra -> load_extra_pages(Mem1, P7FFD, Extra)
+                Extra -> load_extra_pages(MemModule, Mem1, P7FFD, Extra)
             end,
 
             SP = H#sna_header.sp,
@@ -312,32 +312,32 @@ write_word(Machine, Addr, Word) -> ezx_emulator:write_word(Machine, Addr, Word).
 %% --- internal ---
 
 %% @doc Write extra 16KB pages into banks not covered by the 48KB dump.
--spec load_extra_pages(any(), byte(), binary()) -> any().
-load_extra_pages(Mem, P7FFD, Extra) ->
+-spec load_extra_pages(module(), any(), byte(), binary()) -> any().
+load_extra_pages(MemModule, Mem, P7FFD, Extra) ->
     ScreenBank = case (P7FFD bsr 3) band 1 of 0 -> 5; 1 -> 7 end,
     Slot3Bank = P7FFD band 16#07,
     Covered = sets:from_list([2, ScreenBank, Slot3Bank]),
     Banks = [B || B <- lists:seq(0, 7), not sets:is_element(B, Covered)],
-    load_pages(Mem, Banks, Extra).
+    load_pages(MemModule, Mem, Banks, Extra).
 
-load_pages(Mem, [], _Extra) -> Mem;
-load_pages(Mem, [Bank | Banks], Extra) ->
+load_pages(_MemModule, Mem, [], _Extra) -> Mem;
+load_pages(MemModule, Mem, [Bank | Banks], Extra) ->
     case Extra of
         <<PageData:16384/binary, Rest/binary>> ->
-            Mem1 = ezx_memory_128:write_bank_block(Mem, Bank, PageData),
-            load_pages(Mem1, Banks, Rest);
+            Mem1 = MemModule:write_bank_block(Mem, Bank, PageData),
+            load_pages(MemModule, Mem1, Banks, Rest);
         _ ->
             Mem
     end.
 
 %% @doc Write Z80 memory pages (3-10) into 128K RAM banks (0-7).
--spec write_128k_pages(any(), #z80_header{}) -> any().
-write_128k_pages(Mem, H) ->
+-spec write_128k_pages(module(), any(), #z80_header{}) -> any().
+write_128k_pages(MemModule, Mem, H) ->
     Pages = H#z80_header.pages,
     maps:fold(fun
         (Page, Data, Acc) when Page >= 3, Page =< 10 ->
             Bank = Page - 3,
-            ezx_memory_128:write_bank_block(Acc, Bank, Data);
+            MemModule:write_bank_block(Acc, Bank, Data);
         (_Page, _Data, Acc) ->
             Acc
     end, Mem, Pages).
