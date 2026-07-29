@@ -30,7 +30,6 @@
 
 -record(ext_context, {
     memory,
-    t_states = 0,
     border_changes = [],
     keyboard,
     beeper = undefined

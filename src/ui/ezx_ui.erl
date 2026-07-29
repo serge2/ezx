@@ -47,7 +47,8 @@
     perf_start_us = 0 :: non_neg_integer(),
     muted = false :: boolean(),
     menu_bar :: wxMenuBar:wxMenuBar(),
-    recent_files = [] :: [string()]
+    recent_files = [] :: [string()],
+    diag_file :: pid() | undefined
 }).
 
 
@@ -113,7 +114,7 @@ init(_Options) ->
     wxWindow:setClientSize(Frame, DefW, DefH),
     wxWindow:setFocus(Panel),
 
-    Cmd = "aplay -t raw -f S16_LE -r 44100 -c 1 --buffer-size=441 -q",
+    Cmd = "aplay -t raw -f S16_LE -r 44100 -c 1 --buffer-size=4410 -q",
     AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
 
     Machine0 = ezx_ui_lib:init_virtual_machine(),
@@ -161,7 +162,10 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
         BeepT1 = erlang:monotonic_time(microsecond),
         % Machine3 = Machine2,
         % PCM = Machine3#machine_state.beeper_pcm,
-
+        case State#state.diag_file of
+            undefined -> ok;
+            Fd -> file:write(Fd, PCM)
+        end,
 
         %% Write audio to port
         AudioData = case State#state.muted of
@@ -317,6 +321,19 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = $M, controlDown = true
     save_config(NewState),
     {noreply, NewState};
 
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = $D, controlDown = true}},
+            #state{diag_file = DiagFile} = State) ->
+    case DiagFile of
+        undefined ->
+            {ok, Fd} = file:open("/tmp/pcm_dump.raw", [raw, binary, write]),
+            io:format("DIAG: recording PCM to /tmp/pcm_dump.raw~n"),
+            {noreply, State#state{diag_file = Fd}};
+        _ ->
+            file:close(DiagFile),
+            io:format("DIAG: recording stopped~n"),
+            {noreply, State#state{diag_file = undefined}}
+    end;
+
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = $O, controlDown = true}}, State) ->
     handle_open_file(State);
 
@@ -355,14 +372,16 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                     NewRecent = ezx_recent_files:update(File, State#state.recent_files),
                     ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
                     {noreply, State#state{machine = NewMachine, recent_files = NewRecent}};
-                {error, {C, E, S}} ->
-                    io:format("Failed to load: ~s~n  ~p:~p~n~p~n", [File, C, E, S]),
-                    {noreply, State};
-                {error, Reason} ->
-                    io:format("File not found: ~s~n  ~p~n", [File, Reason]),
-                    NewRecent = ezx_recent_files:update(File, State#state.recent_files),
-                    ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
-                    {noreply, State#state{recent_files = NewRecent}}
+                {error, _Code} = Err ->
+                    show_load_error(State#state.frame, File, Err),
+                    case Err of
+                        {error, {file_not_found, _}} ->
+                            NewRecent = ezx_recent_files:update(File, State#state.recent_files),
+                            ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
+                            {noreply, State#state{recent_files = NewRecent}};
+                        _ ->
+                            {noreply, State}
+                    end
             end;
         false ->
             {noreply, State}
@@ -449,11 +468,8 @@ handle_open_file(State) ->
                     NewRecent = ezx_recent_files:update(File, State#state.recent_files),
                     ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
                     {noreply, State#state{machine = NewMachine, recent_files = NewRecent}};
-                {error, {C, E, S}} ->
-                    io:format("Failed to load: ~s~n  ~p:~p~n~p~n", [File, C, E, S]),
-                    {noreply, State};
-                {error, Reason} ->
-                    io:format("Failed to load: ~s~n  ~p~n", [File, Reason]),
+                {error, _Code} = Err ->
+                    show_load_error(State#state.frame, File, Err),
                     {noreply, State}
             end;
         _ ->
@@ -528,3 +544,21 @@ windowed_client_size(Crop, S) ->
 
 save_config(#state{option_crop_border = Crop, option_integer_scaling = Exact, muted = Muted, scale = Scale}) ->
     ezx_config:save(#{crop_border => Crop, integer_scaling => Exact, muted => Muted, scale => Scale}).
+
+show_load_error(Frame, File, {error, {Code, Detail}}) ->
+    Msg = maps:get(Code, #{
+        file_not_found       => "File not found or could not be read.",
+        unsupported_format   => "Unsupported file format.",
+        bad_sna_header       => "Invalid or corrupted SNA snapshot.",
+        sna_load_failed      => "Unexpected error while loading SNA snapshot.",
+        bad_tap_data         => "Invalid or corrupted TAP file.",
+        tap_load_failed      => "Unexpected error while loading TAP file."
+    }, "Unknown error."),
+    FullMsg = case Detail of
+        <<>> -> Msg;
+        _    -> [Msg, "\n\n", Detail]
+    end,
+    Dialog = wxMessageDialog:new(Frame, FullMsg, [{caption, "ezx: " ++ filename:basename(File)},
+                                                  {style, ?wxOK bor ?wxICON_ERROR}]),
+    wxDialog:showModal(Dialog),
+    wxMessageDialog:destroy(Dialog).

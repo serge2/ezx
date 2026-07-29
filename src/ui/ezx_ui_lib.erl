@@ -14,27 +14,25 @@ init_virtual_machine() ->
 run_initial_frames(Machine, 0) -> Machine;
 run_initial_frames(Machine, N) ->
     Machine2 = ezx_emulator:run_frame(Machine),
-    run_initial_frames(Machine2, N - 1).
+    {_PCM, Machine3} = ezx_emulator:render_beeper(Machine2),
+    run_initial_frames(Machine3, N - 1).
 
 load_emulator_file(Machine, FilePath) ->
     case file:read_file(FilePath) of
         {ok, Data} ->
             Ext = string:lowercase(filename:extension(FilePath)),
-            try
-                case Ext of
-                    ".sna" ->
-                        ezx_emulator:load_sna(Machine, Data);
-                    ".tap" ->
-                        Machine0 = init_virtual_machine(),
-                        Machine1 = run_initial_frames(Machine0, 50),
-                        ezx_emulator:load_tap(Machine1, Data);
-                    _ ->
-                        {error, {unknown_type, Ext}}
-                end
-            catch
-                C:E:S ->
-                    {error, {C, E, S}}
+            case Ext of
+                ".sna" ->
+                    ezx_emulator:load_sna(Machine, Data);
+                ".tap" ->
+                    Machine0 = init_virtual_machine(),
+                    Machine1 = run_initial_frames(Machine0, 50),
+                    ezx_emulator:load_tap(Machine1, Data);
+                _ ->
+                    Detail = iolist_to_binary(Ext),
+                    {error, {unsupported_format, Detail}}
             end;
         {error, Reason} ->
-            {error, {read_failed, Reason}}
+            Detail = atom_to_binary(Reason),
+            {error, {file_not_found, Detail}}
     end.

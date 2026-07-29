@@ -74,13 +74,13 @@ fetch_word(State) ->
     {Hi, State2} = fetch_byte(State1),
     {?MAKE_PAIR(Hi, Lo), State2}.
 
-read_byte(State = #cpu_state{mem_read_fun = ReadFun, ext_context = ExtContext}, Address) ->
-    {Byte, ExtContext1} = ReadFun(ExtContext, Address band 16#ffff),
+read_byte(State = #cpu_state{mem_read_fun = ReadFun, ext_context = ExtContext, t_states = TState}, Address) ->
+    {Byte, ExtContext1} = ReadFun(ExtContext, TState, Address band 16#ffff),
     {Byte, State#cpu_state{ext_context = ExtContext1}}.
 
 
-write_byte(State = #cpu_state{mem_write_fun = WriteFun, ext_context = ExtContext}, Address, Byte) ->
-    ExtContext1 = WriteFun(ExtContext, Address band 16#ffff, Byte band 16#ff),
+write_byte(State = #cpu_state{mem_write_fun = WriteFun, ext_context = ExtContext, t_states = TState}, Address, Byte) ->
+    ExtContext1 = WriteFun(ExtContext, TState, Address band 16#ffff, Byte band 16#ff),
     State#cpu_state{ext_context = ExtContext1}.
 
 read_word(State, Address) ->

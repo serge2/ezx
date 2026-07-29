@@ -32,19 +32,19 @@
 -spec init(module(), module(), module(), module(), module(), binary()) -> #machine_state{}.
 init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
     MemReadFun =
-        fun(ExtContext, Addr) ->
+        fun(ExtContext, _TState, Addr) ->
             Memory = ExtContext#ext_context.memory,
             Byte = MemModule:read_byte(Memory, Addr),
             {Byte, ExtContext}
         end,
     MemWriteFun =
-        fun(ExtContext, Addr, Byte) ->
+        fun(ExtContext, _TState, Addr, Byte) ->
             Memory = ExtContext#ext_context.memory,
             NewMem = MemModule:write_byte(Memory, Addr, Byte),
             ExtContext#ext_context{memory = NewMem}
         end,
     PortReadFun =
-        fun(ExtContext, Port) ->
+        fun(ExtContext, _TState, Port) ->
             case Port band 16#FF of
                 16#FE ->
                     %% Keyboard: upper byte selects half-rows (active low).
@@ -58,11 +58,10 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
             end
         end,
     PortWriteFun =
-        fun(ExtContext, Port, Byte) ->
+        fun(ExtContext, TState, Port, Byte) ->
             case Port band 16#FF of
                 16#FE ->
                     BorderColor = Byte band 16#07,
-                    TState = ExtContext#ext_context.t_states,
                     Changes = ExtContext#ext_context.border_changes,
                     %% Bit 4: beeper speaker output.
                     BeeperLevel = (Byte bsr 4) band 1,
@@ -172,11 +171,11 @@ load_sna(Machine, Data) ->
                      iolist_to_binary(["Expected >= 49179 bytes, got ",
                                        integer_to_binary(S)])}};
         C:E:_S ->
-            {error, {parse, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
+            {error, {sna_load_failed, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
     end.
 
 %% @doc Load a TAP file using tape traps.
--spec load_tap(#machine_state{}, binary()) -> #machine_state{}.
+-spec load_tap(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
 load_tap(Machine, Data) ->
     try ezx_tap:parse_blocks(Data) of
         Blocks ->
@@ -188,7 +187,8 @@ load_tap(Machine, Data) ->
             }}
     catch
         C:E:_S ->
-            {error, {parse, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
+            {error, {bad_tap_data,
+                     iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
     end.
 
 %% --- Tape trap: intercept LD-BYTES at PC=0x0556 ---
@@ -359,17 +359,14 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
     Memory0 = Machine#machine_state.memory,
     Beeper0 = Machine#machine_state.beeper,
-    %% Build ext_context with current frame position so port callbacks can timestamp events.
     ExtContext0 = #ext_context{
         memory = Memory0,
-        t_states = MachineTStates,
-        % frame_counter = MachineTStates div ?TSTATES_PER_FRAME,
         border_changes = [],
         keyboard = Machine#machine_state.keyboard,
         beeper = Beeper0
     },
-    Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = 0}),
-    Ticks = Cpu1#cpu_state.t_states,
+    Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = MachineTStates}),
+    Ticks = Cpu1#cpu_state.t_states - MachineTStates,
     NewMachineTStates = MachineTStates + Ticks,
     Memory1 = Cpu1#cpu_state.ext_context#ext_context.memory,
     %% Propagate border_changes accumulated during this step.
@@ -396,37 +393,35 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
 %% Frame boundary is ignored mid-instruction (variant A).
 -spec run_frame(#machine_state{}) -> #machine_state{}.
 run_frame(Machine) ->
-    %% Process auto-typing keyboard queue (overrides user keyboard while active).
     MachineQ = process_keyboard_queue(Machine),
     run_frame_1(MachineQ).
 
 run_frame_1(#machine_state{t_states = StartT} = Machine) ->
-    %% Clear border_changes at the start of a new frame so they are
-    %% available after run_frame returns (for the renderer).
     Machine0 = Machine#machine_state{border_changes = []},
 
-    %% Phase 1: run to interrupt point (T = StartT + 32).
-    Phase1End = StartT + ?INT_TSTATE,
-    Machine1 = run_until_tstates(Machine0, Phase1End),
+    Machine1 = case StartT < ?INT_TSTATE of
+        true ->
+            run_until_tstates(Machine0, ?INT_TSTATE);
+        false ->
+            Machine0
+    end,
 
-    %% Raise INT at the boundary.
     Cpu1 = Machine1#machine_state.cpu,
     Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
     Machine2 = Machine1#machine_state{cpu = Cpu2},
 
-    %% Phase 2: run to end of frame (T = StartT + 69888).
     Phase2End = StartT + ?TSTATES_PER_FRAME,
     Machine3 = run_until_tstates(Machine2, Phase2End),
 
-    %% Reset T-states to 0 (start of next frame).
+    Overshoot = Machine3#machine_state.t_states - Phase2End,
 
     FlashCounter = Machine3#machine_state.flash_counter,
     NewFlashCounter = (FlashCounter + 1) rem 32,
 
     Machine3#machine_state{
-        t_states = 0,
+        t_states = Overshoot,
         flash_counter = NewFlashCounter
-      }.
+    }.
 
 %% @doc Render the current frame to a flat RGB binary (352×288×3 bytes).
 %% Extracts screen memory via bulk read_block and passes to a video module.

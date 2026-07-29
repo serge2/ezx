@@ -15,6 +15,11 @@
 
 -export([init/0, init/1, set_level/3, level/1, flush_frame/1, silence_frame/0]).
 
+%% Fixed-point scaling: 1 T-state = ?SCALE units.
+%% ?SCALE = ?SAMPLES_PER_FRAME ensures sample period boundaries are integer.
+-define(SCALE, 882).
+-define(PERIOD_LEN, 70000).  %% One sample period in scaled units: 70000/882 * 882
+
 -record(beeper, {
     level = 0          :: 0 | 1,
     init_level = 0     :: 0 | 1,
@@ -46,23 +51,21 @@ set_level(#beeper{changes = Changes} = B, NewLevel, TState) ->
 -spec level(state()) -> 0 | 1.
 level(#beeper{level = L}) -> L.
 
+
 -spec flush_frame(state()) -> {binary(), state()}.
-flush_frame(#beeper{level = Level, init_level = InitLevel, phase = Phase, changes = Changes}) ->
+flush_frame(#beeper{level = Level, init_level = InitLevel, phase = _Phase, changes = Changes}) ->
     Sorted = lists:reverse(Changes),
-    {Samples, FinalPhase} = gen_samples(Sorted, 0, InitLevel, Phase, []),
+    {SamplesRev, FinalPhase} = gen_integrated(Sorted, 0, InitLevel, 0, 0, []),
+    Samples = lists:reverse(SamplesRev),
     Count = length(Samples),
-    case Count =/= ?SAMPLES_PER_FRAME of
-        true -> io:format("BEEPER: ~p samples (expected 882)~n", [Count]);
-        false -> ok
-    end,
     PCM = case Count of
         ?SAMPLES_PER_FRAME ->
-            list_to_binary([<<S:16/signed-little>> || S <- lists:reverse(Samples)]);
+            list_to_binary([<<S:16/signed-little>> || S <- Samples]);
         _ when Count < ?SAMPLES_PER_FRAME ->
             Pad = lists:duplicate(?SAMPLES_PER_FRAME - Count, case Level of 0 -> ?AMP_OFF; 1 -> ?AMP_ON end),
-            list_to_binary([<<S:16/signed-little>> || S <- lists:reverse(Samples ++ Pad)]);
+            list_to_binary([<<S:16/signed-little>> || S <- Samples ++ Pad]);
         _ ->
-            Trimmed = lists:sublist(lists:reverse(Samples), ?SAMPLES_PER_FRAME),
+            Trimmed = lists:sublist(Samples, ?SAMPLES_PER_FRAME),
             list_to_binary([<<S:16/signed-little>> || S <- Trimmed])
     end,
     {PCM, #beeper{level = Level, init_level = Level, phase = FinalPhase}}.
@@ -73,28 +76,35 @@ silence_frame() ->
 
 %% --- Internal ---
 
-%% gen_samples(ChangesSortedAsc, StartT, LevelAtStartT, Phase, Acc) -> {Samples, FinalPhase}
-%% Iterates through changes, emitting samples for each interval at the
-%% level that was active during that interval.
-gen_samples([], StartT, Level, Phase, Acc) ->
-    RemainingT = ?TSTATES_PER_FRAME_AUDIO - StartT,
-    emit_samples(Acc, Level, RemainingT, Phase);
-gen_samples([{T, NewLevel} | Rest], StartT, Level, Phase, Acc) ->
-    DeltaT = T - StartT,
-    {Acc1, Phase1} = emit_samples(Acc, Level, DeltaT, Phase),
-    gen_samples(Rest, T, NewLevel, Phase1, Acc1).
-
-emit_samples(Acc, _Level, 0, Phase) ->
-    {Acc, Phase};
-emit_samples(Acc, Level, DeltaT, Phase) ->
-    Amp = case Level of 0 -> ?AMP_OFF; 1 -> ?AMP_ON end,
-    NewPhase = Phase + DeltaT * ?SAMPLE_RATE,
-    Quot = NewPhase div ?CPU_FREQ,
-    Rem = NewPhase rem ?CPU_FREQ,
-    case Quot > 0 of
+%% gen_integrated(ChangesSorted, TPos, Level, SampleIdx, Integral, Acc) -> {Samples, FinalPhase}
+%% Multi-bit integration: for each sample period, outputs a sample proportional
+%% to the duty cycle (fraction of time at level 1 vs level 0).
+%% TPos is in units of 1/?SCALE T-state (scaled by ?SCALE = 882).
+%% Each sample period is ?PERIOD_LEN = 70000 scaled units.
+%% Integral accumulates (time_at_level_1 - time_at_level_0) scaled by ?SCALE.
+%% Sample = Integral * ?AMP_ON / ?PERIOD_LEN, range [-8192, 8192].
+gen_integrated([], _TPos, _Level, ?SAMPLES_PER_FRAME, _Integral, Acc) ->
+    {Acc, 0};
+gen_integrated([], TPos, Level, SampleIdx, Integral, Acc) ->
+    PeriodEnd = (SampleIdx + 1) * ?PERIOD_LEN,
+    Fill = PeriodEnd - TPos,
+    NewIntegral = Integral + sign(Level, Fill),
+    Sample = (NewIntegral * ?AMP_ON) div ?PERIOD_LEN,
+    gen_integrated([], PeriodEnd, Level, SampleIdx + 1, 0, [Sample | Acc]);
+gen_integrated([{T, NewLevel} | Rest], TPos, Level, SampleIdx, Integral, Acc) ->
+    PeriodEnd = (SampleIdx + 1) * ?PERIOD_LEN,
+    Tsc = T * ?SCALE,
+    case Tsc < PeriodEnd of
         true ->
-            NewAcc = lists:duplicate(Quot, Amp) ++ Acc,
-            emit_samples(NewAcc, Level, 0, Rem);
+            Fill = Tsc - TPos,
+            NewIntegral = Integral + sign(Level, Fill),
+            gen_integrated(Rest, Tsc, NewLevel, SampleIdx, NewIntegral, Acc);
         false ->
-            {Acc, NewPhase}
+            Fill = PeriodEnd - TPos,
+            NewIntegral = Integral + sign(Level, Fill),
+            Sample = (NewIntegral * ?AMP_ON) div ?PERIOD_LEN,
+            gen_integrated([{T, NewLevel} | Rest], PeriodEnd, Level, SampleIdx + 1, 0, [Sample | Acc])
     end.
+
+sign(0, Fill) -> -Fill;
+sign(1, Fill) -> Fill.

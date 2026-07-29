@@ -87,7 +87,7 @@ run_frame_border_changes_cleared_test() ->
     %% border_changes are now preserved after run_frame for rendering.
     %% They should be empty only if no OUT instructions executed.
     %% With the program above (OUT 0xFE, A), there should be one change.
-    ?assertEqual([{7, 4}], Machine2#machine_state.border_changes).
+    ?assertEqual([{14, 4}], Machine2#machine_state.border_changes).
 
 run_frame_multiple_nops_test() ->
     Machine0 = init_machine(),
@@ -143,6 +143,7 @@ run_frame_two_frames_test() ->
 run_frame_border_stripes_test() ->
     M0 = init_machine(),
     M0r = ezx_emulator:run_frame(M0),
+    Overshoot = M0r#machine_state.t_states,
 
     Pgm = [
         16#F3,                               %% DI
@@ -176,7 +177,7 @@ run_frame_border_stripes_test() ->
     Changes = lists:keysort(1, M3#machine_state.border_changes),
     ?assertEqual(16, length(Changes)),
 
-    FirstT = 3584,
+    FirstT = 3584 + Overshoot + 7,
     Interval = 4032,
     ExpectedColors = [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7],
     lists:foreach(fun({K, {T, Color}}) ->
@@ -228,3 +229,25 @@ load_program(Machine, BaseAddr, Program) when is_list(Program) ->
 
 set_pc(#machine_state{cpu = Cpu} = Machine, Addr) ->
     Machine#machine_state{cpu = Cpu#cpu_state{pc = Addr}}.
+
+%% --- SNA loading error tests ---
+
+load_sna_empty_binary_test() ->
+    Machine = init_machine(),
+    {error, {bad_sna_header, _}} = ezx_emulator:load_sna(Machine, <<>>).
+
+load_sna_short_binary_test() ->
+    Machine = init_machine(),
+    Data = <<0:100/unit:8>>,
+    {error, {bad_sna_header, _}} = ezx_emulator:load_sna(Machine, Data).
+
+load_sna_valid_binary_test() ->
+    Machine = init_machine(),
+    Data = <<0: (27 + 49152)/unit:8>>,
+    {ok, _Machine1} = ezx_emulator:load_sna(Machine, Data).
+
+%% --- TAP loading error tests ---
+
+load_tap_empty_binary_test() ->
+    Machine = init_machine(),
+    {ok, _Machine1} = ezx_emulator:load_tap(Machine, <<>>).

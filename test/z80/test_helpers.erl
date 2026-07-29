@@ -12,16 +12,16 @@
 
 init_cpu() ->
     Mem = z80_cpu_mem:new(),
-    MemReadFun = fun(ExtContext, Addr) ->
+    MemReadFun = fun(ExtContext, _TState, Addr) ->
         Byte = z80_cpu_mem:read_byte(ExtContext#ext_context.memory, Addr band 16#ffff),
         {Byte, ExtContext}
     end,
-    MemWriteFun = fun(ExtContext, Addr, Byte) ->
+    MemWriteFun = fun(ExtContext, _TState, Addr, Byte) ->
         NewMem = z80_cpu_mem:write_byte(ExtContext#ext_context.memory, Addr band 16#ffff, Byte band 16#ff),
         ExtContext#ext_context{memory = NewMem}
     end,
-    PortReadFun = fun(ExtContext, _Port) -> {16#FF, ExtContext} end,
-    PortWriteFun = fun(ExtContext, _Port, _Byte) -> ExtContext end,
+    PortReadFun = fun(ExtContext, _TState, _Port) -> {16#FF, ExtContext} end,
+    PortWriteFun = fun(ExtContext, _TState, _Port, _Byte) -> ExtContext end,
     BusReadFun = fun() -> 16#FF end,
     Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun),
     Cpu0#cpu_state{
