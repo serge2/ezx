@@ -21,5 +21,7 @@
     iff2         :: byte(),
     im           :: byte(),
     hw_mode      :: byte(),
-    mem          :: binary()
+    p7ffd        :: byte(),
+    mem          :: binary(),
+    pages        :: #{non_neg_integer() => binary()}
 }).

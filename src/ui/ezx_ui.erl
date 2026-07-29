@@ -25,7 +25,8 @@
 -define(BYTES_PER_FRAME, 1764).  %% 882 samples * 2 bytes
 
 -record(state, {
-    machine   :: #machine_state{},
+    machine   :: #machine_state{} | undefined,
+    machine_type = '48k' :: '48k' | '128k',
     frame     :: wxFrame:wxFrame(),
     panel     :: wxPanel:wxPanel(),
     scale = ?DEFAULT_SCALE :: pos_integer(),
@@ -77,6 +78,11 @@ init(_Options) ->
     RecentFiles0 = ezx_recent_files:load(),
     FileMenu0 = ezx_recent_files:build_menu(RecentFiles0),
     wxMenuBar:append(MenuBar, FileMenu0, "File"),
+    MachineType = maps:get(machine_type, Cfg0, '128k'),
+    EmulatorMenu = wxMenu:new(),
+    wxMenu:appendRadioItem(EmulatorMenu, ?MENU_MACHINE_BASE + 0, "ZX Spectrum 48K"),
+    wxMenu:appendRadioItem(EmulatorMenu, ?MENU_MACHINE_BASE + 1, "ZX Spectrum 128"),
+    wxMenuBar:append(MenuBar, EmulatorMenu, "Emulator"),
     ViewMenu = wxMenu:new(),
     wxMenu:append(ViewMenu, ?MENU_FULLSCREEN, "Fullscreen\tF11", [{help, "Toggle fullscreen mode"}]),
     wxMenu:appendSeparator(ViewMenu),
@@ -99,6 +105,7 @@ init(_Options) ->
     CropBorder = maps:get(crop_border, Cfg0, true),
     IntScaling = maps:get(integer_scaling, Cfg0, false),
     Muted = maps:get(muted, Cfg0, false),
+    wxMenu:check(EmulatorMenu, ?MENU_MACHINE_BASE + machine_type_offset(MachineType), true),
     wxMenu:check(ViewMenu, ?MENU_CROP, CropBorder),
     wxMenu:check(ViewMenu, ?MENU_CROP_EXACT, IntScaling),
     wxMenu:check(ViewMenu, ?MENU_SCALE_BASE + (InitScale0 - 1), true),
@@ -118,33 +125,51 @@ init(_Options) ->
     Cmd = "aplay -t raw -f S16_LE -r 44100 -c 1 --buffer-size=4410 -q",
     AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
 
-    Machine0 = ezx_ui_lib:init_virtual_machine(),
-    Machine1 = ezx_ui_lib:run_initial_frames(Machine0, 50),
-
     Now = erlang:monotonic_time(microsecond),
-    State = #state{
-        machine = Machine1,
+    State0 = #state{
+        machine = undefined,
+        machine_type = MachineType,
         frame = Frame,
         panel = Panel,
         scale = InitScale0,
         option_crop_border = CropBorder,
         option_integer_scaling = IntScaling,
         muted = Muted,
-        frame_count = 50,
         aplay_port = AplayPort,
         audio_start_us = Now,
         perf_start_us = Now,
         menu_bar = MenuBar,
         recent_files = RecentFiles0
     },
-    erlang:send_after(0, self(), frame_tick),
-    {ok, State}.
+    case ezx_ui_lib:init_virtual_machine(MachineType) of
+        {ok, Machine} ->
+            erlang:send_after(0, self(), frame_tick),
+            {ok, State0#state{machine = Machine}};
+        {error, {Code, Detail}} ->
+            Title = "ezx - ROM error",
+            Msg = case Code of
+                rom_not_found -> "ROM files not found.\n\nInstall ROMs in priv/roms/ and restart.";
+                _ -> binary_to_list(Detail)
+            end,
+            Dialog = wxMessageDialog:new(Frame, Msg, [{caption, Title},
+                                                       {style, ?wxOK bor ?wxICON_ERROR}]),
+            wxDialog:showModal(Dialog),
+            wxMessageDialog:destroy(Dialog),
+            wxMenuBar:enableTop(MenuBar, 0, false),
+            wxMenuBar:enableTop(MenuBar, 3, false),
+            erlang:send_after(0, self(), frame_tick),
+            {ok, State0}
+    end.
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
+
+handle_info(frame_tick, #state{machine = undefined} = State) ->
+    erlang:send_after(50, self(), frame_tick),
+    {noreply, State};
 
 handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                                   scale = Scale,
@@ -312,6 +337,8 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_ESCAPE}},
             #state{fullscreen = true} = State) ->
     toggle_fullscreen(State);
 
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F5}}, #state{machine = undefined} = State) ->
+    {noreply, State};
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F5}}, State) ->
     do_reset(State);
 
@@ -335,6 +362,8 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = $D, controlDown = true
             {noreply, State#state{diag_file = undefined}}
     end;
 
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = $O, controlDown = true}}, #state{machine = undefined} = State) ->
+    {noreply, State};
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = $O, controlDown = true}}, State) ->
     handle_open_file(State);
 
@@ -342,18 +371,22 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = $Q, controlDown = true
     init:stop(),
     {stop, normal, State};
 
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = _Key, rawCode = _RawCode} = _E}, #state{machine = undefined} = State) ->
+    {noreply, State};
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = Key, rawCode = _RawCode} = _E}, State) ->
     Machine = State#state.machine,
     NewMachine = ezx_emulator:press_key(Machine, Key),
-    % io:format("Key down: ~p~n", [_E]),
     {noreply, State#state{machine = NewMachine}};
 
+handle_info(#wx{event = #wxKey{type = key_up, keyCode = _Key, rawCode = _RawCode} = _E}, #state{machine = undefined} = State) ->
+    {noreply, State};
 handle_info(#wx{event = #wxKey{type = key_up, keyCode = Key, rawCode = _RawCode} = _E}, State) ->
     Machine = State#state.machine,
     NewMachine = ezx_emulator:release_key(Machine, Key),
-    % io:format("Key up: ~p~n", [_E]),
     {noreply, State#state{machine = NewMachine}};
 
+handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected}}, #state{machine = undefined} = State) ->
+    {noreply, State};
 handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected}}, State) ->
     handle_open_file(State);
 
@@ -362,12 +395,15 @@ handle_info(#wx{id = ?wxID_EXIT, event = #wxCommand{type = command_menu_selected
     {stop, normal, State};
 
 handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
+            #state{machine = undefined} = State) when Id >= ?MENU_RECENT_BASE, Id < ?MENU_RECENT_BASE + ?MAX_RECENT ->
+    {noreply, State};
+handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
             #state{recent_files = RecentFiles} = State) when Id >= ?MENU_RECENT_BASE, Id < ?MENU_RECENT_BASE + ?MAX_RECENT ->
     Idx = Id - ?MENU_RECENT_BASE + 1,
     case Idx =< length(RecentFiles) of
         true ->
             File = lists:nth(Idx, RecentFiles),
-            case ezx_ui_lib:load_emulator_file(State#state.machine, File) of
+            case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type) of
                 {ok, NewMachine} ->
                     io:format("Loaded: ~s~n", [File]),
                     NewRecent = ezx_recent_files:update(File, State#state.recent_files),
@@ -391,6 +427,8 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
 handle_info(#wx{id = ?MENU_FULLSCREEN, event = #wxCommand{type = command_menu_selected}}, State) ->
     toggle_fullscreen(State);
 
+handle_info(#wx{id = ?MENU_RESET, event = #wxCommand{type = command_menu_selected}}, #state{machine = undefined} = State) ->
+    {noreply, State};
 handle_info(#wx{id = ?MENU_RESET, event = #wxCommand{type = command_menu_selected}}, State) ->
     do_reset(State);
 
@@ -436,6 +474,42 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
             {noreply, NewState}
     end;
 
+handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
+            #state{machine_type = OldType} = State) when Id >= ?MENU_MACHINE_BASE, Id < ?MENU_MACHINE_BASE + 2 ->
+    NewType = machine_type_from_offset(Id - ?MENU_MACHINE_BASE),
+    case NewType =/= OldType of
+        true ->
+            case ezx_ui_lib:init_virtual_machine(NewType) of
+                {ok, Machine} ->
+                    MenuBar = State#state.menu_bar,
+                    Now = erlang:monotonic_time(microsecond),
+                    wxMenuBar:enableTop(MenuBar, 0, true),
+                    wxMenuBar:enableTop(MenuBar, 3, true),
+                    NewState = State#state{
+                        machine = Machine,
+                        machine_type = NewType,
+                        frame_count = 0,
+                        audio_start_us = Now, audio_bytes = 0,
+                        perf_acc_us = 0, render_acc_us = 0,
+                        perf_frames = 0, perf_start_us = Now
+                    },
+                    save_config(NewState),
+                    {noreply, NewState};
+                {error, {_Code, Detail}} ->
+                    EmulatorMenu = wxMenuBar:getMenu(State#state.menu_bar, 1),
+                    wxMenu:check(EmulatorMenu, Id, false),
+                    wxMenu:check(EmulatorMenu, ?MENU_MACHINE_BASE + machine_type_offset(OldType), true),
+                    Dialog = wxMessageDialog:new(State#state.frame, binary_to_list(Detail),
+                                                 [{caption, "ezx - cannot switch machine type"},
+                                                  {style, ?wxOK bor ?wxICON_ERROR}]),
+                    wxDialog:showModal(Dialog),
+                    wxMessageDialog:destroy(Dialog),
+                    {noreply, State}
+            end;
+        false ->
+            {noreply, State}
+    end;
+
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -447,13 +521,24 @@ terminate(_Reason, #state{frame = Frame, aplay_port = Port}) ->
 %% --- Internal ---
 
 do_reset(State) ->
-    Machine0 = ezx_ui_lib:init_virtual_machine(),
-    Machine1 = ezx_ui_lib:run_initial_frames(Machine0, 50),
-    Now = erlang:monotonic_time(microsecond),
-    {noreply, State#state{machine = Machine1, frame_count = 50,
-                          audio_start_us = Now, audio_bytes = 0,
-                          perf_acc_us = 0, render_acc_us = 0,
-                          perf_frames = 0, perf_start_us = Now}}.
+    case ezx_ui_lib:init_virtual_machine(State#state.machine_type) of
+        {ok, Machine} ->
+            Now = erlang:monotonic_time(microsecond),
+            {noreply, State#state{machine = Machine, frame_count = 0,
+                                  audio_start_us = Now, audio_bytes = 0,
+                                  perf_acc_us = 0, render_acc_us = 0,
+                                  perf_frames = 0, perf_start_us = Now}};
+        {error, {_Code, Detail}} ->
+            Frame = State#state.frame,
+            Dialog = wxMessageDialog:new(Frame, binary_to_list(Detail),
+                                         [{caption, "ezx - reset failed"},
+                                          {style, ?wxOK bor ?wxICON_ERROR}]),
+            wxDialog:showModal(Dialog),
+            wxMessageDialog:destroy(Dialog),
+            wxMenuBar:enableTop(State#state.menu_bar, 0, false),
+            wxMenuBar:enableTop(State#state.menu_bar, 3, false),
+            {noreply, State#state{machine = undefined, frame_count = 0}}
+    end.
 
 handle_open_file(State) ->
     Dialog = wxFileDialog:new(State#state.frame, [{message, "Load snapshot or tape"},
@@ -463,7 +548,7 @@ handle_open_file(State) ->
         ?wxID_OK ->
             File = wxFileDialog:getPath(Dialog),
             wxFileDialog:destroy(Dialog),
-            case ezx_ui_lib:load_emulator_file(State#state.machine, File) of
+            case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type) of
                 {ok, NewMachine} ->
                     io:format("Loaded: ~s~n", [File]),
                     NewRecent = ezx_recent_files:update(File, State#state.recent_files),
@@ -525,6 +610,12 @@ toggle_fullscreen(#state{frame = Frame, fullscreen = true, windowed_scale = Wind
 %% {Scale, OffX, OffY} for emulated coordinates (352×288).
 %% OffX/OffY in emulated pixels: visible window origin within the emulated frame.
 %% Multiply by Scale to get screen-pixel shift of the device origin.
+machine_type_offset('48k')  -> 0;
+machine_type_offset('128k') -> 1.
+
+machine_type_from_offset(0) -> '48k';
+machine_type_from_offset(1) -> '128k'.
+
 calc_scale_offset(false, SW, SH) ->
     S = max(1, min(SW div ?DEFAULT_WIDTH, SH div ?DEFAULT_HEIGHT)),
     {S, 0, 0};
@@ -543,8 +634,8 @@ windowed_client_size(Crop, S) ->
     end,
     {TW * S, TH * S}.
 
-save_config(#state{option_crop_border = Crop, option_integer_scaling = Exact, muted = Muted, scale = Scale}) ->
-    ezx_config:save(#{crop_border => Crop, integer_scaling => Exact, muted => Muted, scale => Scale}).
+save_config(#state{machine_type = MType, option_crop_border = Crop, option_integer_scaling = Exact, muted = Muted, scale = Scale}) ->
+    ezx_config:save(#{machine_type => MType, crop_border => Crop, integer_scaling => Exact, muted => Muted, scale => Scale}).
 
 show_load_error(Frame, File, {error, {Code, Detail}}) ->
     Msg = maps:get(Code, #{

@@ -65,7 +65,6 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
                 16#FE ->
                     BorderColor = Byte band 16#07,
                     Changes = ExtContext#ext_context.border_changes,
-                    %% Bit 4: beeper speaker output.
                     BeeperLevel = (Byte bsr 4) band 1,
                     Beeper0 = ExtContext#ext_context.beeper,
                     Beeper1 = BeeperModule:set_level(Beeper0, BeeperLevel, TState),
@@ -159,12 +158,18 @@ load_sna(Machine, Data) ->
                 a_alt = AFp bsr 8, f_alt = AFp band 16#FF,
                 b_alt = BCp bsr 8, c_alt = BCp band 16#FF,
                 d_alt = DEp bsr 8, e_alt = DEp band 16#FF,
-                h_alt = HLp bsr 8, l_alt = HLp band 16#FF
+                h_alt = HLp bsr 8, l_alt = HLp band 16#FF,
+                pending_interrupt = none
             },
             {ok, Machine#machine_state{
                 memory = Mem1,
                 cpu = Cpu1,
-                border_color = H#sna_header.border
+                border_color = H#sna_header.border,
+                t_states = 0,
+                border_changes = [],
+                flash_counter = 0,
+                beeper_pcm = <<>>,
+                screen = <<>>
             }}
     catch
         error:bad_sna_header ->
@@ -176,16 +181,15 @@ load_sna(Machine, Data) ->
             {error, {sna_load_failed, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
     end.
 
-%% @doc Load a 48K Z80 snapshot (v1/v2/v3).
+%% @doc Load a Z80 snapshot (v1/v2/v3).
 -spec load_z80(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
 load_z80(Machine, Data) ->
+    MemModule = Machine#machine_state.memory_module,
     try ezx_z80:parse(Data) of
         H ->
-            MemModule = Machine#machine_state.memory_module,
             Mem = Machine#machine_state.memory,
-
             MemList = binary:bin_to_list(H#z80_header.mem),
-            {_FinalOffset, Mem1} = lists:foldl(
+            {_, Mem1} = lists:foldl(
                 fun(Byte, {Offset, MemAcc}) ->
                     Addr = 16384 + Offset,
                     {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
@@ -206,12 +210,18 @@ load_z80(Machine, Data) ->
                 a_alt = H#z80_header.a_alt, f_alt = H#z80_header.f_alt,
                 b_alt = H#z80_header.bc_alt bsr 8, c_alt = H#z80_header.bc_alt band 16#FF,
                 d_alt = H#z80_header.de_alt bsr 8, e_alt = H#z80_header.de_alt band 16#FF,
-                h_alt = H#z80_header.hl_alt bsr 8, l_alt = H#z80_header.hl_alt band 16#FF
+                h_alt = H#z80_header.hl_alt bsr 8, l_alt = H#z80_header.hl_alt band 16#FF,
+                pending_interrupt = none
             },
             {ok, Machine#machine_state{
                 memory = Mem1,
                 cpu = Cpu1,
-                border_color = H#z80_header.border
+                border_color = H#z80_header.border,
+                t_states = 0,
+                border_changes = [],
+                flash_counter = 0,
+                beeper_pcm = <<>>,
+                screen = <<>>
             }}
     catch
         error:bad_z80_header ->
@@ -280,7 +290,7 @@ write_block(Machine, Addr, [Byte | Rest]) ->
 
 make_load_queue() ->
      [
-        {50, release},
+        {150, release},
         {3, {set, [?KEY_J]}},                   % LOAD
         {10, release},
         {3, {set, [?KEY_SYMB_SHIFT, ?KEY_P]}},  % "
@@ -448,11 +458,15 @@ run_frame(Machine) ->
 run_frame_1(#machine_state{t_states = StartT} = Machine) ->
     Machine0 = Machine#machine_state{border_changes = []},
 
+    Cpu0 = Machine0#machine_state.cpu,
+    Cpu0a = Cpu0#cpu_state{pending_interrupt = none},
+    Machine0a = Machine0#machine_state{cpu = Cpu0a},
+
     Machine1 = case StartT < ?INT_TSTATE of
         true ->
-            run_until_tstates(Machine0, ?INT_TSTATE);
+            run_until_tstates(Machine0a, ?INT_TSTATE);
         false ->
-            Machine0
+            Machine0a
     end,
 
     Cpu1 = Machine1#machine_state.cpu,

@@ -683,7 +683,7 @@ execute_exx(State) ->
     z80_cpu_helpers:advance_tstates(State1, 0).
 
 execute_di(State) ->
-    State#cpu_state{iff1 = 0, iff2 = 0}.
+    State#cpu_state{iff1 = 0, iff2 = 0, pending_interrupt = none}.
 
 execute_ei(State) ->
     State#cpu_state{iff1 = 1, iff2 = 1, ei_block = 1}.

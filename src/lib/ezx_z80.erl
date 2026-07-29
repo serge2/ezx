@@ -66,7 +66,9 @@ parse(<<A:8, F:8, BC:16/little, HL:16/little, PC:16/little, SP:16/little,
         a_alt = Aa, f_alt = Fa,
         ix = IX, iy = IY,
         iff1 = IFF1, iff2 = IFF2,
-        im = IM
+        im = IM,
+        p7ffd = 0,
+        pages = #{}
     },
     case PC of
         0 -> parse_v2v3(Common, Rest);
@@ -103,27 +105,35 @@ parse_v2v3(#z80_header{} = _H, Data) when byte_size(Data) < 2 ->
 parse_v2v3(#z80_header{} = H, <<ExtraLen:16/little, Rest/binary>>) ->
     {H1, BlockData} = parse_extended(H, ExtraLen, Rest),
     Version = case ExtraLen of 23 -> 2; _ -> 3 end,
-    Mem = parse_blocks(BlockData),
-    H1#z80_header{version = Version, mem = Mem}.
+    Pages = parse_blocks(BlockData),
+    Mem = build_48k_memory(Pages),
+    H1#z80_header{version = Version, mem = Mem, pages = Pages}.
 
 %% @doc Parse the extended header section (v2/v3).
 %% Extracts PC, hardware mode, and returns remaining block data.
 %% Raises `{unsupported_z80_version, ExtraLen}' if data is too short.
 -spec parse_extended(#z80_header{}, non_neg_integer(), binary()) -> {#z80_header{}, binary()}.
 parse_extended(#z80_header{} = H, ExtraLen, Data) when byte_size(Data) >= ExtraLen ->
-    <<PC:16/little, HwMode:8, _Flags:(ExtraLen - 3)/bytes, BlockData/binary>> = Data,
-    {H#z80_header{pc = PC, hw_mode = HwMode}, BlockData};
+    <<PC:16/little, HwMode:8, P7ffd:8, _Padding:(ExtraLen - 4)/bytes, BlockData/binary>> = Data,
+    {H#z80_header{pc = PC, hw_mode = HwMode, p7ffd = P7ffd}, BlockData};
 parse_extended(_H, ExtraLen, _Data) ->
     error({unsupported_z80_version, ExtraLen}).
 
 %% --- Memory blocks (v2/v3) ---
 
-%% @doc Parse the memory block list into a flat 48K binary.
+%% @doc Parse memory blocks into a page-number-to-data map.
 %% Each block is either uncompressed (0xFFFF page marker) or RLE-compressed.
--spec parse_blocks(binary()) -> binary().
+-spec parse_blocks(binary()) -> #{non_neg_integer() => binary()}.
 parse_blocks(Rest) ->
-    Pages = parse_blocks_1(Rest, #{}),
-    build_48k_memory(Pages).
+    parse_blocks_1(Rest, #{}).
+
+%% @doc Build aflat 48K binary from pages 4, 5, 8.
+-spec build_48k_memory(#{non_neg_integer() => binary()}) -> binary().
+build_48k_memory(Pages) ->
+    Page4 = maps:get(4, Pages, <<0:16384/unit:8>>),
+    Page5 = maps:get(5, Pages, <<0:16384/unit:8>>),
+    Page8 = maps:get(8, Pages, <<0:16384/unit:8>>),
+    <<Page8/binary, Page4/binary, Page5/binary>>.
 
 %% @private
 %% @doc Recursively parse memory blocks into a page-number-to-data map.
@@ -136,16 +146,6 @@ parse_blocks_1(<<CompLen:16/little, Page, Rest/binary>>, Pages) ->
     <<CompData:CompLen/binary, Rest1/binary>> = Rest,
     Data = decompress_block(CompData),
     parse_blocks_1(Rest1, Pages#{Page => Data}).
-
-%% @private
-%% @doc Assemble a flat 48K memory binary from pages 8, 4, 5.
-%% Layout: Page8 → 0x4000, Page4 → 0x8000, Page5 → 0xC000.
--spec build_48k_memory(#{non_neg_integer() => binary()}) -> binary().
-build_48k_memory(Pages) ->
-    Page4 = maps:get(4, Pages, <<0:16384/unit:8>>),
-    Page5 = maps:get(5, Pages, <<0:16384/unit:8>>),
-    Page8 = maps:get(8, Pages, <<0:16384/unit:8>>),
-    <<Page8/binary, Page4/binary, Page5/binary>>.
 
 %% --- RLE Decompression ---
 

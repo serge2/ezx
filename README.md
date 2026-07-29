@@ -51,8 +51,8 @@ Licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## Legal note
 
-The file `priv/roms/48.rom` is the Sinclair ZX Spectrum 48K ROM.
-It is copyright Amstrad plc. Amstrad has kindly given
-written permission for this ROM to be redistributed freely
-for use with emulators. See http://www.worldofspectrum.org/
+The ROM files in `priv/roms/` are copyright Amstrad plc.
+Amstrad has kindly given written permission for these ROMs
+to be redistributed freely for use with emulators.
+See https://worldofspectrum.net/app/themes/wosc-classic/static/legacy/amstrad-roms.txt
 for details.
