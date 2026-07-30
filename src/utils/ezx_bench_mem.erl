@@ -60,7 +60,7 @@ run(DurationSec) -> compare(DurationSec).
 %% --- Benchmark a single backend ---
 
 bench_one(MemMod, Rom, DurationSec) ->
-    M0 = ezx_emulator:init(z80_cpu, MemMod, ezx_screen, ezx_keyboard, ezx_beeper, Rom),
+    M0 = ezx_emulator:init(z80_cpu, MemMod, ezx_screen, ezx_keyboard, ezx_beeper, undefined, Rom),
 
     M1 = warmup(M0, 100),
 
@@ -70,7 +70,7 @@ bench_one(MemMod, Rom, DurationSec) ->
 
     erlang:garbage_collect(),
 
-    M2 = ezx_emulator:init(z80_cpu, MemMod, ezx_screen, ezx_keyboard, ezx_beeper, Rom),
+    M2 = ezx_emulator:init(z80_cpu, MemMod, ezx_screen, ezx_keyboard, ezx_beeper, undefined, Rom),
     M3 = warmup(M2, 100),
 
     erlang:garbage_collect(),

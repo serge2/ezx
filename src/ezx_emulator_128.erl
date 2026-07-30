@@ -1,11 +1,12 @@
 -module(ezx_emulator_128).
 
 -export([
-    init/6,
+    init/7,
     step/1,
     run_frame/1,
     render_frame/1,
     render_beeper/1,
+    render_ay_channels/1,
     load_sna/2,
     load_z80/2,
     load_tap/2,
@@ -14,7 +15,6 @@
     run_until_tstates/2,
     read_byte/2,
     write_byte/3,
-    read_word/2,
     write_word/3
 ]).
 
@@ -28,8 +28,8 @@
 -define(INT_TSTATE, 32).
 
 %% @doc Create a 128K machine state with 0x7FFD paging support.
--spec init(module(), module(), module(), module(), module(), {binary(), binary()}) -> #machine_state{}.
-init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, {Rom0, Rom1}) ->
+-spec init(module(), module(), module(), module(), module(), module(), {binary(), binary()}) -> #machine_state{}.
+init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, {Rom0, Rom1}) ->
     MemReadFun =
         fun(ExtContext, _TState, Addr) ->
             Memory = ExtContext#ext_context.memory,
@@ -56,7 +56,8 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, {Rom0, Rom
                             Memory = ExtContext#ext_context.memory,
                             {MemModule:get_p7ffd(Memory), ExtContext};
                         false ->
-                            {16#FF, ExtContext}
+                            AY = ExtContext#ext_context.ay,
+                            {AyModule:read(AY), ExtContext}
                     end
             end
         end,
@@ -84,7 +85,14 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, {Rom0, Rom
                             NewMem = MemModule:write_port_7ffd(Memory, Byte),
                             ExtContext#ext_context{memory = NewMem};
                         false ->
-                            ExtContext
+                            case (Port band 16#4000) =:= 0 of
+                                true ->
+                                    AY = ExtContext#ext_context.ay,
+                                    ExtContext#ext_context{ay = AyModule:write(AY, Byte)};
+                                false ->
+                                    AY = ExtContext#ext_context.ay,
+                                    ExtContext#ext_context{ay = AyModule:latch(AY, Byte)}
+                            end
                     end
             end
         end,
@@ -96,10 +104,12 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, {Rom0, Rom
         video_module = VideoModule,
         keyboard_module = KeyboardModule,
         beeper_module = BeeperModule,
+        ay_module = AyModule,
         cpu = Cpu0,
         memory = MemModule:new(Rom0, Rom1),
         beeper = BeeperModule:init(),
-        keyboard = KeyboardModule:default()
+        keyboard = KeyboardModule:default(),
+        ay = AyModule:new()
     }.
 
 %% @doc Load a Z80 v1/v2/v3 snapshot into 128K memory.
@@ -280,6 +290,10 @@ render_frame(Machine) -> ezx_emulator:render_frame(Machine).
 %% @doc Render accumulated beeper PCM.
 -spec render_beeper(#machine_state{}) -> {binary(), #machine_state{}}.
 render_beeper(Machine) -> ezx_emulator:render_beeper(Machine).
+
+%% @doc Render 3 separate AY channel PCMs.
+-spec render_ay_channels(#machine_state{}) -> {binary(), binary(), binary(), #machine_state{}}.
+render_ay_channels(Machine) -> ezx_emulator:render_ay_channels(Machine).
 
 %% @doc Press a keyboard key.
 -spec press_key(#machine_state{}, non_neg_integer()) -> #machine_state{}.

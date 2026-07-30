@@ -25,12 +25,16 @@
     %% PCM audio output from the last completed frame (binary, S16LE mono).
     beeper_pcm = <<>>,
     flash_counter = 0, %Used for flash attribute toggling (0..31)
-    screen = <<>>
+    screen = <<>>,
+    %% AY-3-8912 audio state (128K only).
+    ay_module = undefined :: module() | undefined,
+    ay = undefined
 }).
 
 -record(ext_context, {
     memory,
     border_changes = [],
     keyboard,
-    beeper = undefined
+    beeper = undefined,
+    ay = undefined
 }).

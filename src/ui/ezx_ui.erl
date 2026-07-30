@@ -20,9 +20,9 @@
 -define(MENU_CROP, 4002).
 -define(MENU_MUTE, 3002).
 
-%% Audio: 44100 Hz * 2 bytes = 88200 bytes/sec
--define(AUDIO_RATE, 88200).
--define(BYTES_PER_FRAME, 1764).  %% 882 samples * 2 bytes
+%% Audio: 44100 Hz * 2 channels * 2 bytes = 176400 bytes/sec
+-define(AUDIO_RATE, 176400).
+-define(BYTES_PER_FRAME, 3528).  %% 882 samples * 2 channels * 2 bytes
 
 -record(state, {
     machine   :: #machine_state{} | undefined,
@@ -50,7 +50,14 @@
     muted = false :: boolean(),
     menu_bar :: wxMenuBar:wxMenuBar(),
     recent_files = [] :: [string()],
-    diag_file :: pid() | undefined
+    diag_file :: pid() | undefined,
+    ay_pan_a = left :: left | both | right,
+    ay_pan_b = both :: left | both | right,
+    ay_pan_c = right :: left | both | right,
+    ay_vol_a = 100 :: 0..100,
+    ay_vol_b = 100 :: 0..100,
+    ay_vol_c = 100 :: 0..100,
+    ay_master_vol = 100 :: 0..100
 }).
 
 
@@ -122,7 +129,7 @@ init(_Options) ->
     wxWindow:setClientSize(Frame, DefW, DefH),
     wxWindow:setFocus(Panel),
 
-    Cmd = "aplay -t raw -f S16_LE -r 44100 -c 1 --buffer-size=441 -q",
+    Cmd = "aplay -t raw -f S16_LE -r 44100 -c 2 --buffer-size=441 -q",
     AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
 
     Now = erlang:monotonic_time(microsecond),
@@ -184,10 +191,10 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
 
 
         BeepT0 = erlang:monotonic_time(microsecond),
-        {PCM, Machine3} = ezx_emulator:render_beeper(Machine2),
+        {BeeperPcm, Machine3a} = ezx_emulator:render_beeper(Machine2),
+        {ChA, ChB, ChC, Machine3} = ezx_emulator:render_ay_channels(Machine3a),
+        PCM = mix_ay_stereo(BeeperPcm, ChA, ChB, ChC, State),
         BeepT1 = erlang:monotonic_time(microsecond),
-        % Machine3 = Machine2,
-        % PCM = Machine3#machine_state.beeper_pcm,
         case State#state.diag_file of
             undefined -> ok;
             Fd -> file:write(Fd, PCM)
@@ -657,3 +664,48 @@ show_load_error(Frame, File, {error, {Code, Detail}}) ->
                                                   {style, ?wxOK bor ?wxICON_ERROR}]),
     wxDialog:showModal(Dialog),
     wxMessageDialog:destroy(Dialog).
+
+%% @doc Mix mono beeper + 3 mono AY channels into stereo S16LE with per-channel pan and volume.
+%% Empty AY channels are padded with silence.
+-spec mix_ay_stereo(binary(), binary(), binary(), binary(), #state{}) -> binary().
+mix_ay_stereo(BeeperPcm, ChA, ChB, ChC, #state{ay_pan_a = PanA, ay_pan_b = PanB, ay_pan_c = PanC,
+                                                 ay_vol_a = VolA, ay_vol_b = VolB, ay_vol_c = VolC,
+                                                 ay_master_vol = Master}) ->
+    Len = byte_size(BeeperPcm),
+    ChA1 = pad_channel(ChA, Len),
+    ChB1 = pad_channel(ChB, Len),
+    ChC1 = pad_channel(ChC, Len),
+    mix_samples(BeeperPcm, ChA1, ChB1, ChC1, PanA, PanB, PanC, VolA, VolB, VolC, Master, <<>>).
+
+-spec pad_channel(binary(), non_neg_integer()) -> binary().
+pad_channel(<<>>, Len) -> <<0:Len/unit:8>>;
+pad_channel(Pcm, _Len) -> Pcm.
+
+-spec mix_samples(binary(), binary(), binary(), binary(), left|both|right, left|both|right, left|both|right,
+                  0..100, 0..100, 0..100, 0..100, binary()) -> binary().
+mix_samples(<<>>, <<>>, <<>>, <<>>, _PanA, _PanB, _PanC, _VA, _VB, _VC, _M, Acc) -> Acc;
+mix_samples(<<B:16/little-signed, BR/binary>>,
+            <<A:16/little-signed, AR/binary>>,
+            <<B_:16/little-signed, BB/binary>>,
+            <<C:16/little-signed, CR/binary>>,
+            PanA, PanB, PanC, VA, VB, VC, M, Acc) ->
+    A0 = (A * VA) div 100,
+    B0 = (B_ * VB) div 100,
+    C0 = (C * VC) div 100,
+    L = clamp16(((B + pan_left(A0, PanA) + pan_left(B0, PanB) + pan_left(C0, PanC)) div 2) * M div 100),
+    R = clamp16(((B + pan_right(A0, PanA) + pan_right(B0, PanB) + pan_right(C0, PanC)) div 2) * M div 100),
+    mix_samples(BR, AR, BB, CR, PanA, PanB, PanC, VA, VB, VC, M,
+                <<Acc/binary, L:16/little-signed, R:16/little-signed>>).
+
+pan_left(_V, left)  -> _V;
+pan_left(_V, both)  -> _V;
+pan_left(_V, right) -> 0.
+
+pan_right(_V, left)  -> 0;
+pan_right(_V, both)  -> _V;
+pan_right(_V, right) -> _V.
+
+-spec clamp16(integer()) -> -32768..32767.
+clamp16(S) when S > 32767 -> 32767;
+clamp16(S) when S < -32768 -> -32768;
+clamp16(S) -> S.

@@ -8,11 +8,12 @@
 -include("input/ezx_keyboard.hrl").
 
 -export([
-    init/6,
+    init/7,
     step/1,
     run_frame/1,
     render_frame/1,
     render_beeper/1,
+    render_ay_channels/1,
     load_sna/2,
     load_z80/2,
     load_tap/2,
@@ -31,8 +32,9 @@
 -define(DEFAULT_BORDER, 1).
 
 %% @doc Create a new machine state with initialized CPU and memory components.
--spec init(module(), module(), module(), module(), module(), binary()) -> #machine_state{}.
-init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
+-spec init(module(), module(), module(), module(), module(), module() | undefined, binary()) -> #machine_state{}.
+init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, Rom) ->
+    HasAy = AyModule =/= undefined,
     MemReadFun =
         fun(ExtContext, _TState, Addr) ->
             Memory = ExtContext#ext_context.memory,
@@ -49,14 +51,18 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
         fun(ExtContext, _TState, Port) ->
             case Port band 16#FF of
                 16#FE ->
-                    %% Keyboard: upper byte selects half-rows (active low).
-                    %% Multiple half-rows can be selected; results are ANDed.
                     Keyboard = ExtContext#ext_context.keyboard,
                     UpperByte = (Port bsr 8) band 16#FF,
                     Result = KeyboardModule:decode(Keyboard, UpperByte),
-                    {Result bor 16#E0, ExtContext}; % Set high bits 5-7 to 1 (floating bus)
+                    {Result bor 16#E0, ExtContext};
                 _ ->
-                    {16#FF, ExtContext}
+                    case HasAy andalso (Port band 16#8002) =/= 0 of
+                        true ->
+                            AY = ExtContext#ext_context.ay,
+                            {AyModule:read(AY), ExtContext};
+                        false ->
+                            {16#FF, ExtContext}
+                    end
             end
         end,
     PortWriteFun =
@@ -77,7 +83,18 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
                         beeper = Beeper1
                     };
                 _ ->
-                    ExtContext
+                    case HasAy andalso (Port band 16#8002) =/= 0 of
+                        true ->
+                            AY = ExtContext#ext_context.ay,
+                            case (Port band 16#4000) =:= 0 of
+                                true ->
+                                    ExtContext#ext_context{ay = AyModule:write(AY, Byte)};
+                                false ->
+                                    ExtContext#ext_context{ay = AyModule:latch(AY, Byte)}
+                            end;
+                        false ->
+                            ExtContext
+                    end
             end
         end,
     BusReadFun = fun() -> 16#FF end,
@@ -88,12 +105,12 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, Rom) ->
         video_module = VideoModule,
         keyboard_module = KeyboardModule,
         beeper_module = BeeperModule,
+        ay_module = AyModule,
         cpu = Cpu0,
         memory = MemModule:new(Rom),
-        % mem_read_fun = MemReadFun,
-        % mem_write_fun = MemWriteFun,
         beeper = BeeperModule:init(),
-        keyboard = KeyboardModule:default()
+        keyboard = KeyboardModule:default(),
+        ay = case HasAy of true -> AyModule:new(); false -> undefined end
     }.
 
 -spec press_key(#machine_state{}, non_neg_integer()) -> #machine_state{}.
@@ -426,27 +443,30 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
         memory = Memory0,
         border_changes = [],
         keyboard = Machine#machine_state.keyboard,
-        beeper = Beeper0
+        beeper = Beeper0,
+        ay = Machine#machine_state.ay
     },
     Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = MachineTStates}),
     Ticks = Cpu1#cpu_state.t_states - MachineTStates,
     NewMachineTStates = MachineTStates + Ticks,
-    Memory1 = Cpu1#cpu_state.ext_context#ext_context.memory,
+    ExtCtx = Cpu1#cpu_state.ext_context,
+    Memory1 = ExtCtx#ext_context.memory,
     %% Propagate border_changes accumulated during this step.
-    StepChanges = Cpu1#cpu_state.ext_context#ext_context.border_changes,
+    StepChanges = ExtCtx#ext_context.border_changes,
     MergedChanges = merge_border_changes(Machine#machine_state.border_changes, StepChanges),
     NewBorder = case StepChanges of
         [{_, Color} | _] -> Color;
         [] -> Machine#machine_state.border_color
     end,
-    Beeper1 = Cpu1#cpu_state.ext_context#ext_context.beeper,
+    Beeper1 = ExtCtx#ext_context.beeper,
     Machine#machine_state{
         cpu = Cpu1#cpu_state{t_states = NewMachineTStates},
         memory = Memory1,
         t_states = NewMachineTStates,
         border_color = NewBorder,
         border_changes = MergedChanges,
-        beeper = Beeper1
+        beeper = Beeper1,
+        ay = ExtCtx#ext_context.ay
     }.
 
 %% @doc Execute one complete frame (69888 T-states).
@@ -503,13 +523,21 @@ render_frame(Machine) ->
     Videobuffer = MemModule:read_block(Mem, 16384, 6144 + 768),
     VideoModule:render_frame(Videobuffer, FlashOn, Changes, CB).
 
-%% @doc Render the beeper sound for the current frame to a flat PCM binary.
+%% @doc Render accumulated beeper PCM (mono S16LE).
 -spec render_beeper(#machine_state{}) -> {binary(), #machine_state{}}.
 render_beeper(Machine) ->
     BeeperModule = Machine#machine_state.beeper_module,
     Beeper = Machine#machine_state.beeper,
     {PCM, Beeper1} = BeeperModule:flush_frame(Beeper),
     {PCM, Machine#machine_state{beeper = Beeper1, beeper_pcm = PCM}}.
+
+%% @doc Render 3 separate AY channel PCMs (mono S16LE, one per channel).
+-spec render_ay_channels(#machine_state{}) -> {binary(), binary(), binary(), #machine_state{}}.
+render_ay_channels(#machine_state{ay = undefined} = Machine) ->
+    {<<>>, <<>>, <<>>, Machine};
+render_ay_channels(#machine_state{ay = AY, ay_module = AyModule} = Machine) ->
+    {ChA, ChB, ChC, AY1} = AyModule:render_channels(AY, ?TSTATES_PER_FRAME),
+    {ChA, ChB, ChC, Machine#machine_state{ay = AY1}}.
 
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.
