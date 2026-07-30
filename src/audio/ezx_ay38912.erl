@@ -122,7 +122,7 @@ latch(#ay_state{} = AY, Reg) ->
 -spec write(state(), byte()) -> state().
 write(#ay_state{regs = Regs} = AY, Value) ->
     Latch = AY#ay_state.latch,
-    NRegs = set_element(Latch + 1, Regs, Value band 16#FF),
+    NRegs = setelement(Latch + 1, Regs, Value band 16#FF),
     AY1 = AY#ay_state{regs = NRegs},
     case Latch of
         ?REG_NOISE_PERIOD -> AY1#ay_state{noise_lfsr = 16#10000};
@@ -332,21 +332,3 @@ amplitude(Regs, RegIdx, EnvLevel) ->
         0 -> V band 16#0F;
         1 -> EnvLevel
     end.
-
--spec set_element(pos_integer(), tuple(), byte()) -> tuple().
-set_element(1, {_,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P}, V) -> {V,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P};
-set_element(2, {A,_,C,D,E,F,G,H,I,J,K,L,M,N,O,P}, V) -> {A,V,C,D,E,F,G,H,I,J,K,L,M,N,O,P};
-set_element(3, {A,B,_,D,E,F,G,H,I,J,K,L,M,N,O,P}, V) -> {A,B,V,D,E,F,G,H,I,J,K,L,M,N,O,P};
-set_element(4, {A,B,C,_,E,F,G,H,I,J,K,L,M,N,O,P}, V) -> {A,B,C,V,E,F,G,H,I,J,K,L,M,N,O,P};
-set_element(5, {A,B,C,D,_,F,G,H,I,J,K,L,M,N,O,P}, V) -> {A,B,C,D,V,F,G,H,I,J,K,L,M,N,O,P};
-set_element(6, {A,B,C,D,E,_,G,H,I,J,K,L,M,N,O,P}, V) -> {A,B,C,D,E,V,G,H,I,J,K,L,M,N,O,P};
-set_element(7, {A,B,C,D,E,F,_,H,I,J,K,L,M,N,O,P}, V) -> {A,B,C,D,E,F,V,H,I,J,K,L,M,N,O,P};
-set_element(8, {A,B,C,D,E,F,G,_,I,J,K,L,M,N,O,P}, V) -> {A,B,C,D,E,F,G,V,I,J,K,L,M,N,O,P};
-set_element(9, {A,B,C,D,E,F,G,H,_,J,K,L,M,N,O,P}, V) -> {A,B,C,D,E,F,G,H,V,J,K,L,M,N,O,P};
-set_element(10,{A,B,C,D,E,F,G,H,I,_,K,L,M,N,O,P}, V) -> {A,B,C,D,E,F,G,H,I,V,K,L,M,N,O,P};
-set_element(11,{A,B,C,D,E,F,G,H,I,J,_,L,M,N,O,P}, V) -> {A,B,C,D,E,F,G,H,I,J,V,L,M,N,O,P};
-set_element(12,{A,B,C,D,E,F,G,H,I,J,K,_,M,N,O,P}, V) -> {A,B,C,D,E,F,G,H,I,J,K,V,M,N,O,P};
-set_element(13,{A,B,C,D,E,F,G,H,I,J,K,L,_,N,O,P}, V) -> {A,B,C,D,E,F,G,H,I,J,K,L,V,N,O,P};
-set_element(14,{A,B,C,D,E,F,G,H,I,J,K,L,M,_,O,P}, V) -> {A,B,C,D,E,F,G,H,I,J,K,L,M,V,O,P};
-set_element(15,{A,B,C,D,E,F,G,H,I,J,K,L,M,N,_,P}, V) -> {A,B,C,D,E,F,G,H,I,J,K,L,M,N,V,P};
-set_element(16,{A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,_}, V) -> {A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,V}.
