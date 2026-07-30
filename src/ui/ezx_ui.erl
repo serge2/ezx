@@ -51,13 +51,11 @@
     menu_bar :: wxMenuBar:wxMenuBar(),
     recent_files = [] :: [string()],
     diag_file :: pid() | undefined,
-    ay_pan_a = left :: left | both | right,
-    ay_pan_b = both :: left | both | right,
-    ay_pan_c = right :: left | both | right,
-    ay_vol_a = 100 :: 0..100,
-    ay_vol_b = 100 :: 0..100,
-    ay_vol_c = 100 :: 0..100,
-    ay_master_vol = 100 :: 0..100
+    beeper_vol = 100 :: 0..100,
+    ay_master_vol = 100 :: 0..100,
+    ay_stereo_mode = acb :: acb | abc | mono,
+    sound_dialog_refs = undefined :: {wxDialog:wxDialog(), wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice()} | undefined,
+    file_dialog = undefined :: wxFileDialog:wxFileDialog() | undefined
 }).
 
 
@@ -101,6 +99,9 @@ init(_Options) ->
     wxMenu:appendRadioItem(ViewMenu, ?MENU_SCALE_BASE + 2, "Scale 3x"),
     wxMenu:appendRadioItem(ViewMenu, ?MENU_SCALE_BASE + 3, "Scale 4x"),
     wxMenuBar:append(MenuBar, ViewMenu, "View"),
+    SettingsMenu = wxMenu:new(),
+    wxMenu:append(SettingsMenu, ?MENU_SETTINGS_SOUND, "Sound"),
+    wxMenuBar:append(MenuBar, SettingsMenu, "Settings"),
     ActionsMenu = wxMenu:new(),
     wxMenu:append(ActionsMenu, ?MENU_RESET, "Reset\tF5", [{help, "Reset the emulator"}]),
     wxMenu:appendSeparator(ActionsMenu),
@@ -133,6 +134,9 @@ init(_Options) ->
     AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
 
     Now = erlang:monotonic_time(microsecond),
+    BeeperVol = maps:get(beeper_vol, Cfg0, 100),
+    AyVol = maps:get(ay_master_vol, Cfg0, 100),
+    Mode = maps:get(ay_stereo_mode, Cfg0, acb),
     State0 = #state{
         machine = undefined,
         machine_type = MachineType,
@@ -142,6 +146,9 @@ init(_Options) ->
         option_crop_border = CropBorder,
         option_integer_scaling = IntScaling,
         muted = Muted,
+        beeper_vol = BeeperVol,
+        ay_master_vol = AyVol,
+        ay_stereo_mode = Mode,
         aplay_port = AplayPort,
         audio_start_us = Now,
         perf_start_us = Now,
@@ -195,6 +202,11 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
         {ChA, ChB, ChC, Machine3} = ezx_emulator:render_ay_channels(Machine3a),
         PCM = mix_ay_stereo(BeeperPcm, ChA, ChB, ChC, State),
         BeepT1 = erlang:monotonic_time(microsecond),
+        case FC0 rem 100 of
+            0 -> io:format("audio: beeper=~pB ay=~p/~p/~pB pcm=~pB~n",
+                           [byte_size(BeeperPcm), byte_size(ChA), byte_size(ChB), byte_size(ChC), byte_size(PCM)]);
+            _ -> ok
+        end,
         case State#state.diag_file of
             undefined -> ok;
             Fd -> file:write(Fd, PCM)
@@ -333,9 +345,15 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
             {noreply, State}
     end;
 
-handle_info(#wx{event = #wxClose{}}, State) ->
-    init:stop(),
-    {stop, normal, State};
+handle_info(#wx{event = #wxClose{}} = Wx, #state{frame = Frame, sound_dialog_refs = DialRefs, file_dialog = FileDlg} = State) ->
+    case Wx#wx.obj of
+        Frame ->
+            cleanup_dialogs(DialRefs, FileDlg),
+            init:stop(),
+            {stop, normal, State};
+        Obj ->
+            {noreply, handle_dialog_close(Obj, DialRefs, FileDlg, State)}
+    end;
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F11}}, State) ->
     toggle_fullscreen(State);
@@ -481,6 +499,49 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
             {noreply, NewState}
     end;
 
+handle_info(#wx{id = ?MENU_SETTINGS_SOUND, event = #wxCommand{type = command_menu_selected}},
+            #state{frame = Frame, beeper_vol = BV, ay_master_vol = AV, ay_stereo_mode = Mode} = State) ->
+    Refs = ezx_sound_dialog:open(Frame, BV, AV, Mode),
+    {noreply, State#state{sound_dialog_refs = Refs}};
+
+handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
+            #state{sound_dialog_refs = {Dialog, BeeperSlider, AySlider, ModeChoice}} = State) ->
+    BV = wxSlider:getValue(BeeperSlider),
+    AV = wxSlider:getValue(AySlider),
+    Mode = ezx_sound_dialog:stereo_mode_from_index(wxChoice:getSelection(ModeChoice)),
+    wxDialog:destroy(Dialog),
+    wxWindow:update(State#state.frame),
+    NewState = State#state{beeper_vol = BV, ay_master_vol = AV, ay_stereo_mode = Mode,
+                           sound_dialog_refs = undefined},
+    save_config(NewState),
+    {noreply, NewState};
+
+handle_info(#wx{id = ?wxID_CANCEL, event = #wxCommand{type = command_button_clicked}},
+            #state{sound_dialog_refs = {Dialog, _, _, _}} = State) ->
+    wxDialog:destroy(Dialog),
+    {noreply, State#state{sound_dialog_refs = undefined}};
+
+handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
+            #state{file_dialog = Dialog} = State) when Dialog =/= undefined ->
+    File = wxFileDialog:getPath(Dialog),
+    wxFileDialog:destroy(Dialog),
+    case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type) of
+        {ok, NewMachine} ->
+            io:format("Loaded: ~s~n", [File]),
+            NewRecent = ezx_recent_files:update(File, State#state.recent_files),
+            ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
+            {noreply, State#state{machine = NewMachine, recent_files = NewRecent,
+                                   file_dialog = undefined}};
+        {error, _Code} = Err ->
+            show_load_error(State#state.frame, File, Err),
+            {noreply, State#state{file_dialog = undefined}}
+    end;
+
+handle_info(#wx{id = ?wxID_CANCEL, event = #wxCommand{type = command_button_clicked}},
+            #state{file_dialog = Dialog} = State) when Dialog =/= undefined ->
+    wxFileDialog:destroy(Dialog),
+    {noreply, State#state{file_dialog = undefined}};
+
 handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
             #state{machine_type = OldType} = State) when Id >= ?MENU_MACHINE_BASE, Id < ?MENU_MACHINE_BASE + 2 ->
     NewType = machine_type_from_offset(Id - ?MENU_MACHINE_BASE),
@@ -547,28 +608,15 @@ do_reset(State) ->
             {noreply, State#state{machine = undefined, frame_count = 0}}
     end.
 
-handle_open_file(State) ->
+handle_open_file(#state{file_dialog = undefined} = State) ->
     Dialog = wxFileDialog:new(State#state.frame, [{message, "Load snapshot or tape"},
                                                    {wildCard, "ZX Spectrum files (*.sna,*.z80,*.tap)|*.sna;*.z80;*.tap|SNA files (*.sna)|*.sna|Z80 files (*.z80)|*.z80|TAP files (*.tap)|*.tap"},
                                                    {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}]),
-    case wxFileDialog:showModal(Dialog) of
-        ?wxID_OK ->
-            File = wxFileDialog:getPath(Dialog),
-            wxFileDialog:destroy(Dialog),
-            case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type) of
-                {ok, NewMachine} ->
-                    io:format("Loaded: ~s~n", [File]),
-                    NewRecent = ezx_recent_files:update(File, State#state.recent_files),
-                    ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
-                    {noreply, State#state{machine = NewMachine, recent_files = NewRecent}};
-                {error, _Code} = Err ->
-                    show_load_error(State#state.frame, File, Err),
-                    {noreply, State}
-            end;
-        _ ->
-            wxFileDialog:destroy(Dialog),
-            {noreply, State}
-    end.
+    wxFileDialog:connect(Dialog, command_button_clicked),
+    wxDialog:show(Dialog),
+    {noreply, State#state{file_dialog = Dialog}};
+handle_open_file(State) ->
+    {noreply, State}.
 
 reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = State) ->
     wxFrame:showFullScreen(Frame, false),
@@ -641,8 +689,13 @@ windowed_client_size(Crop, S) ->
     end,
     {TW * S, TH * S}.
 
-save_config(#state{machine_type = MType, option_crop_border = Crop, option_integer_scaling = Exact, muted = Muted, scale = Scale}) ->
-    ezx_config:save(#{machine_type => MType, crop_border => Crop, integer_scaling => Exact, muted => Muted, scale => Scale}).
+
+
+save_config(#state{machine_type = MType, option_crop_border = Crop, option_integer_scaling = Exact,
+                   muted = Muted, scale = Scale, beeper_vol = BV, ay_master_vol = AV, ay_stereo_mode = Mode}) ->
+    ezx_config:save(#{machine_type => MType, crop_border => Crop, integer_scaling => Exact,
+                       muted => Muted, scale => Scale,
+                       beeper_vol => BV, ay_master_vol => AV, ay_stereo_mode => Mode}).
 
 show_load_error(Frame, File, {error, {Code, Detail}}) ->
     Msg = maps:get(Code, #{
@@ -665,17 +718,18 @@ show_load_error(Frame, File, {error, {Code, Detail}}) ->
     wxDialog:showModal(Dialog),
     wxMessageDialog:destroy(Dialog).
 
-%% @doc Mix mono beeper + 3 mono AY channels into stereo S16LE with per-channel pan and volume.
+%% @doc Mix mono beeper + 3 mono AY channels into stereo S16LE.
+%% Panning and volume derived from stereo mode and master/global volumes.
 %% Empty AY channels are padded with silence.
 -spec mix_ay_stereo(binary(), binary(), binary(), binary(), #state{}) -> binary().
-mix_ay_stereo(BeeperPcm, ChA, ChB, ChC, #state{ay_pan_a = PanA, ay_pan_b = PanB, ay_pan_c = PanC,
-                                                 ay_vol_a = VolA, ay_vol_b = VolB, ay_vol_c = VolC,
-                                                 ay_master_vol = Master}) ->
+mix_ay_stereo(BeeperPcm, ChA, ChB, ChC, #state{ay_master_vol = AyVol, ay_stereo_mode = Mode,
+                                                 beeper_vol = BeeperVol}) ->
+    {PanA, PanB, PanC} = ezx_sound_dialog:stereo_pans(Mode),
     Len = byte_size(BeeperPcm),
     ChA1 = pad_channel(ChA, Len),
     ChB1 = pad_channel(ChB, Len),
     ChC1 = pad_channel(ChC, Len),
-    mix_samples(BeeperPcm, ChA1, ChB1, ChC1, PanA, PanB, PanC, VolA, VolB, VolC, Master, <<>>).
+    mix_samples(BeeperPcm, ChA1, ChB1, ChC1, PanA, PanB, PanC, AyVol, AyVol, AyVol, BeeperVol, <<>>).
 
 -spec pad_channel(binary(), non_neg_integer()) -> binary().
 pad_channel(<<>>, Len) -> <<0:Len/unit:8>>;
@@ -683,19 +737,34 @@ pad_channel(Pcm, _Len) -> Pcm.
 
 -spec mix_samples(binary(), binary(), binary(), binary(), left|both|right, left|both|right, left|both|right,
                   0..100, 0..100, 0..100, 0..100, binary()) -> binary().
-mix_samples(<<>>, <<>>, <<>>, <<>>, _PanA, _PanB, _PanC, _VA, _VB, _VC, _M, Acc) -> Acc;
+mix_samples(<<>>, <<>>, <<>>, <<>>, _PanA, _PanB, _PanC, _VA, _VB, _VC, _BV, Acc) -> Acc;
 mix_samples(<<B:16/little-signed, BR/binary>>,
             <<A:16/little-signed, AR/binary>>,
             <<B_:16/little-signed, BB/binary>>,
             <<C:16/little-signed, CR/binary>>,
-            PanA, PanB, PanC, VA, VB, VC, M, Acc) ->
+            PanA, PanB, PanC, VA, VB, VC, BV, Acc) ->
+    B0 = (B * BV) div 100,
     A0 = (A * VA) div 100,
-    B0 = (B_ * VB) div 100,
+    B1 = (B_ * VB) div 100,
     C0 = (C * VC) div 100,
-    L = clamp16(((B + pan_left(A0, PanA) + pan_left(B0, PanB) + pan_left(C0, PanC)) div 2) * M div 100),
-    R = clamp16(((B + pan_right(A0, PanA) + pan_right(B0, PanB) + pan_right(C0, PanC)) div 2) * M div 100),
-    mix_samples(BR, AR, BB, CR, PanA, PanB, PanC, VA, VB, VC, M,
+    L = clamp16((B0 + pan_left(A0, PanA) + pan_left(B1, PanB) + pan_left(C0, PanC)) div 2),
+    R = clamp16((B0 + pan_right(A0, PanA) + pan_right(B1, PanB) + pan_right(C0, PanC)) div 2),
+    mix_samples(BR, AR, BB, CR, PanA, PanB, PanC, VA, VB, VC, BV,
                 <<Acc/binary, L:16/little-signed, R:16/little-signed>>).
+
+cleanup_dialogs(undefined, undefined) -> ok;
+cleanup_dialogs({D, _, _, _}, undefined) -> wxDialog:destroy(D);
+cleanup_dialogs(undefined, FD) -> wxFileDialog:destroy(FD);
+cleanup_dialogs({D, _, _, _}, FD) -> wxDialog:destroy(D), wxFileDialog:destroy(FD).
+
+handle_dialog_close(Obj, {Obj, _, _, _}, _FileDlg, State) ->
+    wxDialog:destroy(Obj),
+    State#state{sound_dialog_refs = undefined};
+handle_dialog_close(Obj, _DialRefs, Obj, State) ->
+    wxFileDialog:destroy(Obj),
+    State#state{file_dialog = undefined};
+handle_dialog_close(_Obj, _DialRefs, _FileDlg, State) ->
+    State.
 
 pan_left(_V, left)  -> _V;
 pan_left(_V, both)  -> _V;

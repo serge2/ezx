@@ -17,7 +17,7 @@ init_virtual_machine('128k') ->
 init_virtual_machine('48k') ->
     case catch read_rom("48.rom") of
         Rom when byte_size(Rom) =:= 16384 ->
-            {ok, ezx_emulator:init(z80_cpu, ezx_memory_48_pages512, ezx_screen, ezx_keyboard, ezx_beeper2, undefined, Rom)};
+            {ok, ezx_emulator:init(z80_cpu, ezx_memory_48_pages512, ezx_screen, ezx_keyboard, ezx_beeper2, ezx_ay38912, Rom)};
         {'EXIT', _} ->
             {error, {rom_not_found, <<"48K ROM not found (48.rom)">>}};
         _ ->
