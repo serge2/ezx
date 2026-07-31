@@ -57,7 +57,11 @@
     ay_master_vol = 100 :: 0..100,
     ay_stereo_mode = acb :: acb | abc | mono,
     sound_dialog_refs = undefined :: {wxDialog:wxDialog(), wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice()} | undefined,
-    file_dialog = undefined :: wxFileDialog:wxFileDialog() | undefined
+    mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()} | undefined,
+    file_dialog = undefined :: wxFileDialog:wxFileDialog() | undefined,
+    blank_cursor = undefined :: wxCursor:wxCursor() | undefined,
+    cursor_hidden = false :: boolean(),
+    mouse = undefined :: any()
 }).
 
 
@@ -103,6 +107,8 @@ init(_Options) ->
     wxMenuBar:append(MenuBar, ViewMenu, "View"),
     SettingsMenu = wxMenu:new(),
     wxMenu:append(SettingsMenu, ?MENU_SETTINGS_SOUND, "Sound"),
+    wxMenu:append(SettingsMenu, ?MENU_SETTINGS_MOUSE, "Mouse",
+                  [{help, "Configure the Kempston mouse (ports 0xFADF/0xFBDF/0xFFDF)"}]),
     wxMenuBar:append(MenuBar, SettingsMenu, "Settings"),
     ActionsMenu = wxMenu:new(),
     wxMenu:append(ActionsMenu, ?MENU_RESET, "Reset\tF5", [{help, "Reset the emulator"}]),
@@ -120,6 +126,9 @@ init(_Options) ->
     IntScaling = maps:get(integer_scaling, Cfg0, false),
     Muted = maps:get(muted, Cfg0, false),
     PerfReport = maps:get(perf_report, Cfg0, false),
+    KempstonMouse = maps:get(kempston_mouse, Cfg0, false),
+    MouseSwap = maps:get(mouse_swap_buttons, Cfg0, false),
+    Mouse = ezx_ui_mouse:new(KempstonMouse, MouseSwap),
     wxMenu:check(EmulatorMenu, ?MENU_MACHINE_BASE + machine_type_offset(MachineType), true),
     wxMenu:check(ViewMenu, ?MENU_CROP, CropBorder),
     wxMenu:check(ViewMenu, ?MENU_CROP_EXACT, IntScaling),
@@ -132,6 +141,16 @@ init(_Options) ->
     wxWindow:setBackgroundStyle(Panel, ?wxBG_STYLE_PAINT),
     wxPanel:connect(Panel, key_down),
     wxPanel:connect(Panel, key_up),
+    wxPanel:connect(Panel, motion),
+    wxPanel:connect(Panel, left_down),
+    wxPanel:connect(Panel, left_up),
+    wxPanel:connect(Panel, right_down),
+    wxPanel:connect(Panel, right_up),
+    wxPanel:connect(Panel, middle_down),
+    wxPanel:connect(Panel, middle_up),
+    wxPanel:connect(Panel, enter_window),
+    wxPanel:connect(Panel, leave_window),
+    BlankCursor = wxCursor:new(?wxCURSOR_BLANK),
     wxFrame:connect(Frame, close_window),
     wxFrame:show(Frame),
     {DefW, DefH} = windowed_client_size(CropBorder, InitScale0),
@@ -150,6 +169,7 @@ init(_Options) ->
         machine_type = MachineType,
         frame = Frame,
         panel = Panel,
+        blank_cursor = BlankCursor,
         scale = InitScale0,
         option_crop_border = CropBorder,
         option_integer_scaling = IntScaling,
@@ -162,12 +182,14 @@ init(_Options) ->
         audio_start_us = Now,
         perf_start_us = Now,
         menu_bar = MenuBar,
-        recent_files = RecentFiles0
+        recent_files = RecentFiles0,
+        mouse = Mouse
     },
     case ezx_ui_lib:init_virtual_machine(MachineType) of
         {ok, Machine} ->
+            Machine1 = ezx_ui_mouse:apply_to_machine(Mouse, Machine),
             erlang:send_after(0, self(), frame_tick),
-            {ok, State0#state{machine = Machine}};
+            {ok, State0#state{machine = Machine1}};
         {error, {Code, Detail}} ->
             Title = "ezx - ROM error",
             Msg = case Code of
@@ -356,14 +378,15 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
             {noreply, State}
     end;
 
-handle_info(#wx{event = #wxClose{}} = Wx, #state{frame = Frame, sound_dialog_refs = DialRefs, file_dialog = FileDlg} = State) ->
+handle_info(#wx{event = #wxClose{}} = Wx, #state{frame = Frame, sound_dialog_refs = DialRefs,
+                                                 mouse_dialog_refs = MouseRefs, file_dialog = FileDlg} = State) ->
     case Wx#wx.obj of
         Frame ->
-            cleanup_dialogs(DialRefs, FileDlg),
+            cleanup_dialogs(DialRefs, MouseRefs, FileDlg),
             init:stop(),
             {stop, normal, State};
         Obj ->
-            {noreply, handle_dialog_close(Obj, DialRefs, FileDlg, State)}
+            {noreply, handle_dialog_close(Obj, DialRefs, MouseRefs, FileDlg, State)}
     end;
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F11}}, State) ->
@@ -371,7 +394,10 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F11}}, State) ->
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_ESCAPE}},
             #state{fullscreen = true} = State) ->
-    toggle_fullscreen(State);
+    toggle_fullscreen(show_cursor(State));
+
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_ESCAPE}}, State) ->
+    {noreply, show_cursor(State)};
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F5}}, #state{machine = undefined} = State) ->
     {noreply, State};
@@ -421,6 +447,48 @@ handle_info(#wx{event = #wxKey{type = key_up, keyCode = Key, rawCode = _RawCode}
     NewMachine = ezx_emulator:release_key(Machine, Key),
     {noreply, State#state{machine = NewMachine}};
 
+%% --- Kempston mouse events ---
+
+handle_info(#wx{event = #wxMouse{type = motion, x = X, y = Y}},
+            #state{machine = Machine, mouse = Mouse, scale = Scale} = State) ->
+    {Mouse1, Machine1} = ezx_ui_mouse:motion(Mouse, Machine, X, Y, Scale),
+    {noreply, (hide_cursor(State))#state{machine = Machine1, mouse = Mouse1}};
+
+handle_info(#wx{event = #wxMouse{type = left_down}}, State) ->
+    mouse_button(State, left, true);
+handle_info(#wx{event = #wxMouse{type = left_up}}, State) ->
+    mouse_button(State, left, false);
+handle_info(#wx{event = #wxMouse{type = right_down}}, State) ->
+    mouse_button(State, right, true);
+handle_info(#wx{event = #wxMouse{type = right_up}}, State) ->
+    mouse_button(State, right, false);
+handle_info(#wx{event = #wxMouse{type = middle_down}}, State) ->
+    mouse_button(State, middle, true);
+handle_info(#wx{event = #wxMouse{type = middle_up}}, State) ->
+    mouse_button(State, middle, false);
+
+%% Hide the host cursor while it is over the panel and the Kempston mouse
+%% is enabled; show it again on leave or Esc.
+handle_info(#wx{event = #wxMouse{type = enter_window}},
+            #state{mouse = Mouse, panel = Panel, blank_cursor = Cursor} = State) ->
+    case ezx_ui_mouse:enabled(Mouse) of
+        true ->
+            wxWindow:setCursor(Panel, Cursor),
+            {noreply, State#state{cursor_hidden = true}};
+        false ->
+            {noreply, State}
+    end;
+
+handle_info(#wx{event = #wxMouse{type = leave_window}},
+            #state{panel = Panel, cursor_hidden = Hidden} = State) ->
+    case Hidden of
+        true ->
+            wxWindow:setCursor(Panel, ?wxNullCursor),
+            {noreply, State#state{cursor_hidden = false}};
+        false ->
+            {noreply, State}
+    end;
+
 handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected}}, #state{machine = undefined} = State) ->
     {noreply, State};
 handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected}}, State) ->
@@ -442,9 +510,11 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
             case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type) of
                 {ok, NewMachine} ->
                     io:format("Loaded: ~s~n", [File]),
+                    NewMachine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, NewMachine),
                     NewRecent = ezx_recent_files:update(File, State#state.recent_files),
                     ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
-                    {noreply, State#state{machine = NewMachine, recent_files = NewRecent}};
+                    {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
+                                          mouse = ezx_ui_mouse:reset_baseline(State#state.mouse)}};
                 {error, _Code} = Err ->
                     show_load_error(State#state.frame, File, Err),
                     case Err of
@@ -478,9 +548,36 @@ handle_info(#wx{id = ?MENU_DEBUG_PERF, event = #wxCommand{type = command_menu_se
     save_config(NewState),
     {noreply, NewState};
 
+handle_info(#wx{id = ?MENU_SETTINGS_MOUSE, event = #wxCommand{type = command_menu_selected}},
+            #state{frame = Frame, mouse = Mouse} = State) ->
+    Refs = ezx_mouse_dialog:open(Frame, ezx_ui_mouse:enabled(Mouse),
+                                 ezx_ui_mouse:swap_buttons(Mouse)),
+    {noreply, State#state{mouse_dialog_refs = Refs}};
+
+handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
+            #state{mouse_dialog_refs = {Dialog, Checkbox, SwapCheckbox}} = State) ->
+    Enabled = ezx_mouse_dialog:enabled_from_checkbox(Checkbox),
+    Swap = ezx_mouse_dialog:swap_from_checkbox(SwapCheckbox),
+    Mouse1 = ezx_ui_mouse:set_swap_buttons(State#state.mouse, Swap),
+    {Mouse2, Machine1} = ezx_ui_mouse:set_enabled(Mouse1, State#state.machine, Enabled),
+    wxDialog:destroy(Dialog),
+    wxWindow:update(State#state.frame),
+    NewState = State#state{mouse = Mouse2, machine = Machine1, mouse_dialog_refs = undefined},
+    save_config(NewState),
+    {noreply, case Enabled of
+        true  -> NewState;
+        false -> show_cursor(NewState)
+    end};
+
+handle_info(#wx{id = ?wxID_CANCEL, event = #wxCommand{type = command_button_clicked}},
+            #state{mouse_dialog_refs = {Dialog, _, _}} = State) ->
+    wxDialog:destroy(Dialog),
+    {noreply, State#state{mouse_dialog_refs = undefined}};
+
 handle_info(#wx{id = ?MENU_CROP, event = #wxCommand{type = command_menu_selected}}, State) ->
     NewCrop = not State#state.option_crop_border,
-    NewState = State#state{option_crop_border = NewCrop},
+    NewState = State#state{option_crop_border = NewCrop,
+                           mouse = ezx_ui_mouse:reset_baseline(State#state.mouse)},
     save_config(NewState),
     case NewState#state.fullscreen of
         true  -> reenter_crop_fullscreen(NewState);
@@ -504,7 +601,7 @@ handle_info(#wx{id = ?MENU_CROP_EXACT, event = #wxCommand{type = command_menu_se
 handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
             State) when Id >= ?MENU_SCALE_BASE, Id < ?MENU_SCALE_BASE + 4 ->
     NewScale = (Id - ?MENU_SCALE_BASE) + 1,
-    NewState = State#state{scale = NewScale},
+    NewState = State#state{scale = NewScale, mouse = ezx_ui_mouse:reset_baseline(State#state.mouse)},
     save_config(NewState),
     case NewState#state.fullscreen of
         true  -> reenter_crop_fullscreen(NewState);
@@ -544,9 +641,11 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
     case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type) of
         {ok, NewMachine} ->
             io:format("Loaded: ~s~n", [File]),
+            NewMachine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, NewMachine),
             NewRecent = ezx_recent_files:update(File, State#state.recent_files),
             ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
-            {noreply, State#state{machine = NewMachine, recent_files = NewRecent,
+            {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
+                                   mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                                    file_dialog = undefined}};
         {error, _Code} = Err ->
             show_load_error(State#state.frame, File, Err),
@@ -567,12 +666,14 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                 {ok, Machine} ->
                     MenuBar = State#state.menu_bar,
                     Now = erlang:monotonic_time(microsecond),
+                    Machine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, Machine),
                     wxMenuBar:enableTop(MenuBar, 0, true),
                     wxMenuBar:enableTop(MenuBar, 3, true),
                     NewState = State#state{
-                        machine = Machine,
+                        machine = Machine1,
                         machine_type = NewType,
                         frame_count = 0,
+                        mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                         audio_start_us = Now, audio_bytes = 0,
                         perf_acc_us = 0, render_acc_us = 0,
                         beeper_acc_us = 0, ay_acc_us = 0,
@@ -608,8 +709,10 @@ terminate(_Reason, #state{frame = Frame, aplay_port = Port}) ->
 do_reset(State) ->
     case ezx_ui_lib:init_virtual_machine(State#state.machine_type) of
         {ok, Machine} ->
+            Machine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, Machine),
             Now = erlang:monotonic_time(microsecond),
-            {noreply, State#state{machine = Machine, frame_count = 0,
+            {noreply, State#state{machine = Machine1, frame_count = 0,
+                                  mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                                   audio_start_us = Now, audio_bytes = 0,
                                   perf_acc_us = 0, render_acc_us = 0,
                                   beeper_acc_us = 0, ay_acc_us = 0,
@@ -649,6 +752,7 @@ reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = Stat
         false -> 1.0
     end,
     {noreply, State#state{scale = NewScale, crop_off = {OffX, OffY},
+                          mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                           crop_exact_scale = ExactScale}}.
 
 toggle_fullscreen(#state{frame = Frame, fullscreen = false, scale = WindowedScale, option_crop_border = Crop} = State) ->
@@ -669,6 +773,7 @@ toggle_fullscreen(#state{frame = Frame, fullscreen = false, scale = WindowedScal
     {noreply, State#state{fullscreen = true,
                           scale = NewScale, windowed_scale = WindowedScale, crop_off = {OffX, OffY},
                           crop_exact_scale = ExactScale,
+                          mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                           fullscreen_size = {SW, SH},
                           windowed_size = WinSize}};
 toggle_fullscreen(#state{frame = Frame, fullscreen = true, windowed_scale = WindowedScale,
@@ -677,6 +782,7 @@ toggle_fullscreen(#state{frame = Frame, fullscreen = true, windowed_scale = Wind
     wxFrame:setSize(Frame, WW, WH),
     {noreply, State#state{fullscreen = false,
                           scale = WindowedScale, crop_off = {0, 0},
+                          mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                           fullscreen_size = undefined,
                           windowed_size = undefined}}.
 
@@ -711,11 +817,44 @@ windowed_client_size(Crop, S) ->
 
 save_config(#state{machine_type = MType, option_crop_border = Crop, option_integer_scaling = Exact,
                    muted = Muted, scale = Scale, beeper_vol = BV, ay_master_vol = AV, ay_stereo_mode = Mode,
-                   perf_report = PerfReport}) ->
+                   perf_report = PerfReport, mouse = Mouse}) ->
     ezx_config:save(#{machine_type => MType, crop_border => Crop, integer_scaling => Exact,
                        muted => Muted, scale => Scale,
                        beeper_vol => BV, ay_master_vol => AV, ay_stereo_mode => Mode,
-                       perf_report => PerfReport}).
+                       perf_report => PerfReport,
+                       kempston_mouse => ezx_ui_mouse:enabled(Mouse),
+                       mouse_swap_buttons => ezx_ui_mouse:swap_buttons(Mouse)}).
+
+%% @doc Update the Kempston button mask from a host mouse button event.
+%% Buttons are active-low: pressed = bit cleared. Note: motion events
+%% during a drag do not feed deltas on Linux/Gtk (the panel is not
+%% capturing the mouse); this matches Fuse behaviour and the guest tester.
+mouse_button(#state{machine = Machine, mouse = Mouse} = State, Button, Pressed) ->
+    {Mouse1, Machine1} = ezx_ui_mouse:button(Mouse, Machine, Button, Pressed),
+    {noreply, State#state{machine = Machine1, mouse = Mouse1}}.
+
+%% @doc Restore the default (visible) host cursor over the panel. No-op
+%% when it is not currently hidden.
+show_cursor(#state{cursor_hidden = true, panel = Panel} = State) ->
+    wxWindow:setCursor(Panel, ?wxNullCursor),
+    State#state{cursor_hidden = false};
+show_cursor(State) ->
+    State.
+
+%% @doc Blank the host cursor over the panel while the Kempston mouse is
+%% enabled. Called on motion as well as on enter_window: the enter/leave
+%% events are swallowed when the pointer returns from a menu (popups grab
+%% the pointer), so any motion over the panel re-hides the cursor.
+hide_cursor(#state{cursor_hidden = false, mouse = Mouse, panel = Panel, blank_cursor = Cursor} = State) ->
+    case ezx_ui_mouse:enabled(Mouse) of
+        true ->
+            wxWindow:setCursor(Panel, Cursor),
+            State#state{cursor_hidden = true};
+        false ->
+            State
+    end;
+hide_cursor(State) ->
+    State.
 
 show_load_error(Frame, File, {error, {Code, Detail}}) ->
     Msg = maps:get(Code, #{
@@ -772,18 +911,24 @@ mix_samples(<<B:16/little-signed, BR/binary>>,
     mix_samples(BR, AR, BB, CR, PanA, PanB, PanC, VA, VB, VC, BV,
                 <<Acc/binary, L:16/little-signed, R:16/little-signed>>).
 
-cleanup_dialogs(undefined, undefined) -> ok;
-cleanup_dialogs({D, _, _, _}, undefined) -> wxDialog:destroy(D);
-cleanup_dialogs(undefined, FD) -> wxFileDialog:destroy(FD);
-cleanup_dialogs({D, _, _, _}, FD) -> wxDialog:destroy(D), wxFileDialog:destroy(FD).
+cleanup_dialogs(undefined, undefined, undefined) -> ok;
+cleanup_dialogs({D, _, _, _}, undefined, undefined) -> wxDialog:destroy(D);
+cleanup_dialogs(undefined, {D, _, _, _}, undefined) -> wxDialog:destroy(D);
+cleanup_dialogs(undefined, undefined, FD) -> wxFileDialog:destroy(FD);
+cleanup_dialogs({D, _, _, _}, undefined, FD) -> wxDialog:destroy(D), wxFileDialog:destroy(FD);
+cleanup_dialogs(undefined, {D, _, _, _}, FD) -> wxDialog:destroy(D), wxFileDialog:destroy(FD);
+cleanup_dialogs({D, _, _, _}, {M, _, _, _}, FD) -> wxDialog:destroy(D), wxDialog:destroy(M), wxFileDialog:destroy(FD).
 
-handle_dialog_close(Obj, {Obj, _, _, _}, _FileDlg, State) ->
+handle_dialog_close(Obj, {Obj, _, _, _}, _MouseRefs, _FileDlg, State) ->
     wxDialog:destroy(Obj),
     State#state{sound_dialog_refs = undefined};
-handle_dialog_close(Obj, _DialRefs, Obj, State) ->
+handle_dialog_close(Obj, _DialRefs, {Obj, _, _, _}, _FileDlg, State) ->
+    wxDialog:destroy(Obj),
+    State#state{mouse_dialog_refs = undefined};
+handle_dialog_close(Obj, _DialRefs, _MouseRefs, Obj, State) ->
     wxFileDialog:destroy(Obj),
     State#state{file_dialog = undefined};
-handle_dialog_close(_Obj, _DialRefs, _FileDlg, State) ->
+handle_dialog_close(_Obj, _DialRefs, _MouseRefs, _FileDlg, State) ->
     State.
 
 pan_left(_V, left)  -> _V;

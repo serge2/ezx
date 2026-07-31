@@ -48,13 +48,18 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
                     Result = KeyboardModule:decode(Keyboard, UpperByte),
                     {Result bor 16#E0, ExtContext};
                 _ ->
-                    case (Port band 16#8002) =:= 0 of
-                        true ->
-                            Memory = ExtContext#ext_context.memory,
-                            {MemModule:get_p7ffd(Memory), ExtContext};
-                        false ->
-                            AY = ExtContext#ext_context.ay,
-                            {AyModule:read(AY), ExtContext}
+                    case read_kempston(ExtContext, Port) of
+                        undefined ->
+                            case (Port band 16#8002) =:= 0 of
+                                true ->
+                                    Memory = ExtContext#ext_context.memory,
+                                    {MemModule:get_p7ffd(Memory), ExtContext};
+                                false ->
+                                    AY = ExtContext#ext_context.ay,
+                                    {AyModule:read(AY), ExtContext}
+                            end;
+                        Byte ->
+                            {Byte, ExtContext}
                     end
             end
         end,
@@ -300,6 +305,13 @@ release_key(Machine, Key) -> ezx_emulator:release_key(Machine, Key).
 run_until_tstates(Machine, Target) -> ezx_emulator:run_until_tstates(Machine, Target).
 
 %% --- internal ---
+
+%% Read the Kempston mouse ports if the mouse is present. Returns
+%% undefined for any other port so the caller falls back to other hardware.
+read_kempston(#ext_context{kempston_mouse = undefined}, _Port) ->
+    undefined;
+read_kempston(#ext_context{kempston_mouse = Mouse}, Port) ->
+    ezx_kempston_mouse:read(Mouse, Port).
 
 %% @doc Write extra 16KB pages into banks not covered by the 48KB dump.
 -spec load_extra_pages(module(), any(), byte(), binary()) -> any().

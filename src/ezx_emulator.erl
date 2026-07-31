@@ -20,6 +20,9 @@
     press_key/2,
     release_key/2,
     run_until_tstates/2,
+    set_mouse_enabled/2,
+    set_mouse_position/3,
+    set_mouse_buttons/2,
     read_byte/2,
     write_byte/3,
     read_word/2,
@@ -56,12 +59,17 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
                     Result = KeyboardModule:decode(Keyboard, UpperByte),
                     {Result bor 16#E0, ExtContext};
                 _ ->
-                    case HasAy andalso (Port band 16#8002) =/= 0 of
-                        true ->
-                            AY = ExtContext#ext_context.ay,
-                            {AyModule:read(AY), ExtContext};
-                        false ->
-                            {16#FF, ExtContext}
+                    case read_kempston(ExtContext, Port) of
+                        undefined ->
+                            case HasAy andalso (Port band 16#8002) =/= 0 of
+                                true ->
+                                    AY = ExtContext#ext_context.ay,
+                                    {AyModule:read(AY), ExtContext};
+                                false ->
+                                    {16#FF, ExtContext}
+                            end;
+                        Byte ->
+                            {Byte, ExtContext}
                     end
             end
         end,
@@ -128,6 +136,29 @@ release_key(Machine, OrigKey) ->
     Keys = maps:get(OrigKey, key_map(), []),
     NewKB = KBModule:release_keys(KB, Keys),
     Machine#machine_state{keyboard = NewKB}.
+
+%% @doc Enable or disable the optional Kempston mouse interface.
+-spec set_mouse_enabled(#machine_state{}, boolean()) -> #machine_state{}.
+set_mouse_enabled(Machine, true) ->
+    Machine#machine_state{kempston_mouse = ezx_kempston_mouse:new()};
+set_mouse_enabled(Machine, false) ->
+    Machine#machine_state{kempston_mouse = undefined}.
+
+%% @doc Accumulate host mouse deltas into the Kempston X/Y counters.
+%% No-op when the mouse is disabled.
+-spec set_mouse_position(#machine_state{}, integer(), integer()) -> #machine_state{}.
+set_mouse_position(#machine_state{kempston_mouse = undefined} = Machine, _DX, _DY) ->
+    Machine;
+set_mouse_position(#machine_state{kempston_mouse = Mouse} = Machine, DX, DY) ->
+    Machine#machine_state{kempston_mouse = ezx_kempston_mouse:move(Mouse, DX, DY)}.
+
+%% @doc Set the active-low Kempston button mask (bit 0 right, bit 1 left, bit 2 middle).
+%% No-op when the mouse is disabled.
+-spec set_mouse_buttons(#machine_state{}, non_neg_integer()) -> #machine_state{}.
+set_mouse_buttons(#machine_state{kempston_mouse = undefined} = Machine, _Buttons) ->
+    Machine;
+set_mouse_buttons(#machine_state{kempston_mouse = Mouse} = Machine, Buttons) ->
+    Machine#machine_state{kempston_mouse = ezx_kempston_mouse:set_buttons(Mouse, Buttons)}.
 
 %% @doc Load a 48K SNA snapshot.
 -spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
@@ -444,7 +475,8 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
         border_changes = [],
         keyboard = Machine#machine_state.keyboard,
         beeper = Beeper0,
-        ay = Machine#machine_state.ay
+        ay = Machine#machine_state.ay,
+        kempston_mouse = Machine#machine_state.kempston_mouse
     },
     Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = MachineTStates}),
     Ticks = Cpu1#cpu_state.t_states - MachineTStates,
@@ -466,7 +498,8 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
         border_color = NewBorder,
         border_changes = MergedChanges,
         beeper = Beeper1,
-        ay = ExtCtx#ext_context.ay
+        ay = ExtCtx#ext_context.ay,
+        kempston_mouse = ExtCtx#ext_context.kempston_mouse
     }.
 
 %% @doc Execute one complete frame (69888 T-states).
@@ -557,6 +590,13 @@ run_until_tstates(Machine, Target) ->
 
 
 %% --- Internal ---
+
+%% Read the Kempston mouse ports if the mouse is present. Returns
+%% undefined for any other port so the caller falls back to other hardware.
+read_kempston(#ext_context{kempston_mouse = undefined}, _Port) ->
+    undefined;
+read_kempston(#ext_context{kempston_mouse = Mouse}, Port) ->
+    ezx_kempston_mouse:read(Mouse, Port).
 
 %% Merge border changes from a step into the accumulated list.
 %% Both lists are newest-first (prepended). We append step changes to the front.

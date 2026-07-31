@@ -28,7 +28,9 @@
     screen = <<>>,
     %% AY-3-8912 audio state (128K only).
     ay_module = undefined :: module() | undefined,
-    ay = undefined
+    ay = undefined,
+    %% Optional Kempston mouse state (undefined = mouse not present).
+    kempston_mouse = undefined
 }).
 
 -record(ext_context, {
@@ -36,5 +38,6 @@
     border_changes = [],
     keyboard,
     beeper = undefined,
-    ay = undefined
+    ay = undefined,
+    kempston_mouse = undefined
 }).
