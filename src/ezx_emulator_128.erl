@@ -12,10 +12,7 @@
     load_tap/2,
     press_key/2,
     release_key/2,
-    run_until_tstates/2,
-    read_byte/2,
-    write_byte/3,
-    write_word/3
+    run_until_tstates/2
 ]).
 
 -include("z80_records.hrl").
@@ -306,22 +303,6 @@ release_key(Machine, Key) -> ezx_emulator:release_key(Machine, Key).
 %% @doc Execute instructions up to a target T-state count.
 -spec run_until_tstates(#machine_state{}, non_neg_integer()) -> #machine_state{}.
 run_until_tstates(Machine, Target) -> ezx_emulator:run_until_tstates(Machine, Target).
-
-%% @doc Read a byte from memory.
--spec read_byte(#machine_state{}, non_neg_integer()) -> {byte(), #machine_state{}}.
-read_byte(Machine, Addr) -> ezx_emulator:read_byte(Machine, Addr).
-
-%% @doc Write a byte to memory.
--spec write_byte(#machine_state{}, non_neg_integer(), byte()) -> #machine_state{}.
-write_byte(Machine, Addr, Byte) -> ezx_emulator:write_byte(Machine, Addr, Byte).
-
-%% @doc Read a 16-bit word from memory (little-endian).
--spec read_word(#machine_state{}, non_neg_integer()) -> {non_neg_integer(), #machine_state{}}.
-read_word(Machine, Addr) -> ezx_emulator:read_word(Machine, Addr).
-
-%% @doc Write a 16-bit word to memory (little-endian).
--spec write_word(#machine_state{}, non_neg_integer(), non_neg_integer()) -> #machine_state{}.
-write_word(Machine, Addr, Word) -> ezx_emulator:write_word(Machine, Addr, Word).
 
 %% --- internal ---
 
