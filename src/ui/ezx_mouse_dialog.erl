@@ -4,8 +4,11 @@
 
 -export([open/3, enabled_from_checkbox/1, swap_from_checkbox/1]).
 
+%% @doc Open the modeless "Mouse" settings dialog parented on Frame.
+%% Returns refs as {Dialog, {KempstonCheckbox, SwapCheckbox}} so the caller
+%% can read the checkbox values and destroy the dialog.
 -spec open(wxFrame:wxFrame(), boolean(), boolean()) ->
-    {wxDialog:wxDialog(), wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}.
+    {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}}.
 open(Frame, Enabled, SwapButtons) ->
     Dialog = wxDialog:new(Frame, -1, "Mouse", [{style, ?wxDEFAULT_DIALOG_STYLE}]),
     MainSizer = wxBoxSizer:new(?wxVERTICAL),
@@ -33,10 +36,14 @@ open(Frame, Enabled, SwapButtons) ->
     wxDialog:connect(Dialog, close_window),
 
     wxDialog:show(Dialog),
-    {Dialog, Checkbox, SwapCheckbox}.
+    {Dialog, {Checkbox, SwapCheckbox}}.
 
+%% @doc Read whether the Kempston mouse is enabled from its checkbox.
+-spec enabled_from_checkbox(wxCheckBox:wxCheckBox()) -> boolean().
 enabled_from_checkbox(Checkbox) ->
     wxCheckBox:getValue(Checkbox).
 
+%% @doc Read whether the left/right button layout is swapped from its checkbox.
+-spec swap_from_checkbox(wxCheckBox:wxCheckBox()) -> boolean().
 swap_from_checkbox(Checkbox) ->
     wxCheckBox:getValue(Checkbox).

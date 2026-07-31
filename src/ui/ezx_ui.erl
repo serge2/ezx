@@ -56,9 +56,9 @@
     beeper_vol = 100 :: 0..100,
     ay_master_vol = 100 :: 0..100,
     ay_stereo_mode = acb :: acb | abc | mono,
-    sound_dialog_refs = undefined :: {wxDialog:wxDialog(), wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice()} | undefined,
-    mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()} | undefined,
-    file_dialog = undefined :: wxFileDialog:wxFileDialog() | undefined,
+    sound_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice()}} | undefined,
+    mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}} | undefined,
+    file_dialog_refs = undefined :: {wxFileDialog:wxFileDialog(), undefined} | undefined,
     blank_cursor = undefined :: wxCursor:wxCursor() | undefined,
     cursor_hidden = false :: boolean(),
     mouse = undefined :: any()
@@ -378,15 +378,14 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
             {noreply, State}
     end;
 
-handle_info(#wx{event = #wxClose{}} = Wx, #state{frame = Frame, sound_dialog_refs = DialRefs,
-                                                 mouse_dialog_refs = MouseRefs, file_dialog = FileDlg} = State) ->
+handle_info(#wx{event = #wxClose{}} = Wx, #state{frame = Frame} = State) ->
     case Wx#wx.obj of
         Frame ->
-            cleanup_dialogs(DialRefs, MouseRefs, FileDlg),
+            cleanup_dialogs(State),
             init:stop(),
             {stop, normal, State};
         Obj ->
-            {noreply, handle_dialog_close(Obj, DialRefs, MouseRefs, FileDlg, State)}
+            {noreply, close_dialog(Obj, State)}
     end;
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F11}}, State) ->
@@ -555,7 +554,7 @@ handle_info(#wx{id = ?MENU_SETTINGS_MOUSE, event = #wxCommand{type = command_men
     {noreply, State#state{mouse_dialog_refs = Refs}};
 
 handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
-            #state{mouse_dialog_refs = {Dialog, Checkbox, SwapCheckbox}} = State) ->
+            #state{mouse_dialog_refs = {Dialog, {Checkbox, SwapCheckbox}}} = State) ->
     Enabled = ezx_mouse_dialog:enabled_from_checkbox(Checkbox),
     Swap = ezx_mouse_dialog:swap_from_checkbox(SwapCheckbox),
     Mouse1 = ezx_ui_mouse:set_swap_buttons(State#state.mouse, Swap),
@@ -570,7 +569,7 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
     end};
 
 handle_info(#wx{id = ?wxID_CANCEL, event = #wxCommand{type = command_button_clicked}},
-            #state{mouse_dialog_refs = {Dialog, _, _}} = State) ->
+            #state{mouse_dialog_refs = {Dialog, _}} = State) ->
     wxDialog:destroy(Dialog),
     {noreply, State#state{mouse_dialog_refs = undefined}};
 
@@ -618,7 +617,7 @@ handle_info(#wx{id = ?MENU_SETTINGS_SOUND, event = #wxCommand{type = command_men
     {noreply, State#state{sound_dialog_refs = Refs}};
 
 handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
-            #state{sound_dialog_refs = {Dialog, BeeperSlider, AySlider, ModeChoice}} = State) ->
+            #state{sound_dialog_refs = {Dialog, {BeeperSlider, AySlider, ModeChoice}}} = State) ->
     BV = wxSlider:getValue(BeeperSlider),
     AV = wxSlider:getValue(AySlider),
     Mode = ezx_sound_dialog:stereo_mode_from_index(wxChoice:getSelection(ModeChoice)),
@@ -630,12 +629,12 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
     {noreply, NewState};
 
 handle_info(#wx{id = ?wxID_CANCEL, event = #wxCommand{type = command_button_clicked}},
-            #state{sound_dialog_refs = {Dialog, _, _, _}} = State) ->
+            #state{sound_dialog_refs = {Dialog, _}} = State) ->
     wxDialog:destroy(Dialog),
     {noreply, State#state{sound_dialog_refs = undefined}};
 
 handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
-            #state{file_dialog = Dialog} = State) when Dialog =/= undefined ->
+            #state{file_dialog_refs = {Dialog, _}} = State) ->
     File = wxFileDialog:getPath(Dialog),
     wxFileDialog:destroy(Dialog),
     case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type) of
@@ -646,16 +645,16 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
             ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
             {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
                                    mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                                   file_dialog = undefined}};
+                                   file_dialog_refs = undefined}};
         {error, _Code} = Err ->
             show_load_error(State#state.frame, File, Err),
-            {noreply, State#state{file_dialog = undefined}}
+            {noreply, State#state{file_dialog_refs = undefined}}
     end;
 
 handle_info(#wx{id = ?wxID_CANCEL, event = #wxCommand{type = command_button_clicked}},
-            #state{file_dialog = Dialog} = State) when Dialog =/= undefined ->
+            #state{file_dialog_refs = {Dialog, _}} = State) ->
     wxFileDialog:destroy(Dialog),
-    {noreply, State#state{file_dialog = undefined}};
+    {noreply, State#state{file_dialog_refs = undefined}};
 
 handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
             #state{machine_type = OldType} = State) when Id >= ?MENU_MACHINE_BASE, Id < ?MENU_MACHINE_BASE + 2 ->
@@ -729,13 +728,16 @@ do_reset(State) ->
             {noreply, State#state{machine = undefined, frame_count = 0}}
     end.
 
-handle_open_file(#state{file_dialog = undefined} = State) ->
+%% @doc Open the modeless load-file dialog (SNA/Z80/TAP). No-op when a file
+%% dialog is already open.
+-spec handle_open_file(#state{}) -> {noreply, #state{}}.
+handle_open_file(#state{file_dialog_refs = undefined} = State) ->
     Dialog = wxFileDialog:new(State#state.frame, [{message, "Load snapshot or tape"},
                                                    {wildCard, "ZX Spectrum files (*.sna,*.z80,*.tap)|*.sna;*.z80;*.tap|SNA files (*.sna)|*.sna|Z80 files (*.z80)|*.z80|TAP files (*.tap)|*.tap"},
                                                    {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}]),
     wxFileDialog:connect(Dialog, command_button_clicked),
     wxDialog:show(Dialog),
-    {noreply, State#state{file_dialog = Dialog}};
+    {noreply, State#state{file_dialog_refs = {Dialog, undefined}}};
 handle_open_file(State) ->
     {noreply, State}.
 
@@ -911,24 +913,35 @@ mix_samples(<<B:16/little-signed, BR/binary>>,
     mix_samples(BR, AR, BB, CR, PanA, PanB, PanC, VA, VB, VC, BV,
                 <<Acc/binary, L:16/little-signed, R:16/little-signed>>).
 
-cleanup_dialogs(undefined, undefined, undefined) -> ok;
-cleanup_dialogs({D, _, _, _}, undefined, undefined) -> wxDialog:destroy(D);
-cleanup_dialogs(undefined, {D, _, _, _}, undefined) -> wxDialog:destroy(D);
-cleanup_dialogs(undefined, undefined, FD) -> wxFileDialog:destroy(FD);
-cleanup_dialogs({D, _, _, _}, undefined, FD) -> wxDialog:destroy(D), wxFileDialog:destroy(FD);
-cleanup_dialogs(undefined, {D, _, _, _}, FD) -> wxDialog:destroy(D), wxFileDialog:destroy(FD);
-cleanup_dialogs({D, _, _, _}, {M, _, _, _}, FD) -> wxDialog:destroy(D), wxDialog:destroy(M), wxFileDialog:destroy(FD).
+%% @doc Destroy any dialogs still open (the main window is closing).
+-spec cleanup_dialogs(#state{}) -> ok.
+cleanup_dialogs(#state{sound_dialog_refs = Sound, mouse_dialog_refs = Mouse,
+                       file_dialog_refs = File}) ->
+    destroy_dialog(Sound),
+    destroy_dialog(Mouse),
+    destroy_dialog(File).
 
-handle_dialog_close(Obj, {Obj, _, _, _}, _MouseRefs, _FileDlg, State) ->
+%% @doc Destroy a single open dialog ref ({Dialog, Controls}). `undefined'
+%% means no dialog is open. The file dialog is a wxDialog subclass, so
+%% wxDialog:destroy is correct for all three dialog kinds.
+-spec destroy_dialog(undefined | {wxDialog:wxDialog() | wxFileDialog:wxFileDialog(), any()}) -> ok.
+destroy_dialog(undefined) -> ok;
+destroy_dialog({Dialog, _}) -> wxDialog:destroy(Dialog).
+
+%% @doc A dialog asked to close (title-bar X or wxClose event). The dialog is
+%% identified by its stored reference and destroyed, and the matching state
+%% field is cleared. Objects that are not a tracked dialog are ignored.
+-spec close_dialog(wxWindow:wxWindow(), #state{}) -> #state{}.
+close_dialog(Obj, #state{sound_dialog_refs = {Dialog, _}} = State) when Obj =:= Dialog ->
     wxDialog:destroy(Obj),
     State#state{sound_dialog_refs = undefined};
-handle_dialog_close(Obj, _DialRefs, {Obj, _, _, _}, _FileDlg, State) ->
+close_dialog(Obj, #state{mouse_dialog_refs = {Dialog, _}} = State) when Obj =:= Dialog ->
     wxDialog:destroy(Obj),
     State#state{mouse_dialog_refs = undefined};
-handle_dialog_close(Obj, _DialRefs, _MouseRefs, Obj, State) ->
-    wxFileDialog:destroy(Obj),
-    State#state{file_dialog = undefined};
-handle_dialog_close(_Obj, _DialRefs, _MouseRefs, _FileDlg, State) ->
+close_dialog(Obj, #state{file_dialog_refs = {Dialog, _}} = State) when Obj =:= Dialog ->
+    wxDialog:destroy(Obj),
+    State#state{file_dialog_refs = undefined};
+close_dialog(_Obj, State) ->
     State.
 
 pan_left(_V, left)  -> _V;

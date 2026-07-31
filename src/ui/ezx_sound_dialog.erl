@@ -4,8 +4,11 @@
 
 -export([open/4, stereo_pans/1, stereo_mode_from_index/1]).
 
+%% @doc Open the modeless "Sound Settings" dialog parented on Frame.
+%% Returns refs as {Dialog, {BeeperSlider, AySlider, ModeChoice}} so the
+%% caller can read the widget values and destroy the dialog.
 -spec open(wxFrame:wxFrame(), 0..100, 0..100, acb | abc | mono) ->
-    {wxDialog:wxDialog(), wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice()}.
+    {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice()}}.
 open(Frame, BeeperVol, AyVol, Mode) ->
     Dialog = wxDialog:new(Frame, -1, "Sound Settings", [{style, ?wxDEFAULT_DIALOG_STYLE}]),
     MainSizer = wxBoxSizer:new(?wxVERTICAL),
@@ -37,16 +40,22 @@ open(Frame, BeeperVol, AyVol, Mode) ->
     wxDialog:connect(Dialog, close_window),
 
     wxDialog:show(Dialog),
-    {Dialog, BeeperSlider, AySlider, ModeChoice}.
+    {Dialog, {BeeperSlider, AySlider, ModeChoice}}.
 
+%% @doc Stereo pan for each AY channel in the given mixing mode.
+-spec stereo_pans(acb | abc | mono) -> {left | both | right, left | both | right, left | both | right}.
 stereo_pans(acb)  -> {left, both, right};
 stereo_pans(abc)  -> {left, right, both};
 stereo_pans(mono) -> {both, both, both}.
 
+%% @doc Choice widget index (0..2) for a stereo mode.
+-spec stereo_mode_index(acb | abc | mono) -> 0..2.
 stereo_mode_index(acb)  -> 0;
 stereo_mode_index(abc)  -> 1;
 stereo_mode_index(mono) -> 2.
 
+%% @doc Stereo mode for a choice widget index (0..2).
+-spec stereo_mode_from_index(0..2) -> acb | abc | mono.
 stereo_mode_from_index(0) -> acb;
 stereo_mode_from_index(1) -> abc;
 stereo_mode_from_index(2) -> mono.
