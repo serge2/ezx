@@ -88,7 +88,7 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
                             case (Port band 16#4000) =:= 0 of
                                 true ->
                                     AY = ExtContext#ext_context.ay,
-                                    ExtContext#ext_context{ay = AyModule:write(AY, Byte)};
+                                    ExtContext#ext_context{ay = AyModule:write(AY, Byte, TState)};
                                 false ->
                                     AY = ExtContext#ext_context.ay,
                                     ExtContext#ext_context{ay = AyModule:latch(AY, Byte)}

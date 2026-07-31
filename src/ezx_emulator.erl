@@ -88,7 +88,7 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
                             AY = ExtContext#ext_context.ay,
                             case (Port band 16#4000) =:= 0 of
                                 true ->
-                                    ExtContext#ext_context{ay = AyModule:write(AY, Byte)};
+                                    ExtContext#ext_context{ay = AyModule:write(AY, Byte, TState)};
                                 false ->
                                     ExtContext#ext_context{ay = AyModule:latch(AY, Byte)}
                             end;
@@ -475,9 +475,14 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
 %%   Phase 2: 32..69887 T-states — interrupt raised at boundary, then normal execution
 %% Frame boundary is ignored mid-instruction (variant A).
 -spec run_frame(#machine_state{}) -> #machine_state{}.
-run_frame(Machine) ->
+run_frame(#machine_state{ay_module = undefined} = Machine) ->
     MachineQ = process_keyboard_queue(Machine),
-    run_frame_1(MachineQ).
+    run_frame_1(MachineQ);
+run_frame(#machine_state{ay_module = AyModule} = Machine) ->
+    MachineQ = process_keyboard_queue(Machine),
+    AY = MachineQ#machine_state.ay,
+    AY1 = AyModule:frame_start(AY, MachineQ#machine_state.t_states),
+    run_frame_1(MachineQ#machine_state{ay = AY1}).
 
 run_frame_1(#machine_state{t_states = StartT} = Machine) ->
     Machine0 = Machine#machine_state{border_changes = []},

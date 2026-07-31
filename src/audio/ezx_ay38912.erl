@@ -3,6 +3,12 @@
 %% =============================================================================
 %% AY-3-8912 / YM2149 programmable sound generator emulation.
 %%
+%% NOTE: This is a simplified implementation.  write/3 accepts a TState
+%% argument for API compatibility but ignores it — register changes are
+%% applied immediately and render_channels/2 divides the frame into 882
+%% equally-sized steps without considering when writes actually occurred.
+%% For correct mid-frame register-change timing use ezx_ay38912_seg.
+%%
 %% Three independent tone channels (A, B, C), each with:
 %%   - a square-wave tone generator (12-bit period, register pair per channel)
 %%   - a noise mixer (global 5-bit noise period, 17-bit LFSR: x^17 + x^14 + 1)
@@ -55,7 +61,7 @@
 %%   - 0xFFFD: read data from latched register (read/1)
 %% =============================================================================
 
--export([new/0, latch/2, write/2, read/1, render_channels/2]).
+-export([new/0, latch/2, write/3, read/1, render_channels/2, frame_start/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -73,6 +79,13 @@
 -define(REG_ENV_SHAPE,       13).
 -define(REG_IO_A,           14).
 -define(REG_IO_B,           15).
+
+%% AY clock divider: the chip runs at CPU / 2 (~1.77 MHz vs CPU ~3.55 MHz)
+%% and its internal counters decrement once every 16 CPU T-states.  Tone,
+%% noise, and envelope periods are therefore expressed as
+%%   (register_value + 1) * ?TSTATES_PER_AY_CLOCK
+%% giving the period in Z80 T-states.
+-define(TSTATES_PER_AY_CLOCK, 16).
 
 -define(TONES_PER_FRAME, 882).
 
@@ -119,8 +132,8 @@ latch(#ay_state{} = AY, Reg) ->
 %% @doc Write data to the currently latched register.
 %% Special side-effects: writing noise period resets the LFSR;
 %% writing envelope shape resets the envelope generator.
--spec write(state(), byte()) -> state().
-write(#ay_state{regs = Regs} = AY, Value) ->
+-spec write(state(), byte(), non_neg_integer()) -> state().
+write(#ay_state{regs = Regs} = AY, Value, _TState) ->
     Latch = AY#ay_state.latch,
     NRegs = setelement(Latch + 1, Regs, Value band 16#FF),
     AY1 = AY#ay_state{regs = NRegs},
@@ -139,6 +152,11 @@ write(#ay_state{regs = Regs} = AY, Value) ->
 -spec read(state()) -> byte().
 read(#ay_state{regs = Regs, latch = Latch}) ->
     element(Latch + 1, Regs).
+
+%% @doc Mark the start of a new frame at the given T-state counter.
+-spec frame_start(state(), non_neg_integer()) -> state().
+frame_start(#ay_state{} = AY, _TState) ->
+    AY.
 
 %% @doc Render one frame of audio (882 samples per channel) into 3 separate
 %% mono PCM binaries (S16LE, 0..+32767), one per AY channel A/B/C.
@@ -240,29 +258,29 @@ pcm_scale(Sum) ->
 tone_period(Regs) ->
     Fine = element(?REG_TONE_A_FINE + 1, Regs),
     Coarse = element(?REG_TONE_A_COARSE + 1, Regs) band 16#0F,
-    (((Coarse bsl 8) bor Fine) + 1) * 16.
+    (((Coarse bsl 8) bor Fine) + 1) * ?TSTATES_PER_AY_CLOCK.
 
 -spec tone_period2(tuple()) -> pos_integer().
 tone_period2(Regs) ->
     Fine = element(?REG_TONE_B_FINE + 1, Regs),
     Coarse = element(?REG_TONE_B_COARSE + 1, Regs) band 16#0F,
-    (((Coarse bsl 8) bor Fine) + 1) * 16.
+    (((Coarse bsl 8) bor Fine) + 1) * ?TSTATES_PER_AY_CLOCK.
 
 -spec tone_period3(tuple()) -> pos_integer().
 tone_period3(Regs) ->
     Fine = element(?REG_TONE_C_FINE + 1, Regs),
     Coarse = element(?REG_TONE_C_COARSE + 1, Regs) band 16#0F,
-    (((Coarse bsl 8) bor Fine) + 1) * 16.
+    (((Coarse bsl 8) bor Fine) + 1) * ?TSTATES_PER_AY_CLOCK.
 
 -spec noise_period(tuple()) -> pos_integer().
 noise_period(Regs) ->
-    ((element(?REG_NOISE_PERIOD + 1, Regs) band 16#1F) + 1) * 16.
+    ((element(?REG_NOISE_PERIOD + 1, Regs) band 16#1F) + 1) * ?TSTATES_PER_AY_CLOCK.
 
 -spec env_period(tuple()) -> pos_integer().
 env_period(Regs) ->
     Fine = element(?REG_ENV_PERIOD_FINE + 1, Regs),
     Coarse = element(?REG_ENV_PERIOD_COARSE + 1, Regs),
-    (((Coarse bsl 8) bor Fine) + 1) * 512.
+    (((Coarse bsl 8) bor Fine) + 1) * ?TSTATES_PER_AY_CLOCK * 32.
 
 -spec tone_output(non_neg_integer(), pos_integer(), non_neg_integer()) -> {non_neg_integer(), 0..1}.
 tone_output(Phase, Period, TStates) ->
