@@ -45,9 +45,11 @@
     perf_acc_us = 0 :: non_neg_integer(),
     render_acc_us = 0 :: non_neg_integer(),
     beeper_acc_us = 0 :: non_neg_integer(),
+    ay_acc_us = 0 :: non_neg_integer(),
     perf_frames = 0 :: non_neg_integer(),
     perf_start_us = 0 :: non_neg_integer(),
     muted = false :: boolean(),
+    perf_report = false :: boolean(),
     menu_bar :: wxMenuBar:wxMenuBar(),
     recent_files = [] :: [string()],
     diag_file :: pid() | undefined,
@@ -107,17 +109,23 @@ init(_Options) ->
     wxMenu:appendSeparator(ActionsMenu),
     wxMenu:appendCheckItem(ActionsMenu, ?MENU_MUTE, "Mute\tCtrl+M", [{help, "Toggle audio mute"}]),
     wxMenuBar:append(MenuBar, ActionsMenu, "Actions"),
+    DebugMenu = wxMenu:new(),
+    wxMenu:appendCheckItem(DebugMenu, ?MENU_DEBUG_PERF, "Performance report",
+                           [{help, "Print performance stats to console every 5 seconds"}]),
+    wxMenuBar:append(MenuBar, DebugMenu, "Debug"),
     wxFrame:setMenuBar(Frame, MenuBar),
 
     %% Apply saved config to menu checkmarks
     CropBorder = maps:get(crop_border, Cfg0, true),
     IntScaling = maps:get(integer_scaling, Cfg0, false),
     Muted = maps:get(muted, Cfg0, false),
+    PerfReport = maps:get(perf_report, Cfg0, false),
     wxMenu:check(EmulatorMenu, ?MENU_MACHINE_BASE + machine_type_offset(MachineType), true),
     wxMenu:check(ViewMenu, ?MENU_CROP, CropBorder),
     wxMenu:check(ViewMenu, ?MENU_CROP_EXACT, IntScaling),
     wxMenu:check(ViewMenu, ?MENU_SCALE_BASE + (InitScale0 - 1), true),
     wxMenu:check(ActionsMenu, ?MENU_MUTE, Muted),
+    wxMenu:check(DebugMenu, ?MENU_DEBUG_PERF, PerfReport),
     wxFrame:connect(Frame, command_menu_selected),
 
     Panel = wxPanel:new(Frame),
@@ -146,6 +154,7 @@ init(_Options) ->
         option_crop_border = CropBorder,
         option_integer_scaling = IntScaling,
         muted = Muted,
+        perf_report = PerfReport,
         beeper_vol = BeeperVol,
         ay_master_vol = AyVol,
         ay_stereo_mode = Mode,
@@ -189,7 +198,8 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                                   scale = Scale,
                                   frame_count = FC0,
                                   aplay_port = Port, audio_start_us = StartUs0,
-                                  perf_acc_us = PerfAcc0, render_acc_us = RenderAcc0, beeper_acc_us = BeeperAcc0,
+                                  perf_acc_us = PerfAcc0, render_acc_us = RenderAcc0,
+                                  beeper_acc_us = BeeperAcc0, ay_acc_us = AyAcc0,
                                   perf_frames = PerfFrames0, perf_start_us = PerfStart0} = State) ->
     try
         PerfT0 = erlang:monotonic_time(microsecond),
@@ -199,14 +209,11 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
 
         BeepT0 = erlang:monotonic_time(microsecond),
         {BeeperPcm, Machine3a} = ezx_emulator:render_beeper(Machine2),
+        BeepT1 = erlang:monotonic_time(microsecond),
+        AyT0 = erlang:monotonic_time(microsecond),
         {ChA, ChB, ChC, Machine3} = ezx_emulator:render_ay_channels(Machine3a),
         PCM = mix_ay_stereo(BeeperPcm, ChA, ChB, ChC, State),
-        BeepT1 = erlang:monotonic_time(microsecond),
-        case FC0 rem 100 of
-            0 -> io:format("audio: beeper=~pB ay=~p/~p/~pB pcm=~pB~n",
-                           [byte_size(BeeperPcm), byte_size(ChA), byte_size(ChB), byte_size(ChC), byte_size(PCM)]);
-            _ -> ok
-        end,
+        AyT1 = erlang:monotonic_time(microsecond),
         case State#state.diag_file of
             undefined -> ok;
             Fd -> file:write(Fd, PCM)
@@ -319,24 +326,28 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
         PerfAcc = PerfAcc0 + (PerfT1 - PerfT0),
         RenderAcc = RenderAcc0 + (RenderT1 - RenderT0),
         BeeperAcc = BeeperAcc0 + (BeepT1 - BeepT0),
+        AyAcc = AyAcc0 + (AyT1 - AyT0),
         PerfFrames = PerfFrames0 + 1,
-        {PerfFramesN, PerfAccN, RenderAccN, BeeperAccN, PerfStartN} =
-            case Now - PerfStart0 >= 5000000 of
+        {PerfFramesN, PerfAccN, RenderAccN, BeeperAccN, AyAccN, PerfStartN} =
+            case Now - PerfStart0 >= 5000000 andalso State#state.perf_report of
                 true ->
                     AvgPerf = PerfAcc / PerfFrames,
                     AvgRender = RenderAcc / PerfFrames,
                     AvgBeeper = BeeperAcc / PerfFrames,
-                    io:format("ezx perf: ~p frames in ~.1f s | emulation ~.2f ms  render ~.2f ms  beeper ~.2f ms total ~.2f ms~n",
+                    AvgAy = AyAcc / PerfFrames,
+                    io:format("ezx perf: ~p frames in ~.1f s | emulation ~.2f ms  render ~.2f ms  beeper ~.2f ms  ay ~.2f ms total ~.2f ms~n",
                               [PerfFrames, (Now - PerfStart0) / 1000000,
-                               AvgPerf / 1000, AvgRender / 1000, AvgBeeper / 1000, (AvgPerf + AvgRender + AvgBeeper) / 1000]),
-                    {0, 0, 0, 0, Now};
+                               AvgPerf / 1000, AvgRender / 1000, AvgBeeper / 1000, AvgAy / 1000,
+                               (AvgPerf + AvgRender + AvgBeeper + AvgAy) / 1000]),
+                    {0, 0, 0, 0, 0, Now};
                 false ->
-                    {PerfFrames, PerfAcc, RenderAcc, BeeperAcc, PerfStart0}
+                    {PerfFrames, PerfAcc, RenderAcc, BeeperAcc, AyAcc, PerfStart0}
             end,
 
         {noreply, State#state{machine = Machine3, frame_count = FC,
                               audio_start_us = StartUs, audio_bytes = Written,
-                              perf_acc_us = PerfAccN, render_acc_us = RenderAccN, beeper_acc_us = BeeperAccN,
+                              perf_acc_us = PerfAccN, render_acc_us = RenderAccN,
+                              beeper_acc_us = BeeperAccN, ay_acc_us = AyAccN,
                               perf_frames = PerfFramesN, perf_start_us = PerfStartN}}
     catch
         C:E:ST ->
@@ -462,6 +473,11 @@ handle_info(#wx{id = ?MENU_MUTE, event = #wxCommand{type = command_menu_selected
     save_config(NewState),
     {noreply, NewState};
 
+handle_info(#wx{id = ?MENU_DEBUG_PERF, event = #wxCommand{type = command_menu_selected}}, State) ->
+    NewState = State#state{perf_report = not State#state.perf_report},
+    save_config(NewState),
+    {noreply, NewState};
+
 handle_info(#wx{id = ?MENU_CROP, event = #wxCommand{type = command_menu_selected}}, State) ->
     NewCrop = not State#state.option_crop_border,
     NewState = State#state{option_crop_border = NewCrop},
@@ -559,6 +575,7 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                         frame_count = 0,
                         audio_start_us = Now, audio_bytes = 0,
                         perf_acc_us = 0, render_acc_us = 0,
+                        beeper_acc_us = 0, ay_acc_us = 0,
                         perf_frames = 0, perf_start_us = Now
                     },
                     save_config(NewState),
@@ -595,6 +612,7 @@ do_reset(State) ->
             {noreply, State#state{machine = Machine, frame_count = 0,
                                   audio_start_us = Now, audio_bytes = 0,
                                   perf_acc_us = 0, render_acc_us = 0,
+                                  beeper_acc_us = 0, ay_acc_us = 0,
                                   perf_frames = 0, perf_start_us = Now}};
         {error, {_Code, Detail}} ->
             Frame = State#state.frame,
@@ -692,10 +710,12 @@ windowed_client_size(Crop, S) ->
 
 
 save_config(#state{machine_type = MType, option_crop_border = Crop, option_integer_scaling = Exact,
-                   muted = Muted, scale = Scale, beeper_vol = BV, ay_master_vol = AV, ay_stereo_mode = Mode}) ->
+                   muted = Muted, scale = Scale, beeper_vol = BV, ay_master_vol = AV, ay_stereo_mode = Mode,
+                   perf_report = PerfReport}) ->
     ezx_config:save(#{machine_type => MType, crop_border => Crop, integer_scaling => Exact,
                        muted => Muted, scale => Scale,
-                       beeper_vol => BV, ay_master_vol => AV, ay_stereo_mode => Mode}).
+                       beeper_vol => BV, ay_master_vol => AV, ay_stereo_mode => Mode,
+                       perf_report => PerfReport}).
 
 show_load_error(Frame, File, {error, {Code, Detail}}) ->
     Msg = maps:get(Code, #{
