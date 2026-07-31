@@ -97,7 +97,7 @@ load_128k_sna_on_48k_emulator_rejected_test() ->
     {error, {unsupported_version, _}} = ezx_emulator:load_sna(Machine, SnaData),
     ok.
 
-load_48k_sna_on_128k_uses_correct_rom_bank_test() ->
+load_48k_sna_on_128k_keeps_initial_paging_test() ->
     MemMod = ezx_memory_128,
     Rom0 = binary:copy(<<16#00>>, 16384),
     Rom1 = binary:copy(<<16#C3>>, 16384),
@@ -109,6 +109,8 @@ load_48k_sna_on_128k_uses_correct_rom_bank_test() ->
     MemTmp = MemMod:write_port_7ffd(Mem0, 16#10),
     ?assertEqual(16#C3, MemMod:read_byte(MemTmp, 16#0000)),
 
+    %% A 48K SNA carries no 128K paging info, so the machine's paging
+    %% must remain untouched: p7FFD stays 0, ROM0 is still paged.
     SnaData = <<0:(27 + 49152)/unit:8>>,
 
     Machine = #machine_state{
@@ -120,15 +122,13 @@ load_48k_sna_on_128k_uses_correct_rom_bank_test() ->
     {ok, M1} = ezx_emulator_128:load_sna(Machine, SnaData),
     Mem1 = M1#machine_state.memory,
     P7 = MemMod:get_p7ffd(Mem1),
-    io:format("p7FFD after load = ~.16B~n", [P7]),
-
-    ?assertEqual(16#10, P7),
-    ?assertEqual(16#C3, MemMod:read_byte(Mem1, 16#0000)),
+    ?assertEqual(16#00, P7),
+    ?assertEqual(16#00, MemMod:read_byte(Mem1, 16#0000)),
     ok.
 
 %% --- Z80 tests ---
 
-load_48k_z80_on_128k_uses_correct_rom_bank_test() ->
+load_48k_z80_on_128k_keeps_initial_paging_test() ->
     MemMod = ezx_memory_128,
     Rom0 = binary:copy(<<16#00>>, 16384),
     Rom1 = binary:copy(<<16#C3>>, 16384),
@@ -140,7 +140,9 @@ load_48k_z80_on_128k_uses_correct_rom_bank_test() ->
         video_module = undefined, keyboard_module = undefined,
         beeper_module = undefined, beeper = undefined, keyboard = undefined
     },
-    %% v1 Z80 with PC=0x100, flags=0 (uncompressed), 49152 zero bytes
+    %% v1 Z80 with PC=0x100, flags=0 (uncompressed), 49152 zero bytes.
+    %% A v1 file carries no 128K paging info, so paging stays untouched:
+    %% p7FFD remains 0 and ROM0 is still paged.
     Header = <<0:8, 0:8,
                0:16, 0:16,
                16#00, 16#01,  %% PC=0x0100
@@ -154,7 +156,6 @@ load_48k_z80_on_128k_uses_correct_rom_bank_test() ->
     {ok, M1} = ezx_emulator_128:load_z80(Machine, Data),
     Mem1 = M1#machine_state.memory,
     P7 = MemMod:get_p7ffd(Mem1),
-    io:format("Z80: p7FFD after load = ~.16B~n", [P7]),
-    ?assertEqual(16#10, P7),
-    ?assertEqual(16#C3, MemMod:read_byte(Mem1, 16#0000)),
+    ?assertEqual(16#00, P7),
+    ?assertEqual(16#00, MemMod:read_byte(Mem1, 16#0000)),
     ok.

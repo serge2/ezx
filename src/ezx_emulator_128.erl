@@ -113,18 +113,15 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
 -spec load_z80(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
 load_z80(Machine, Data) ->
     try ezx_z80:parse(Data) of
-        #z80_header{is_128k = false} ->
-            Mem = Machine#machine_state.memory,
-            MemModule = Machine#machine_state.memory_module,
-
-            Mem0 = MemModule:write_port_7ffd(Mem, 16#10),
-            ezx_emulator:load_z80(Machine#machine_state{memory = Mem0}, Data);
-        #z80_header{is_128k = true} = H ->
+        #z80_header{} = H ->
             Mem = Machine#machine_state.memory,
             MemModule = Machine#machine_state.memory_module,
 
             Mem1 = write_128k_pages(MemModule, Mem, H),
-            Mem2 = MemModule:write_port_7ffd(Mem1, H#z80_header.p7ffd),
+            Mem2 = case H#z80_header.hw_mode >= 2 of
+                true -> MemModule:write_port_7ffd(Mem1, H#z80_header.p7ffd);
+                false -> Mem1
+            end,
 
             Cpu = Machine#machine_state.cpu,
             Cpu1 = Cpu#cpu_state{
@@ -189,17 +186,15 @@ load_tap(Machine, Data) ->
 -spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
 load_sna(Machine, Data) ->
     try ezx_sna:parse(Data) of
-        #sna_header{is_128k = false} ->
-            MemMod = Machine#machine_state.memory_module,
-            Mem = Machine#machine_state.memory,
-            Mem0 = MemMod:write_port_7ffd(Mem, 16#10),
-            ezx_emulator:load_sna(Machine#machine_state{memory = Mem0}, Data);
-        #sna_header{is_128k = true} = H ->
+        #sna_header{} = H ->
             P7FFD = H#sna_header.p7ffd,
             MemModule = Machine#machine_state.memory_module,
             Mem = Machine#machine_state.memory,
 
-            Mem0 = MemModule:write_port_7ffd(Mem, P7FFD),
+            Mem0 = case P7FFD of
+                undefined -> Mem;
+                _ -> MemModule:write_port_7ffd(Mem, P7FFD)
+            end,
 
             MemList = binary:bin_to_list(H#sna_header.mem),
             {_, Mem1} = lists:foldl(

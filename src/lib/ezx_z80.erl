@@ -1,7 +1,8 @@
 %% @doc ZX Spectrum Z80 snapshot format parser.
 %%
 %% Supports v1 (PC non-zero), v2 (ExtraLen=23), and v3 (ExtraLen=54/55).
-%% For v2/v3 only 48K hardware mode (hw_mode 0 or 1) is supported.
+%% hw_mode 0/1 = 48K, 2/3 = 128K; 128K files carry their p7ffd in the
+%% extended header.
 %%
 %% Header layout (30 bytes):
 %%
@@ -108,7 +109,7 @@ parse_v2v3(#z80_header{} = H, <<ExtraLen:16/little, Rest/binary>>) ->
     Version = case ExtraLen of 23 -> 2; _ -> 3 end,
     Pages = parse_blocks(BlockData),
     Mem = build_48k_memory(Pages),
-    Is128K = (Version =:= 3) andalso H1#z80_header.hw_mode >= 3,
+    Is128K = H1#z80_header.hw_mode >= 2,
     H1#z80_header{version = Version, is_128k = Is128K, mem = Mem, pages = Pages}.
 
 %% @doc Parse the extended header section (v2/v3).
