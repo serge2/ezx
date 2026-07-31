@@ -52,7 +52,7 @@
 %%   14,15 - I/O ports A, B        (not emulated)
 %%
 %% Output: render_channels/2 returns 3 separate mono PCM binaries (S16LE,
-%% -8192..+8192), one per channel.  The caller (UI) handles stereo panning,
+%% -4096..+4096), one per channel.  The caller (UI) handles stereo panning,
 %% per-channel volume, and mixing with the beeper.
 %%
 %% Port protocol (ZX Spectrum 128K mapping):
@@ -186,7 +186,7 @@ frame_start(#ay_state_seg{regs = Regs} = AY, TState) ->
     }.
 
 %% @doc Render one frame of audio (882 samples per channel) into 3 separate
-%% mono PCM binaries (S16LE, -8192..+8192), one per AY channel A/B/C.
+%% mono PCM binaries (S16LE, -4096..+4096), one per AY channel A/B/C.
 %% TStates defines the number of emulated Z80 T-states in this frame (typically
 %% 69888 for a 50 Hz frame).  When frame events are present the frame is
 %% segmented at sample boundaries and register changes are applied at the
@@ -344,11 +344,11 @@ render_step(#ay_state_seg{regs = Regs} = AY, TStates) ->
     },
     {OutA, OutB, OutC, AY1}.
 
-%% @doc Scale a 4-bit sum (0-15) to a signed 16-bit PCM sample (-8192..+8192).
--spec pcm_scale(0..15) -> -8192..8192.
-pcm_scale(0) -> -8192;
+%% @doc Scale a 4-bit sum (0-15) to a signed 16-bit PCM sample (-4096..+4096).
+-spec pcm_scale(0..15) -> -4096..4096.
+pcm_scale(0) -> -4096;
 pcm_scale(Sum) ->
-    (Sum * 16384) div 15 - 8192.
+    (Sum * 8192) div 15 - 4096.
 
 %% 12-bit tone period: (Coarse:Fine + 1) * 16 T-states.
 %% Output toggles every Period T-states, giving a square wave period of 2*Period.

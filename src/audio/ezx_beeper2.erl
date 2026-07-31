@@ -10,8 +10,8 @@
 -define(TSTATES_PER_FRAME_AUDIO, 70000).
 -define(SAMPLES_PER_FRAME, 882).
 
--define(AMP_OFF, -8192).
--define(AMP_ON,   8192).
+-define(AMP_OFF, -4096).
+-define(AMP_ON,   4096).
 
 %% Fixed-point scaling: 1 T-state = ?SCALE units.
 -define(SCALE, 882).

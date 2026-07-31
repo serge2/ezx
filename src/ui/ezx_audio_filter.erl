@@ -11,7 +11,7 @@
 -export([new/0, filter/2]).
 
 -record(audio_filter, {
-    lpf_val = -8192.0 :: float(),
+    lpf_val = -4096.0 :: float(),
     hp_xprev = 0.0    :: float(),
     hp_yprev = 0.0    :: float()
 }).

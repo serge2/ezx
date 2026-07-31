@@ -43,9 +43,11 @@ open(Frame, BeeperVol, AyVol, Mode) ->
     {Dialog, {BeeperSlider, AySlider, ModeChoice}}.
 
 %% @doc Stereo pan for each AY channel in the given mixing mode.
+%% Naming matches Fuse: "ACB" = A left, C centre, B right; "ABC" =
+%% A left, B centre, C right. The centre channel plays in both ears.
 -spec stereo_pans(acb | abc | mono) -> {left | both | right, left | both | right, left | both | right}.
-stereo_pans(acb)  -> {left, both, right};
-stereo_pans(abc)  -> {left, right, both};
+stereo_pans(acb)  -> {left, right, both};
+stereo_pans(abc)  -> {left, both, right};
 stereo_pans(mono) -> {both, both, both}.
 
 %% @doc Choice widget index (0..2) for a stereo mode.

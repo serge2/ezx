@@ -52,7 +52,7 @@
 %%   14,15 — I/O ports A, B        (not emulated)
 %%
 %% Output: render_channels/2 returns 3 separate mono PCM binaries (S16LE,
-%% -8192..+8192), one per channel. The caller (UI) handles stereo panning,
+%% -4096..+4096), one per channel. The caller (UI) handles stereo panning,
 %% per-channel volume, and mixing with the beeper.
 %%
 %% Port protocol (ZX Spectrum 128K mapping):
@@ -247,10 +247,10 @@ render_step(#ay_state{regs = Regs} = AY, TStates) ->
     },
     {OutA, OutB, OutC, AY1}.
 
--spec pcm_scale(0..15) -> -8192..8192.
-pcm_scale(0) -> -8192;
+-spec pcm_scale(0..15) -> -4096..4096.
+pcm_scale(0) -> -4096;
 pcm_scale(Sum) ->
-    (Sum * 16384) div 15 - 8192.
+    (Sum * 8192) div 15 - 4096.
 
 %% 12-bit tone period: (Coarse:Fine + 1) * 16 T-states.
 %% Output toggles every Period T-states, giving a square wave period of 2*Period.
