@@ -56,6 +56,7 @@
     beeper_vol = 100 :: 0..100,
     ay_master_vol = 100 :: 0..100,
     ay_stereo_mode = acb :: acb | abc | mono,
+    audio_filter = undefined :: ezx_audio_filter:state() | undefined,
     sound_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice()}} | undefined,
     mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}} | undefined,
     file_dialog_refs = undefined :: {wxFileDialog:wxFileDialog(), undefined} | undefined,
@@ -178,6 +179,7 @@ init(_Options) ->
         beeper_vol = BeeperVol,
         ay_master_vol = AyVol,
         ay_stereo_mode = Mode,
+        audio_filter = ezx_audio_filter:new(),
         aplay_port = AplayPort,
         audio_start_us = Now,
         perf_start_us = Now,
@@ -230,7 +232,8 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
 
 
         BeepT0 = erlang:monotonic_time(microsecond),
-        {BeeperPcm, Machine3a} = ezx_emulator:render_beeper(Machine2),
+        {BeeperRawPcm, Machine3a} = ezx_emulator:render_beeper(Machine2),
+        {BeeperPcm, AudioFilter1} = ezx_audio_filter:filter(BeeperRawPcm, State#state.audio_filter),
         BeepT1 = erlang:monotonic_time(microsecond),
         AyT0 = erlang:monotonic_time(microsecond),
         {ChA, ChB, ChC, Machine3} = ezx_emulator:render_ay_channels(Machine3a),
@@ -370,7 +373,8 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                               audio_start_us = StartUs, audio_bytes = Written,
                               perf_acc_us = PerfAccN, render_acc_us = RenderAccN,
                               beeper_acc_us = BeeperAccN, ay_acc_us = AyAccN,
-                              perf_frames = PerfFramesN, perf_start_us = PerfStartN}}
+                              perf_frames = PerfFramesN, perf_start_us = PerfStartN,
+                              audio_filter = AudioFilter1}}
     catch
         C:E:ST ->
             io:format("Frame error: ~p:~p~n~p~n", [C, E, ST]),
@@ -513,7 +517,8 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                     NewRecent = ezx_recent_files:update(File, State#state.recent_files),
                     ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
                     {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
-                                          mouse = ezx_ui_mouse:reset_baseline(State#state.mouse)}};
+                                          mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
+                                          audio_filter = ezx_audio_filter:new()}};
                 {error, _Code} = Err ->
                     show_load_error(State#state.frame, File, Err),
                     case Err of
@@ -645,7 +650,8 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
             ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
             {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
                                    mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                                   file_dialog_refs = undefined}};
+                                   file_dialog_refs = undefined,
+                                   audio_filter = ezx_audio_filter:new()}};
         {error, _Code} = Err ->
             show_load_error(State#state.frame, File, Err),
             {noreply, State#state{file_dialog_refs = undefined}}
@@ -676,7 +682,8 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                         audio_start_us = Now, audio_bytes = 0,
                         perf_acc_us = 0, render_acc_us = 0,
                         beeper_acc_us = 0, ay_acc_us = 0,
-                        perf_frames = 0, perf_start_us = Now
+                        perf_frames = 0, perf_start_us = Now,
+                        audio_filter = ezx_audio_filter:new()
                     },
                     save_config(NewState),
                     {noreply, NewState};
@@ -715,7 +722,8 @@ do_reset(State) ->
                                   audio_start_us = Now, audio_bytes = 0,
                                   perf_acc_us = 0, render_acc_us = 0,
                                   beeper_acc_us = 0, ay_acc_us = 0,
-                                  perf_frames = 0, perf_start_us = Now}};
+                                  perf_frames = 0, perf_start_us = Now,
+                                  audio_filter = ezx_audio_filter:new()}};
         {error, {_Code, Detail}} ->
             Frame = State#state.frame,
             Dialog = wxMessageDialog:new(Frame, binary_to_list(Detail),
