@@ -5,6 +5,19 @@
 %% Interrupt is raised 32 T-states into the frame.
 -define(INT_TSTATE, 32).
 
+%% Per-frame timing accumulators collected by run_frame/1 so the UI can report
+%% where time actually goes. cpu = keyboard + frame_start + execution,
+%% beeper = beeper PCM render, screen = ULA border/flash artifacts,
+%% ay = AY channel render, render = screen bitmap (when render_screen is true).
+-record(perf_stats, {
+    frames = 0 :: non_neg_integer(),
+    cpu_us = 0 :: non_neg_integer(),
+    beeper_us = 0 :: non_neg_integer(),
+    ay_us = 0 :: non_neg_integer(),
+    screen_us = 0 :: non_neg_integer(),
+    render_us = 0 :: non_neg_integer()
+}).
+
 
 -record(machine_state, {
     cpu_module :: module(),
@@ -39,7 +52,15 @@
     %% AY channel PCMs from the last completed frame ({ChA, ChB, ChC}, S16LE mono).
     ay_pcm = undefined,
     %% Optional Kempston mouse state (undefined = mouse not present).
-    kempston_mouse = undefined
+    kempston_mouse = undefined,
+    %% Screen RGB pixels (352×288×3) from the last completed frame, rendered
+    %% inside run_frame/1 only when render_screen is true (the interactive UI
+    %% enables it; headless keeps it off to avoid the per-frame cost).
+    screen_pixels = undefined :: undefined | binary(),
+    %% When true, run_frame/1 renders the screen bitmap into screen_pixels.
+    render_screen = false :: boolean(),
+    %% Accumulated per-phase timing of run_frame/1 (see ezx_emulator:read_perf/1).
+    perf_stats = #perf_stats{} :: #perf_stats{}
 }).
 
 -record(ext_context, {

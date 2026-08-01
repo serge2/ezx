@@ -7,6 +7,9 @@
     render_frame/1,
     render_beeper/1,
     render_ay_channels/1,
+    set_render_screen/2,
+    read_perf/1,
+    reset_perf/1,
     load_sna/2,
     load_z80/2,
     load_tap/2,
@@ -268,8 +271,20 @@ step(Machine) -> ezx_emulator:step(Machine).
 run_frame(Machine) -> ezx_emulator:run_frame(Machine).
 
 %% @doc Render the current frame into a screen bitmap.
--spec render_frame(#machine_state{}) -> #machine_state{}.
+-spec render_frame(#machine_state{}) -> binary().
 render_frame(Machine) -> ezx_emulator:render_frame(Machine).
+
+%% @doc Enable or disable rendering of the screen bitmap inside run_frame/1.
+-spec set_render_screen(#machine_state{}, boolean()) -> #machine_state{}.
+set_render_screen(Machine, Flag) -> ezx_emulator:set_render_screen(Machine, Flag).
+
+%% @doc Return the per-phase timing accumulators collected by run_frame/1.
+-spec read_perf(#machine_state{}) -> #perf_stats{}.
+read_perf(Machine) -> ezx_emulator:read_perf(Machine).
+
+%% @doc Zero the timing accumulators (e.g. at the start of a report window).
+-spec reset_perf(#machine_state{}) -> #machine_state{}.
+reset_perf(Machine) -> ezx_emulator:reset_perf(Machine).
 
 %% @doc Render accumulated beeper PCM.
 -spec render_beeper(#machine_state{}) -> {binary(), #machine_state{}}.

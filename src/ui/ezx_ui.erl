@@ -42,11 +42,6 @@
     aplay_port :: port() | undefined,
     audio_start_us = 0 :: non_neg_integer(),
     audio_bytes = 0 :: non_neg_integer(),
-    perf_acc_us = 0 :: non_neg_integer(),
-    render_acc_us = 0 :: non_neg_integer(),
-    beeper_acc_us = 0 :: non_neg_integer(),
-    ay_acc_us = 0 :: non_neg_integer(),
-    perf_frames = 0 :: non_neg_integer(),
     perf_start_us = 0 :: non_neg_integer(),
     muted = false :: boolean(),
     perf_report = false :: boolean(),
@@ -222,23 +217,14 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                                   scale = Scale,
                                   frame_count = FC0,
                                   aplay_port = Port, audio_start_us = StartUs0,
-                                  perf_acc_us = PerfAcc0, render_acc_us = RenderAcc0,
-                                  beeper_acc_us = BeeperAcc0, ay_acc_us = AyAcc0,
-                                  perf_frames = PerfFrames0, perf_start_us = PerfStart0} = State) ->
+                                  perf_start_us = PerfStart0} = State) ->
     try
-        PerfT0 = erlang:monotonic_time(microsecond),
         Machine2 = ezx_emulator:run_frame(Machine0),
-        PerfT1 = erlang:monotonic_time(microsecond),
 
-
-        BeepT0 = erlang:monotonic_time(microsecond),
         {BeeperRawPcm, Machine3a} = ezx_emulator:render_beeper(Machine2),
         {BeeperPcm, AudioFilter1} = ezx_audio_filter:filter(BeeperRawPcm, State#state.audio_filter),
-        BeepT1 = erlang:monotonic_time(microsecond),
-        AyT0 = erlang:monotonic_time(microsecond),
         {ChA, ChB, ChC, Machine3} = ezx_emulator:render_ay_channels(Machine3a),
         PCM = mix_ay_stereo(BeeperPcm, ChA, ChB, ChC, State),
-        AyT1 = erlang:monotonic_time(microsecond),
         case State#state.diag_file of
             undefined -> ok;
             Fd -> file:write(Fd, PCM)
@@ -255,10 +241,7 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
 
        
         FC = FC0 + 1,
-        RenderT0 = erlang:monotonic_time(microsecond),
         RGB = ezx_emulator:render_frame(Machine3),
-        % RGB = Machine3#machine_state.screen,
-        RenderT1 = erlang:monotonic_time(microsecond),
 
         Image0 = wxImage:new(352, 288, RGB),
 
@@ -348,32 +331,29 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
                 erlang:send_after(0, self(), frame_tick)
         end,
 
-        PerfAcc = PerfAcc0 + (PerfT1 - PerfT0),
-        RenderAcc = RenderAcc0 + (RenderT1 - RenderT0),
-        BeeperAcc = BeeperAcc0 + (BeepT1 - BeepT0),
-        AyAcc = AyAcc0 + (AyT1 - AyT0),
-        PerfFrames = PerfFrames0 + 1,
-        {PerfFramesN, PerfAccN, RenderAccN, BeeperAccN, AyAccN, PerfStartN} =
+        {MachineN, PerfStartN} =
             case Now - PerfStart0 >= 5000000 andalso State#state.perf_report of
                 true ->
-                    AvgPerf = PerfAcc / PerfFrames,
-                    AvgRender = RenderAcc / PerfFrames,
-                    AvgBeeper = BeeperAcc / PerfFrames,
-                    AvgAy = AyAcc / PerfFrames,
-                    io:format("ezx perf: ~p frames in ~.1f s | emulation ~.2f ms  render ~.2f ms  beeper ~.2f ms  ay ~.2f ms total ~.2f ms~n",
-                              [PerfFrames, (Now - PerfStart0) / 1000000,
-                               AvgPerf / 1000, AvgRender / 1000, AvgBeeper / 1000, AvgAy / 1000,
-                               (AvgPerf + AvgRender + AvgBeeper + AvgAy) / 1000]),
-                    {0, 0, 0, 0, 0, Now};
+                    PS = ezx_emulator:read_perf(Machine3),
+                    Frames = PS#perf_stats.frames,
+                    AvgCpu = PS#perf_stats.cpu_us / Frames,
+                    AvgBeeper = PS#perf_stats.beeper_us / Frames,
+                    AvgAy = PS#perf_stats.ay_us / Frames,
+                    AvgScreen = PS#perf_stats.screen_us / Frames,
+                    AvgRender = PS#perf_stats.render_us / Frames,
+                    io:format("ezx perf: ~p frames in ~.1f s | emulation ~.2f ms  beeper ~.2f ms  ay ~.2f ms  screen ~.2f ms  render ~.2f ms total ~.2f ms~n",
+                              [Frames, (Now - PerfStart0) / 1000000,
+                               AvgCpu / 1000, AvgBeeper / 1000, AvgAy / 1000,
+                               AvgScreen / 1000, AvgRender / 1000,
+                               (AvgCpu + AvgBeeper + AvgAy + AvgScreen + AvgRender) / 1000]),
+                    {ezx_emulator:reset_perf(Machine3), Now};
                 false ->
-                    {PerfFrames, PerfAcc, RenderAcc, BeeperAcc, AyAcc, PerfStart0}
+                    {Machine3, PerfStart0}
             end,
 
-        {noreply, State#state{machine = Machine3, frame_count = FC,
+        {noreply, State#state{machine = MachineN, frame_count = FC,
                               audio_start_us = StartUs, audio_bytes = Written,
-                              perf_acc_us = PerfAccN, render_acc_us = RenderAccN,
-                              beeper_acc_us = BeeperAccN, ay_acc_us = AyAccN,
-                              perf_frames = PerfFramesN, perf_start_us = PerfStartN,
+                              perf_start_us = PerfStartN,
                               audio_filter = AudioFilter1}}
     catch
         C:E:ST ->
@@ -680,9 +660,7 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                         frame_count = 0,
                         mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                         audio_start_us = Now, audio_bytes = 0,
-                        perf_acc_us = 0, render_acc_us = 0,
-                        beeper_acc_us = 0, ay_acc_us = 0,
-                        perf_frames = 0, perf_start_us = Now,
+                        perf_start_us = Now,
                         audio_filter = ezx_audio_filter:new()
                     },
                     save_config(NewState),
@@ -720,9 +698,7 @@ do_reset(State) ->
             {noreply, State#state{machine = Machine1, frame_count = 0,
                                   mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                                   audio_start_us = Now, audio_bytes = 0,
-                                  perf_acc_us = 0, render_acc_us = 0,
-                                  beeper_acc_us = 0, ay_acc_us = 0,
-                                  perf_frames = 0, perf_start_us = Now,
+                                  perf_start_us = Now,
                                   audio_filter = ezx_audio_filter:new()}};
         {error, {_Code, Detail}} ->
             Frame = State#state.frame,

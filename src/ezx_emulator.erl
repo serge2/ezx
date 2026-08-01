@@ -14,6 +14,9 @@
     render_frame/1,
     render_beeper/1,
     render_ay_channels/1,
+    set_render_screen/2,
+    read_perf/1,
+    reset_perf/1,
     load_sna/2,
     load_z80/2,
     load_tap/2,
@@ -487,16 +490,19 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
 %%   Phase 1: 0..31 T-states — normal execution (no interrupt)
 %%   Phase 2: 32..69887 T-states — interrupt raised at boundary, then normal execution
 %% Frame boundary is ignored mid-instruction (variant A).
-%% Closes the frame by rendering the device artifacts (beeper PCM, AY channel
-%% PCMs, border changes/color) into the machine state.
+%% Closes the frame: executes it, renders the device artifacts (beeper PCM,
+%% AY channel PCMs, border changes/color, and optionally the screen bitmap),
+%% and accumulates per-phase timings into #machine_state.perf_stats.
 -spec run_frame(#machine_state{}) -> #machine_state{}.
 run_frame(#machine_state{ay_module = AyModule, beeper_module = BeeperModule} = Machine) ->
+    PS0 = Machine#machine_state.perf_stats,
+    T0 = mono_us(),
     MachineQ = process_keyboard_queue(Machine),
     TStates = MachineQ#machine_state.t_states,
-    Beeper = MachineQ#machine_state.beeper,
-    Beeper1 = BeeperModule:frame_start(Beeper, TStates),
-    Screen = MachineQ#machine_state.screen,
-    Screen1 = ezx_screen:frame_start(Screen, TStates),
+    Beeper0 = MachineQ#machine_state.beeper,
+    Beeper1 = BeeperModule:frame_start(Beeper0, TStates),
+    Screen0 = MachineQ#machine_state.screen,
+    Screen1 = ezx_screen:frame_start(Screen0, TStates),
     MachineQ1 = MachineQ#machine_state{beeper = Beeper1, screen = Screen1},
     Machine1 = case AyModule of
         undefined ->
@@ -506,32 +512,54 @@ run_frame(#machine_state{ay_module = AyModule, beeper_module = BeeperModule} = M
             AY1 = AyModule:frame_start(AY, TStates),
             run_frame_1(MachineQ1#machine_state{ay = AY1})
     end,
-    render_frame_artifacts(Machine1).
-
-%% @doc Produce the frame's output artifacts from the device frame_render
-%% callbacks and store them in the machine state, together with the updated
-%% device states (which carry the frame-overrun tails into the next frame).
-render_frame_artifacts(#machine_state{ay_module = AyModule, beeper_module = BeeperModule} = Machine) ->
-    Beeper = Machine#machine_state.beeper,
-    {BeeperPcm, Beeper1} = BeeperModule:frame_render(Beeper, ?TSTATES_PER_FRAME),
-    Screen = Machine#machine_state.screen,
-    {Changes, CB, FlashOn, Screen1} = ezx_screen:frame_render(Screen, ?TSTATES_PER_FRAME),
-    Machine1 = Machine#machine_state{
-        beeper = Beeper1,
+    T1 = mono_us(),
+    {BeeperPcm, Beeper2} = BeeperModule:frame_render(Machine1#machine_state.beeper, ?TSTATES_PER_FRAME),
+    T2 = mono_us(),
+    {Changes, CB, FlashOn, Screen2} = ezx_screen:frame_render(Machine1#machine_state.screen, ?TSTATES_PER_FRAME),
+    Machine2 = Machine1#machine_state{
+        beeper = Beeper2,
         beeper_pcm = BeeperPcm,
-        screen = Screen1,
+        screen = Screen2,
         screen_changes = Changes,
         screen_color = CB,
         flash_on = FlashOn
     },
-    case AyModule of
+    T3 = mono_us(),
+    {Machine3, AyUs} = case AyModule of
         undefined ->
-            Machine1#machine_state{ay_pcm = undefined};
+            {Machine2#machine_state{ay_pcm = undefined}, 0};
         _ ->
-            AY = Machine1#machine_state.ay,
-            {ChA, ChB, ChC, AY1} = AyModule:render_channels(AY, ?TSTATES_PER_FRAME),
-            Machine1#machine_state{ay = AY1, ay_pcm = {ChA, ChB, ChC}}
-    end.
+            AT0 = mono_us(),
+            Ay2 = Machine2#machine_state.ay,
+            {ChA, ChB, ChC, Ay2b} = AyModule:render_channels(Ay2, ?TSTATES_PER_FRAME),
+            AT1 = mono_us(),
+            {Machine2#machine_state{ay = Ay2b, ay_pcm = {ChA, ChB, ChC}}, AT1 - AT0}
+    end,
+    {Machine4, RenderUs} = case Machine3#machine_state.render_screen of
+        false ->
+            {Machine3#machine_state{screen_pixels = undefined}, 0};
+        true ->
+            RT0 = mono_us(),
+            Pixels = render_frame_now(Machine3),
+            RT1 = mono_us(),
+            {Machine3#machine_state{screen_pixels = Pixels}, RT1 - RT0}
+    end,
+    Machine4#machine_state{
+        perf_stats = add_perf(PS0, T1 - T0, T2 - T1, T3 - T2, AyUs, RenderUs)
+    }.
+
+add_perf(#perf_stats{frames = F, cpu_us = C, beeper_us = B, ay_us = A,
+                     screen_us = S, render_us = R}, CpuUs, BeeperUs, ScreenUs, AyUs, RenderUs) ->
+    #perf_stats{
+        frames = F + 1,
+        cpu_us = C + CpuUs,
+        beeper_us = B + BeeperUs,
+        ay_us = A + AyUs,
+        screen_us = S + ScreenUs,
+        render_us = R + RenderUs
+    }.
+
+mono_us() -> erlang:monotonic_time(microsecond).
 
 run_frame_1(#machine_state{t_states = StartT} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
@@ -562,12 +590,33 @@ run_frame_1(#machine_state{t_states = StartT} = Machine) ->
         t_states = Overshoot
     }.
 
-%% @doc Render the current frame to a flat RGB binary (352×288×3 bytes).
-%% Extracts screen memory via bulk read_block and passes to ezx_screen.
-%% Uses the screen artifacts (border changes/color, flash flag) produced by
-%% run_frame/1.
+%% @doc Enable or disable rendering of the screen bitmap inside run_frame/1.
+%% The interactive UI enables it (the pixels land in screen_pixels each frame);
+%% headless consumers leave it off to skip the per-frame render cost.
+-spec set_render_screen(#machine_state{}, boolean()) -> #machine_state{}.
+set_render_screen(Machine, true) ->
+    Machine#machine_state{render_screen = true};
+set_render_screen(Machine, false) ->
+    Machine#machine_state{render_screen = false, screen_pixels = undefined}.
+
+%% @doc Return the per-phase timing accumulators collected by run_frame/1.
+-spec read_perf(#machine_state{}) -> #perf_stats{}.
+read_perf(Machine) -> Machine#machine_state.perf_stats.
+
+%% @doc Zero the timing accumulators (e.g. at the start of a report window).
+-spec reset_perf(#machine_state{}) -> #machine_state{}.
+reset_perf(Machine) -> Machine#machine_state{perf_stats = #perf_stats{}}.
+
+%% @doc Render the last frame to a flat RGB binary (352×288×3 bytes).
+%% Returns the bitmap produced inside run_frame/1 when render_screen is
+%% enabled; otherwise falls back to rendering on demand.
 -spec render_frame(#machine_state{}) -> binary().
-render_frame(Machine) ->
+render_frame(#machine_state{screen_pixels = undefined} = Machine) ->
+    render_frame_now(Machine);
+render_frame(#machine_state{screen_pixels = Pixels}) ->
+    Pixels.
+
+render_frame_now(Machine) ->
     MemModule = Machine#machine_state.memory_module,
     FlashOn = Machine#machine_state.flash_on,
     Changes = Machine#machine_state.screen_changes,
