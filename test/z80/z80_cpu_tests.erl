@@ -27,6 +27,16 @@ interrupt_test() ->
     ?assertEqual(0, Cpu3#cpu_state.iff1),
     ?assertEqual(0, Cpu3#cpu_state.iff2).
 
+clear_interrupt_request_test() ->
+    Cpu0 = test_helpers:init_cpu(),
+    Cpu1 = Cpu0#cpu_state{iff1 = 1, iff2 = 1, pc = 16#1000},
+    Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
+    Cpu3 = z80_cpu:clear_interrupt_request(Cpu2),
+    Cpu4 = z80_cpu:step(Cpu3),
+    ?assertEqual(16#1001, z80_cpu:pc(Cpu4)),
+    ?assertEqual(1, Cpu4#cpu_state.iff1),
+    ?assertEqual(1, Cpu4#cpu_state.iff2).
+
 %% --- R Register Tests ---
 
 r_register_increments_on_m1_test() ->

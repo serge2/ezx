@@ -485,85 +485,56 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
         kempston_mouse = ExtCtx#ext_context.kempston_mouse
     }.
 
-%% @doc Execute one complete frame (69888 T-states).
-%% Two-phase execution:
-%%   Phase 1: 0..31 T-states — normal execution (no interrupt)
-%%   Phase 2: 32..69887 T-states — interrupt raised at boundary, then normal execution
-%% Frame boundary is ignored mid-instruction (variant A).
-%% Closes the frame: executes it, renders the device artifacts (beeper PCM,
-%% AY channel PCMs, border changes/color, and optionally the screen bitmap),
-%% and accumulates per-phase timings into #machine_state.perf_stats.
+%% @doc Execute one complete frame (69888 T-states) and close it: run the
+%% CPU, render the device artifacts (beeper PCM, AY channels, ULA border/
+%% flash, optionally the screen bitmap), and accumulate per-phase timings
+%% into #machine_state.perf_stats. Each phase runs as a named step and is
+%% timed independently, so the report shows where time actually goes.
 -spec run_frame(#machine_state{}) -> #machine_state{}.
-run_frame(#machine_state{ay_module = AyModule, beeper_module = BeeperModule} = Machine) ->
+run_frame(Machine) ->
     PS0 = Machine#machine_state.perf_stats,
-    T0 = mono_us(),
-    MachineQ = process_keyboard_queue(Machine),
-    TStates = MachineQ#machine_state.t_states,
-    Beeper0 = MachineQ#machine_state.beeper,
-    Beeper1 = BeeperModule:frame_start(Beeper0, TStates),
-    Screen0 = MachineQ#machine_state.screen,
-    Screen1 = ezx_screen:frame_start(Screen0, TStates),
-    MachineQ1 = MachineQ#machine_state{beeper = Beeper1, screen = Screen1},
-    Machine1 = case AyModule of
+    {Machine1, CpuUs} = run_frame_execute(Machine),
+    {Machine2, BeeperUs} = run_frame_render_beeper(Machine1),
+    {Machine3, ScreenUs} = run_frame_render_screen_artifacts(Machine2),
+    {Machine4, AyUs} = run_frame_render_ay(Machine3),
+    {Machine5, RenderUs} = run_frame_render_screen_bitmap(Machine4),
+    Machine5#machine_state{
+        perf_stats = add_perf(PS0, CpuUs, BeeperUs, ScreenUs, AyUs, RenderUs)
+    }.
+
+%% Phase: input handling, device frame_start, and CPU execution of the frame.
+run_frame_execute(Machine) ->
+    timed(fun() ->
+        MachineQ = process_keyboard_queue(Machine),
+        TStates = MachineQ#machine_state.t_states,
+        Machine1 = frame_start_devices(MachineQ, TStates),
+        execute_frame(Machine1)
+    end).
+
+%% Rebase the device event timelines to the start of the frame.
+frame_start_devices(#machine_state{ay_module = AyModule, beeper_module = BeeperModule} = Machine, TStates) ->
+    Beeper = Machine#machine_state.beeper,
+    Beeper1 = BeeperModule:frame_start(Beeper, TStates),
+    Screen = Machine#machine_state.screen,
+    Screen1 = ezx_screen:frame_start(Screen, TStates),
+    MachineQ1 = Machine#machine_state{beeper = Beeper1, screen = Screen1},
+    case AyModule of
         undefined ->
-            run_frame_1(MachineQ1);
+            MachineQ1;
         _ ->
             AY = MachineQ1#machine_state.ay,
             AY1 = AyModule:frame_start(AY, TStates),
-            run_frame_1(MachineQ1#machine_state{ay = AY1})
-    end,
-    T1 = mono_us(),
-    {BeeperPcm, Beeper2} = BeeperModule:frame_render(Machine1#machine_state.beeper, ?TSTATES_PER_FRAME),
-    T2 = mono_us(),
-    {Changes, CB, FlashOn, Screen2} = ezx_screen:frame_render(Machine1#machine_state.screen, ?TSTATES_PER_FRAME),
-    Machine2 = Machine1#machine_state{
-        beeper = Beeper2,
-        beeper_pcm = BeeperPcm,
-        screen = Screen2,
-        screen_changes = Changes,
-        screen_color = CB,
-        flash_on = FlashOn
-    },
-    T3 = mono_us(),
-    {Machine3, AyUs} = case AyModule of
-        undefined ->
-            {Machine2#machine_state{ay_pcm = undefined}, 0};
-        _ ->
-            AT0 = mono_us(),
-            Ay2 = Machine2#machine_state.ay,
-            {ChA, ChB, ChC, Ay2b} = AyModule:render_channels(Ay2, ?TSTATES_PER_FRAME),
-            AT1 = mono_us(),
-            {Machine2#machine_state{ay = Ay2b, ay_pcm = {ChA, ChB, ChC}}, AT1 - AT0}
-    end,
-    {Machine4, RenderUs} = case Machine3#machine_state.render_screen of
-        false ->
-            {Machine3#machine_state{screen_pixels = undefined}, 0};
-        true ->
-            RT0 = mono_us(),
-            Pixels = render_frame_now(Machine3),
-            RT1 = mono_us(),
-            {Machine3#machine_state{screen_pixels = Pixels}, RT1 - RT0}
-    end,
-    Machine4#machine_state{
-        perf_stats = add_perf(PS0, T1 - T0, T2 - T1, T3 - T2, AyUs, RenderUs)
-    }.
+            MachineQ1#machine_state{ay = AY1}
+    end.
 
-add_perf(#perf_stats{frames = F, cpu_us = C, beeper_us = B, ay_us = A,
-                     screen_us = S, render_us = R}, CpuUs, BeeperUs, ScreenUs, AyUs, RenderUs) ->
-    #perf_stats{
-        frames = F + 1,
-        cpu_us = C + CpuUs,
-        beeper_us = B + BeeperUs,
-        ay_us = A + AyUs,
-        screen_us = S + ScreenUs,
-        render_us = R + RenderUs
-    }.
-
-mono_us() -> erlang:monotonic_time(microsecond).
-
-run_frame_1(#machine_state{t_states = StartT} = Machine) ->
+%% CPU execution of one frame. Two-phase execution:
+%%   Phase 1: 0..31 T-states — normal execution (no interrupt)
+%%   Phase 2: 32..69887 T-states — interrupt raised at boundary, then normal
+%%            execution; the frame boundary is ignored mid-instruction
+%%            (variant A), the overrun is carried as the new t_states tail.
+execute_frame(#machine_state{t_states = StartT} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
-    Cpu0a = Cpu0#cpu_state{pending_interrupt = none},
+    Cpu0a = z80_cpu:clear_interrupt_request(Cpu0),
     Machine0a = Machine#machine_state{cpu = Cpu0a},
 
     Machine1 = case StartT < ?INT_TSTATE of
@@ -589,6 +560,68 @@ run_frame_1(#machine_state{t_states = StartT} = Machine) ->
         cpu = Cpu4,
         t_states = Overshoot
     }.
+
+%% Phase: render the beeper PCM for the frame (882 S16LE mono samples).
+run_frame_render_beeper(#machine_state{beeper_module = BeeperModule} = Machine) ->
+    timed(fun() ->
+        Beeper = Machine#machine_state.beeper,
+        {BeeperPcm, Beeper1} = BeeperModule:frame_render(Beeper, ?TSTATES_PER_FRAME),
+        Machine#machine_state{beeper = Beeper1, beeper_pcm = BeeperPcm}
+    end).
+
+%% Phase: render the ULA screen artifacts — sorted local-time border changes,
+%% the base border color, and the attribute flash flag for this frame.
+run_frame_render_screen_artifacts(Machine) ->
+    timed(fun() ->
+        Screen = Machine#machine_state.screen,
+        {Changes, CB, FlashOn, Screen1} = ezx_screen:frame_render(Screen, ?TSTATES_PER_FRAME),
+        Machine#machine_state{
+            screen = Screen1,
+            screen_changes = Changes,
+            screen_color = CB,
+            flash_on = FlashOn
+        }
+    end).
+
+%% Phase: render the AY-3-8912 channel PCMs (ChA, ChB, ChC).
+run_frame_render_ay(#machine_state{ay_module = undefined} = Machine) ->
+    {Machine#machine_state{ay_pcm = undefined}, 0};
+run_frame_render_ay(#machine_state{ay_module = AyModule} = Machine) ->
+    timed(fun() ->
+        AY = Machine#machine_state.ay,
+        {ChA, ChB, ChC, AY1} = AyModule:render_channels(AY, ?TSTATES_PER_FRAME),
+        Machine#machine_state{ay = AY1, ay_pcm = {ChA, ChB, ChC}}
+    end).
+
+%% Phase: render the screen bitmap (352×288 RGB). Only when the render_screen
+%% flag is set — the interactive UI enables it, headless consumers skip it.
+run_frame_render_screen_bitmap(#machine_state{render_screen = false} = Machine) ->
+    {Machine#machine_state{screen_pixels = undefined}, 0};
+run_frame_render_screen_bitmap(#machine_state{render_screen = true} = Machine) ->
+    timed(fun() ->
+        Pixels = render_frame_now(Machine),
+        Machine#machine_state{screen_pixels = Pixels}
+    end).
+
+%% Time a phase: returns {Result, Microseconds}.
+timed(Fun) ->
+    T0 = mono_us(),
+    Result = Fun(),
+    T1 = mono_us(),
+    {Result, T1 - T0}.
+
+add_perf(#perf_stats{frames = F, cpu_us = C, beeper_us = B, ay_us = A,
+                     screen_us = S, render_us = R}, CpuUs, BeeperUs, ScreenUs, AyUs, RenderUs) ->
+    #perf_stats{
+        frames = F + 1,
+        cpu_us = C + CpuUs,
+        beeper_us = B + BeeperUs,
+        ay_us = A + AyUs,
+        screen_us = S + ScreenUs,
+        render_us = R + RenderUs
+    }.
+
+mono_us() -> erlang:monotonic_time(microsecond).
 
 %% @doc Enable or disable rendering of the screen bitmap inside run_frame/1.
 %% The interactive UI enables it (the pixels land in screen_pixels each frame);

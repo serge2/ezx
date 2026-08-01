@@ -7,6 +7,7 @@
     step/1,
     run/2,
     request_interrupt/2,
+    clear_interrupt_request/1,
     pc/1,
     t_states/1,
 
@@ -52,6 +53,12 @@ run(State, N) ->
 -spec request_interrupt(#cpu_state{}, int | nmi) -> #cpu_state{}.
 request_interrupt(#cpu_state{} = State, Type) ->
     State#cpu_state{pending_interrupt = Type}.
+
+%% @doc Clear a queued interrupt request (e.g. at the start of a frame so a
+%% request from the previous frame is not carried over).
+-spec clear_interrupt_request(#cpu_state{}) -> #cpu_state{}.
+clear_interrupt_request(#cpu_state{} = State) ->
+    State#cpu_state{pending_interrupt = none}.
 
 
 step(#cpu_state{} = State) ->
