@@ -81,7 +81,7 @@ bench_one(MemMod, Rom0, Rom1, DurationSec) ->
         hl   => (FinalCpu#cpu_state.h bsl 8) bor FinalCpu#cpu_state.l,
         ix   => (FinalCpu#cpu_state.ixh bsl 8) bor FinalCpu#cpu_state.ixl,
         iy   => (FinalCpu#cpu_state.iyh bsl 8) bor FinalCpu#cpu_state.iyl,
-        frames => M3#machine_state.flash_counter
+        frames => M3#machine_state.flash_on
     },
 
     #{cpu_only => CpuStats, full => FullStats, video_read => VideoStats, state => FinalState}.
@@ -113,12 +113,12 @@ bench_full_timed(MemMod, M, DeadlineUs, CpuAcc, VidAcc) ->
 
             MemModule = M1#machine_state.memory_module,
             VideoModule = M1#machine_state.video_module,
-            FlashOn = M1#machine_state.flash_counter div 16 =:= 1,
-            Changes = lists:reverse(M1#machine_state.border_changes),
-            CB = M1#machine_state.border_color,
+            FlashOn = M1#machine_state.flash_on,
+            Changes = M1#machine_state.screen_changes,
+            CB = M1#machine_state.screen_color,
             Mem = M1#machine_state.memory,
             Videobuffer = MemModule:read_block(Mem, 16384, 6144 + 768),
-            VideoModule:render_frame(Videobuffer, FlashOn, Changes, CB),
+            VideoModule:render_screen(Videobuffer, FlashOn, Changes, CB),
             T2 = erlang:monotonic_time(microsecond),
 
             bench_full_timed(MemMod, M1, DeadlineUs,

@@ -30,8 +30,6 @@
 ]).
 
 %% ZX Spectrum frame length in T-states.
--define(TSTATES_PER_FRAME, 69888).
--define(INT_TSTATE, 32).
 -define(DEFAULT_BORDER, 1).
 
 %% @doc Create a new machine state with initialized CPU and memory components.
@@ -77,17 +75,13 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
         fun(ExtContext, TState, Port, Byte) ->
             case Port band 16#FF of
                 16#FE ->
-                    BorderColor = Byte band 16#07,
-                    Changes = ExtContext#ext_context.border_changes,
                     BeeperLevel = (Byte bsr 4) band 1,
+                    Screen0 = ExtContext#ext_context.screen,
+                    Screen1 = ezx_screen:border_set(Screen0, TState, Byte band 16#07),
                     Beeper0 = ExtContext#ext_context.beeper,
                     Beeper1 = BeeperModule:set_level(Beeper0, BeeperLevel, TState),
-                    NewChanges = case Changes of
-                        [{_, BorderColor} | _] -> Changes;
-                        _ -> [{TState, BorderColor} | Changes]
-                    end,
                     ExtContext#ext_context{
-                        border_changes = NewChanges,
+                        screen = Screen1,
                         beeper = Beeper1
                     };
                 _ ->
@@ -116,6 +110,7 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
         ay_module = AyModule,
         cpu = Cpu0,
         memory = MemModule:new(Rom),
+        screen = ezx_screen:new(),
         beeper = BeeperModule:init(),
         keyboard = KeyboardModule:default(),
         ay = case HasAy of true -> AyModule:new(); false -> undefined end
@@ -214,12 +209,9 @@ load_sna(Machine, Data) ->
             {ok, Machine#machine_state{
                 memory = Mem1,
                 cpu = Cpu1,
-                border_color = H#sna_header.border,
+                screen = ezx_screen:new(H#sna_header.border),
                 t_states = 0,
-                border_changes = [],
-                flash_counter = 0,
-                beeper_pcm = <<>>,
-                screen = <<>>
+                beeper_pcm = <<>>
             }}
     catch
         error:bad_sna_header ->
@@ -268,12 +260,9 @@ load_z80(Machine, Data) ->
             {ok, Machine#machine_state{
                 memory = Mem1,
                 cpu = Cpu1,
-                border_color = H#z80_header.border,
+                screen = ezx_screen:new(H#z80_header.border),
                 t_states = 0,
-                border_changes = [],
-                flash_counter = 0,
-                beeper_pcm = <<>>,
-                screen = <<>>
+                beeper_pcm = <<>>
             }}
     catch
         error:bad_z80_header ->
@@ -472,7 +461,7 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
     Beeper0 = Machine#machine_state.beeper,
     ExtContext0 = #ext_context{
         memory = Memory0,
-        border_changes = [],
+        screen = Machine#machine_state.screen,
         keyboard = Machine#machine_state.keyboard,
         beeper = Beeper0,
         ay = Machine#machine_state.ay,
@@ -483,20 +472,12 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
     NewMachineTStates = MachineTStates + Ticks,
     ExtCtx = Cpu1#cpu_state.ext_context,
     Memory1 = ExtCtx#ext_context.memory,
-    %% Propagate border_changes accumulated during this step.
-    StepChanges = ExtCtx#ext_context.border_changes,
-    MergedChanges = merge_border_changes(Machine#machine_state.border_changes, StepChanges),
-    NewBorder = case StepChanges of
-        [{_, Color} | _] -> Color;
-        [] -> Machine#machine_state.border_color
-    end,
     Beeper1 = ExtCtx#ext_context.beeper,
     Machine#machine_state{
         cpu = Cpu1#cpu_state{t_states = NewMachineTStates},
         memory = Memory1,
         t_states = NewMachineTStates,
-        border_color = NewBorder,
-        border_changes = MergedChanges,
+        screen = ExtCtx#ext_context.screen,
         beeper = Beeper1,
         ay = ExtCtx#ext_context.ay,
         kempston_mouse = ExtCtx#ext_context.kempston_mouse
@@ -507,22 +488,56 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
 %%   Phase 1: 0..31 T-states — normal execution (no interrupt)
 %%   Phase 2: 32..69887 T-states — interrupt raised at boundary, then normal execution
 %% Frame boundary is ignored mid-instruction (variant A).
+%% Closes the frame by rendering the device artifacts (beeper PCM, AY channel
+%% PCMs, border changes/color) into the machine state.
 -spec run_frame(#machine_state{}) -> #machine_state{}.
-run_frame(#machine_state{ay_module = undefined} = Machine) ->
+run_frame(#machine_state{ay_module = AyModule, beeper_module = BeeperModule} = Machine) ->
     MachineQ = process_keyboard_queue(Machine),
-    run_frame_1(MachineQ);
-run_frame(#machine_state{ay_module = AyModule} = Machine) ->
-    MachineQ = process_keyboard_queue(Machine),
-    AY = MachineQ#machine_state.ay,
-    AY1 = AyModule:frame_start(AY, MachineQ#machine_state.t_states),
-    run_frame_1(MachineQ#machine_state{ay = AY1}).
+    TStates = MachineQ#machine_state.t_states,
+    Beeper = MachineQ#machine_state.beeper,
+    Beeper1 = BeeperModule:frame_start(Beeper, TStates),
+    Screen = MachineQ#machine_state.screen,
+    Screen1 = ezx_screen:frame_start(Screen, TStates),
+    MachineQ1 = MachineQ#machine_state{beeper = Beeper1, screen = Screen1},
+    Machine1 = case AyModule of
+        undefined ->
+            run_frame_1(MachineQ1);
+        _ ->
+            AY = MachineQ1#machine_state.ay,
+            AY1 = AyModule:frame_start(AY, TStates),
+            run_frame_1(MachineQ1#machine_state{ay = AY1})
+    end,
+    render_frame_artifacts(Machine1).
+
+%% @doc Produce the frame's output artifacts from the device frame_render
+%% callbacks and store them in the machine state, together with the updated
+%% device states (which carry the frame-overrun tails into the next frame).
+render_frame_artifacts(#machine_state{ay_module = AyModule, beeper_module = BeeperModule} = Machine) ->
+    Beeper = Machine#machine_state.beeper,
+    {BeeperPcm, Beeper1} = BeeperModule:frame_render(Beeper, ?TSTATES_PER_FRAME),
+    Screen = Machine#machine_state.screen,
+    {Changes, CB, FlashOn, Screen1} = ezx_screen:frame_render(Screen, ?TSTATES_PER_FRAME),
+    Machine1 = Machine#machine_state{
+        beeper = Beeper1,
+        beeper_pcm = BeeperPcm,
+        screen = Screen1,
+        screen_changes = Changes,
+        screen_color = CB,
+        flash_on = FlashOn
+    },
+    case AyModule of
+        undefined ->
+            Machine1#machine_state{ay_pcm = undefined};
+        _ ->
+            AY = Machine1#machine_state.ay,
+            {ChA, ChB, ChC, AY1} = AyModule:render_channels(AY, ?TSTATES_PER_FRAME),
+            Machine1#machine_state{ay = AY1, ay_pcm = {ChA, ChB, ChC}}
+    end.
 
 run_frame_1(#machine_state{t_states = StartT} = Machine) ->
-    Machine0 = Machine#machine_state{border_changes = []},
-
-    Cpu0 = Machine0#machine_state.cpu,
+    Cpu0 = Machine#machine_state.cpu,
     Cpu0a = Cpu0#cpu_state{pending_interrupt = none},
-    Machine0a = Machine0#machine_state{cpu = Cpu0a},
+    Machine0a = Machine#machine_state{cpu = Cpu0a},
 
     Machine1 = case StartT < ?INT_TSTATE of
         true ->
@@ -540,42 +555,40 @@ run_frame_1(#machine_state{t_states = StartT} = Machine) ->
 
     Overshoot = Machine3#machine_state.t_states - Phase2End,
 
-    FlashCounter = Machine3#machine_state.flash_counter,
-    NewFlashCounter = (FlashCounter + 1) rem 32,
+    Cpu3 = Machine3#machine_state.cpu,
+    Cpu4 = Cpu3#cpu_state{t_states = Overshoot},
 
     Machine3#machine_state{
-        t_states = Overshoot,
-        flash_counter = NewFlashCounter
+        cpu = Cpu4,
+        t_states = Overshoot
     }.
 
 %% @doc Render the current frame to a flat RGB binary (352×288×3 bytes).
 %% Extracts screen memory via bulk read_block and passes to a video module.
+%% Uses the screen artifacts (border changes/color, flash flag) produced by
+%% run_frame/1.
 -spec render_frame(#machine_state{}) -> binary().
 render_frame(Machine) ->
     MemModule = Machine#machine_state.memory_module,
     VideoModule = Machine#machine_state.video_module,
-    FlashOn = Machine#machine_state.flash_counter div 16 =:= 1,
-    Changes = lists:reverse(Machine#machine_state.border_changes),
-    CB = Machine#machine_state.border_color,
+    FlashOn = Machine#machine_state.flash_on,
+    Changes = Machine#machine_state.screen_changes,
+    CB = Machine#machine_state.screen_color,
     Mem = Machine#machine_state.memory,
     Videobuffer = MemModule:read_block(Mem, 16384, 6144 + 768),
-    VideoModule:render_frame(Videobuffer, FlashOn, Changes, CB).
+    VideoModule:render_screen(Videobuffer, FlashOn, Changes, CB).
 
-%% @doc Render accumulated beeper PCM (mono S16LE).
+%% @doc Beeper PCM (mono S16LE) produced by the last run_frame/1.
 -spec render_beeper(#machine_state{}) -> {binary(), #machine_state{}}.
 render_beeper(Machine) ->
-    BeeperModule = Machine#machine_state.beeper_module,
-    Beeper = Machine#machine_state.beeper,
-    {PCM, Beeper1} = BeeperModule:flush_frame(Beeper),
-    {PCM, Machine#machine_state{beeper = Beeper1, beeper_pcm = PCM}}.
+    {Machine#machine_state.beeper_pcm, Machine}.
 
-%% @doc Render 3 separate AY channel PCMs (mono S16LE, one per channel).
+%% @doc AY channel PCMs (mono S16LE, one per channel) from the last run_frame/1.
 -spec render_ay_channels(#machine_state{}) -> {binary(), binary(), binary(), #machine_state{}}.
-render_ay_channels(#machine_state{ay = undefined} = Machine) ->
+render_ay_channels(#machine_state{ay_pcm = undefined} = Machine) ->
     {<<>>, <<>>, <<>>, Machine};
-render_ay_channels(#machine_state{ay = AY, ay_module = AyModule} = Machine) ->
-    {ChA, ChB, ChC, AY1} = AyModule:render_channels(AY, ?TSTATES_PER_FRAME),
-    {ChA, ChB, ChC, Machine#machine_state{ay = AY1}}.
+render_ay_channels(#machine_state{ay_pcm = {ChA, ChB, ChC}} = Machine) ->
+    {ChA, ChB, ChC, Machine}.
 
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.
@@ -597,12 +610,3 @@ read_kempston(#ext_context{kempston_mouse = undefined}, _Port) ->
     undefined;
 read_kempston(#ext_context{kempston_mouse = Mouse}, Port) ->
     ezx_kempston_mouse:read(Mouse, Port).
-
-%% Merge border changes from a step into the accumulated list.
-%% Both lists are newest-first (prepended). We append step changes to the front.
-merge_border_changes(Existing, []) ->
-    Existing;
-merge_border_changes(Existing, StepChanges) ->
-    %% StepChanges are in reverse order (newest first within the step).
-    %% We want to prepend them so the combined list remains newest-first.
-    StepChanges ++ Existing.

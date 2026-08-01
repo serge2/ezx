@@ -24,6 +24,14 @@ machine_run_until_tstates_test() ->
     ?assertEqual(12, z80_cpu:t_states(Machine2#machine_state.cpu)),
     ?assertEqual(12, Machine2#machine_state.t_states).
 
+machine_128_frame_runs_with_screen_device_test() ->
+    %% The UI drives a 128K machine through ezx_emulator:run_frame/1, so the
+    %% 128K init must create the screen device too.
+    Machine0 = init_machine_128(),
+    Machine1 = ezx_emulator:run_frame(Machine0),
+    ?assertEqual(screen, element(1, Machine1#machine_state.screen)),
+    ?assert(Machine1#machine_state.t_states < ?INT_TSTATE).
+
 machine_loads_byte_lists_into_memory_test() ->
     Machine0 = init_machine(),
     Machine1 = load_program(Machine0, 16#4000, [16#3E, 16#41]),
@@ -79,15 +87,16 @@ run_frame_int_fires_test() ->
     Pc = z80_cpu:pc(Cpu),
     ?assert(Pc >= 16#0038).
 
-run_frame_border_changes_cleared_test() ->
+run_frame_screen_changes_recorded_test() ->
     Machine0 = init_machine(),
     Machine1 = load_program(Machine0, #{16#4000 => 16#3E, 16#4001 => 16#04, 16#4002 => 16#D3, 16#4003 => 16#FE}),
     Machine1b = set_pc(Machine1, 16#4000),
     Machine2 = ezx_emulator:run_frame(Machine1b),
-    %% border_changes are now preserved after run_frame for rendering.
-    %% They should be empty only if no OUT instructions executed.
-    %% With the program above (OUT 0xFE, A), there should be one change.
-    ?assertEqual([{14, 4}], Machine2#machine_state.border_changes).
+    %% OUT (0xFE), A records one change to color 4; the artifacts are stored in
+    %% the machine state by run_frame.
+    ?assertEqual([{14, 4}], Machine2#machine_state.screen_changes),
+    ?assertEqual(4, Machine2#machine_state.screen_color),
+    ?assertEqual(4, ezx_screen:border_get(Machine2#machine_state.screen)).
 
 run_frame_multiple_nops_test() ->
     Machine0 = init_machine(),
@@ -143,7 +152,6 @@ run_frame_two_frames_test() ->
 run_frame_border_stripes_test() ->
     M0 = init_machine(),
     M0r = ezx_emulator:run_frame(M0),
-    Overshoot = M0r#machine_state.t_states,
 
     Pgm = [
         16#F3,                               %% DI
@@ -174,10 +182,14 @@ run_frame_border_stripes_test() ->
     M2 = set_pc(M1, 16#8000),
     M3 = ezx_emulator:run_frame(M2),
 
-    Changes = lists:keysort(1, M3#machine_state.border_changes),
+    %% run_frame stores the border artifacts (sorted local changes + current
+    %% color + flash flag) in the machine state.
+    Changes = M3#machine_state.screen_changes,
+    CB = M3#machine_state.screen_color,
     ?assertEqual(16, length(Changes)),
 
-    FirstT = 3584 + Overshoot + 7,
+    %% Border changes are rebased onto local frame time.
+    FirstT = 3584 + 7,
     Interval = 4032,
     ExpectedColors = [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7],
     lists:foreach(fun({K, {T, Color}}) ->
@@ -187,10 +199,8 @@ run_frame_border_stripes_test() ->
 
     %% --- Verify rendered pixel colors ---
     Mem = M3#machine_state.memory,
-    CB = M3#machine_state.border_color,
-    ChangesSorted = lists:keysort(1, Changes),
     VB = ezx_memory_48:read_block(Mem, 16384, 6912),
-    RGB = ezx_screen:render_frame(VB, false, ChangesSorted, CB),
+    RGB = ezx_screen:render_screen(VB, M3#machine_state.flash_on, Changes, CB),
 
     Palette = {
         {0, 0, 0}, {0, 0, 215}, {215, 0, 0}, {215, 0, 215},
@@ -206,6 +216,45 @@ run_frame_border_stripes_test() ->
         ?assertEqual(element(ExpectedColor + 1, Palette), {R, G, B})
     end, lists:seq(0, 15)).
 
+%% --- Frame artifact tests ---
+
+run_frame_produces_beeper_pcm_artifact_test() ->
+    Machine0 = init_machine(),
+    Machine1 = ezx_emulator:run_frame(Machine0),
+    PCM = Machine1#machine_state.beeper_pcm,
+    ?assertEqual(882 * 2, byte_size(PCM)),
+    {PCM2, Machine2} = ezx_emulator:render_beeper(Machine1),
+    ?assertEqual(PCM, PCM2),
+    ?assertEqual(Machine1, Machine2).
+
+run_frame_produces_ay_pcm_artifact_test() ->
+    Machine0 = init_machine_128(),
+    Machine1 = ezx_emulator:run_frame(Machine0),
+    {ChA, ChB, ChC} = Machine1#machine_state.ay_pcm,
+    ?assertEqual(882 * 2, byte_size(ChA)),
+    ?assertEqual(882 * 2, byte_size(ChB)),
+    ?assertEqual(882 * 2, byte_size(ChC)),
+    {ChA2, ChB2, ChC2, Machine2} = ezx_emulator:render_ay_channels(Machine1),
+    ?assertEqual({ChA, ChB, ChC}, {ChA2, ChB2, ChC2}),
+    ?assertEqual(Machine1, Machine2).
+
+run_frame_flash_cadence_test() ->
+    %% The flash phase advances once per frame inside the screen device; the
+    %% flash flag flips on a 16-frame cadence (phase 16..31 of 32) and the
+    %% stored artifact must match the device accessor.
+    Machine0 = init_machine(),
+    Machine1 = load_program(Machine0, #{16#4000 => 16#00}),
+    Machine1b = set_pc(Machine1, 16#4000),
+    {_Machine32, Flags} = lists:foldl(fun(_, {M, Acc}) ->
+        M2 = ezx_emulator:run_frame(M),
+        Artifact = M2#machine_state.flash_on,
+        DeviceFlag = ezx_screen:flash_on(M2#machine_state.screen),
+        ?assertEqual(DeviceFlag, Artifact),
+        {M2, [Artifact | Acc]}
+    end, {Machine1b, []}, lists:seq(1, 32)),
+    ?assertEqual(lists:duplicate(15, false) ++ lists:duplicate(16, true) ++ [false],
+                 lists:reverse(Flags)).
+
 %% --- Helpers ---
 
 init_machine() ->
@@ -216,6 +265,15 @@ init_machine() ->
     end,
     {ok, Rom} = file:read_file(RomPath),
     ezx_emulator:init(z80_cpu, ezx_memory_48, ezx_screen, ezx_keyboard, ezx_beeper2, undefined, Rom).
+
+init_machine_128() ->
+    RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
+    catch error:badarg ->
+        BeamDir = filename:dirname(code:which(?MODULE)),
+        filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
+    end,
+    {ok, Rom} = file:read_file(RomPath),
+    ezx_emulator_128:init(z80_cpu, ezx_memory_128_pages512, ezx_screen, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom, Rom}).
 
 load_program(Machine, Program) when is_map(Program) ->
     maps:fold(fun(Addr, Byte, M) ->

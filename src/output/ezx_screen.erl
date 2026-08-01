@@ -1,8 +1,97 @@
 -module(ezx_screen).
 
--on_load(init/0).
+%% ZX Spectrum ULA screen device: border color changes + attribute flash.
+%% Also renders the frame into a flat RGB bitmap (pure, view-optional).
+%%
+%% Device frame contract (shared with the beeper and AY):
+%%   frame_start(Screen, StartTState) — begin a frame; events recorded below
+%%                                       carry absolute TState stamps
+%%   border_set(Screen, TState, Color) — record a border color change
+%%   frame_render(Screen, FrameLen)   — produce the sorted local-time border
+%%                                       changes, the current color, and the
+%%                                       flash phase for the screen; advances
+%%                                       the flash phase once per frame
+%%
+%% Border changes are stored newest-first with absolute TState stamps.
+%% frame_render/2 rebases them onto local frame time (ET - StartTState) and
+%% drops the frame-overrun zone (local TState >= FrameLen); the live color —
+%% which already reflects those dropped changes — is returned as the base
+%% color for lines before the first change.
+%%
+%% The flash phase advances at frame close (32-frame cycle); the FlashOn flag
+%% returned by frame_render/2 matches flash_on/1 of the returned device. The
+%% emulator stores it as the flash_on artifact alongside the border changes
+%% and color, so render_frame/1 does not need to touch the device directly.
 
-%% Optimized variant of video4.
+-export([new/0, new/1, border_set/3, border_get/1, flash_on/1, frame_start/2, frame_render/2]).
+-export([init_helper_tables/0, render_screen/4]).
+
+-on_load(init_helper_tables/0).
+
+%% --- Device ---
+
+-define(FLASH_CYCLE, 32).
+
+-record(screen, {
+    border_color = 0    :: 0..7,
+    frame_offset = 0    :: non_neg_integer(),
+    border_changes = [] :: [{non_neg_integer(), 0..7}],
+    flash_phase = 0     :: 0..31
+}).
+
+-type state() :: #screen{}.
+-export_type([state/0]).
+
+%% @doc New screen device, starting at black, flash phase 0.
+-spec new() -> state().
+new() ->
+    #screen{}.
+
+%% @doc New screen device with a known border color (snapshot load).
+-spec new(0..7) -> state().
+new(Color) ->
+    #screen{border_color = Color}.
+
+%% @doc Record a border color change. No-op when the color is unchanged.
+-spec border_set(state(), non_neg_integer(), 0..7) -> state().
+border_set(#screen{border_color = Color} = S, _TState, Color) ->
+    S;
+border_set(#screen{border_changes = Changes} = S, TState, NewColor) ->
+    S#screen{border_color = NewColor, border_changes = [{TState, NewColor} | Changes]}.
+
+%% @doc Current live border color (already reflects frame-overrun zone writes).
+-spec border_get(state()) -> 0..7.
+border_get(#screen{border_color = Color}) -> Color.
+
+%% @doc Flash phase flag: attributes with bit 7 set are inverted while true.
+-spec flash_on(state()) -> boolean().
+flash_on(#screen{flash_phase = Phase}) -> Phase div 16 =:= 1.
+
+%% @doc Mark the start of a new frame. Rebases the event timeline to
+%% StartTState: frame_render/2 converts events to local frame time by
+%% subtracting it.
+-spec frame_start(state(), non_neg_integer()) -> state().
+frame_start(#screen{} = S, StartTState) ->
+    S#screen{frame_offset = StartTState, border_changes = []}.
+
+%% @doc Produce the screen output for one frame (exactly FrameLen T-states):
+%% the sorted local-time border changes (frame-overrun zone dropped), the
+%% current color used as the screen's base color, the flash flag, and the
+%% advanced device state (flash phase carried into the next frame).
+-spec frame_render(state(), non_neg_integer()) ->
+    {[{non_neg_integer(), 0..7}], 0..7, boolean(), state()}.
+frame_render(#screen{border_color = Color, frame_offset = FO, border_changes = Changes, flash_phase = Phase}, FrameLen) ->
+    NewPhase = (Phase + 1) rem ?FLASH_CYCLE,
+    Sorted = lists:reverse(Changes),
+    Local = [{ET - FO, C} || {ET, C} <- Sorted, ET >= FO, ET - FO < FrameLen],
+    {Local, Color, NewPhase div 16 =:= 1,
+     #screen{border_color = Color, flash_phase = NewPhase}}.
+
+%% ============================================================================
+%% Rendering
+%% ============================================================================
+
+%% Optimized renderer.
 %% Same algorithm (6x32-bit XOR trick, same tables).
 %% Optimizations:
 %%   1. Row extraction: extract 32-byte bitmap/attr rows once per line
@@ -12,8 +101,6 @@
 %%   3. FlashMask hoisted out of per-character loop.
 %%   4. Simplified flash detection: AttrByte band FlashMask instead of
 %%      (AttrByte band 16#80) band (case FlashOn ...).
-
--export([init/0, render_frame/4]).
 
 -define(TSTATES_PER_LINE, 224).
 -define(FULL_Y_OFFSET, 16).
@@ -36,14 +123,14 @@
 
 -define(TABLES_KEY, ezx_screen_tables).
 
-init() ->
+init_helper_tables() ->
     Color8px = build_color_8px_table(),
     MaskTab = build_mask_table(),
     persistent_term:put(?TABLES_KEY, {Color8px, MaskTab}),
     ok.
 
--spec render_frame(binary(), boolean(), list(), non_neg_integer()) -> binary().
-render_frame(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder) ->
+-spec render_screen(binary(), boolean(), list(), non_neg_integer()) -> binary().
+render_screen(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder) ->
     {Color8px, MaskTab} = persistent_term:get(?TABLES_KEY),
     <<Bitmap:6144/binary, Attrs:768/binary>> = VideoBuffer,
     Lines = render_lines(Color8px, MaskTab, FlashOn, Bitmap, Attrs,

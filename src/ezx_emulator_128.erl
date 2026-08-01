@@ -21,9 +21,6 @@
 -include("lib/sna.hrl").
 -include("input/ezx_keyboard.hrl").
 
--define(TSTATES_PER_FRAME, 69888).
--define(INT_TSTATE, 32).
-
 %% @doc Create a 128K machine state with 0x7FFD paging support.
 -spec init(module(), module(), module(), module(), module(), module(), {binary(), binary()}) -> #machine_state{}.
 init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, {Rom0, Rom1}) ->
@@ -67,17 +64,13 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
         fun(ExtContext, TState, Port, Byte) ->
             case Port band 16#FF of
                 16#FE ->
-                    BorderColor = Byte band 16#07,
-                    Changes = ExtContext#ext_context.border_changes,
                     BeeperLevel = (Byte bsr 4) band 1,
+                    Screen0 = ExtContext#ext_context.screen,
+                    Screen1 = ezx_screen:border_set(Screen0, TState, Byte band 16#07),
                     Beeper0 = ExtContext#ext_context.beeper,
                     Beeper1 = BeeperModule:set_level(Beeper0, BeeperLevel, TState),
-                    NewChanges = case Changes of
-                        [{_, BorderColor} | _] -> Changes;
-                        _ -> [{TState, BorderColor} | Changes]
-                    end,
                     ExtContext#ext_context{
-                        border_changes = NewChanges,
+                        screen = Screen1,
                         beeper = Beeper1
                     };
                 _ ->
@@ -109,6 +102,7 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
         ay_module = AyModule,
         cpu = Cpu0,
         memory = MemModule:new(Rom0, Rom1),
+        screen = ezx_screen:new(),
         beeper = BeeperModule:init(),
         keyboard = KeyboardModule:default(),
         ay = AyModule:new()
@@ -149,12 +143,9 @@ load_z80(Machine, Data) ->
             {ok, Machine#machine_state{
                 memory = Mem2,
                 cpu = Cpu1,
-                border_color = H#z80_header.border,
+                screen = ezx_screen:new(H#z80_header.border),
                 t_states = 0,
-                border_changes = [],
-                flash_counter = 0,
-                beeper_pcm = <<>>,
-                screen = <<>>
+                beeper_pcm = <<>>
             }}
     catch
         error:bad_z80_header ->
@@ -253,12 +244,9 @@ load_sna(Machine, Data) ->
             {ok, Machine#machine_state{
                 memory = Mem2,
                 cpu = Cpu1,
-                border_color = H#sna_header.border,
+                screen = ezx_screen:new(H#sna_header.border),
                 t_states = 0,
-                border_changes = [],
-                flash_counter = 0,
-                beeper_pcm = <<>>,
-                screen = <<>>
+                beeper_pcm = <<>>
             }}
     catch
         error:bad_sna_header ->
