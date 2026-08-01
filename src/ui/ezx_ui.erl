@@ -19,10 +19,11 @@
 -define(MENU_CROP_EXACT, 4001).
 -define(MENU_CROP, 4002).
 -define(MENU_MUTE, 3002).
+-define(MENU_PAUSE, 3003).
+-define(MENUBAR_ACTIONS_INDEX, 4).
 
-%% Audio: 44100 Hz * 2 channels * 2 bytes = 176400 bytes/sec
--define(AUDIO_RATE, 176400).
--define(BYTES_PER_FRAME, 3528).  %% 882 samples * 2 channels * 2 bytes
+%% Audio: one frame is 882 samples * 2 channels * 2 bytes
+-define(BYTES_PER_FRAME, 3528).
 
 -record(state, {
     machine   :: #machine_state{} | undefined,
@@ -40,11 +41,11 @@
     windowed_size = undefined :: {pos_integer(), pos_integer()} | undefined,
     frame_count = 0 :: non_neg_integer(),
     aplay_port :: port() | undefined,
-    audio_start_us = 0 :: non_neg_integer(),
-    audio_bytes = 0 :: non_neg_integer(),
+    audio_pacing = undefined :: ezx_audio_pacing:state() | undefined,
     perf_start_us = 0 :: non_neg_integer(),
     muted = false :: boolean(),
     perf_report = false :: boolean(),
+    paused = false :: boolean(),
     menu_bar :: wxMenuBar:wxMenuBar(),
     recent_files = [] :: [string()],
     diag_file :: pid() | undefined,
@@ -110,6 +111,7 @@ init(_Options) ->
     wxMenu:append(ActionsMenu, ?MENU_RESET, "Reset\tF5", [{help, "Reset the emulator"}]),
     wxMenu:appendSeparator(ActionsMenu),
     wxMenu:appendCheckItem(ActionsMenu, ?MENU_MUTE, "Mute\tCtrl+M", [{help, "Toggle audio mute"}]),
+    wxMenu:appendCheckItem(ActionsMenu, ?MENU_PAUSE, "Pause\tCtrl+P", [{help, "Pause and resume emulation"}]),
     wxMenuBar:append(MenuBar, ActionsMenu, "Actions"),
     DebugMenu = wxMenu:new(),
     wxMenu:appendCheckItem(DebugMenu, ?MENU_DEBUG_PERF, "Performance report",
@@ -153,7 +155,7 @@ init(_Options) ->
     wxWindow:setClientSize(Frame, DefW, DefH),
     wxWindow:setFocus(Panel),
 
-    Cmd = "aplay -t raw -f S16_LE -r 44100 -c 2 --buffer-size=441 -q",
+    Cmd = "aplay -t raw -f S16_LE -r 44100 -c 2 --buffer-size=441 -q 2>/dev/null",
     AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
 
     Now = erlang:monotonic_time(microsecond),
@@ -176,7 +178,7 @@ init(_Options) ->
         ay_stereo_mode = Mode,
         audio_filter = ezx_audio_filter:new(),
         aplay_port = AplayPort,
-        audio_start_us = Now,
+        audio_pacing = ezx_audio_pacing:new(?BYTES_PER_FRAME),
         perf_start_us = Now,
         menu_bar = MenuBar,
         recent_files = RecentFiles0,
@@ -213,10 +215,21 @@ handle_info(frame_tick, #state{machine = undefined} = State) ->
     erlang:send_after(50, self(), frame_tick),
     {noreply, State};
 
-handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
-                                  scale = Scale,
+handle_info(frame_tick, #state{paused = true, machine = Machine,
+                               aplay_port = Port} = State) ->
+    Silence = <<0:(?BYTES_PER_FRAME)/unit:8>>,
+    port_command(Port, Silence),
+    RGB = ezx_emulator:render_frame(Machine),
+    draw_frame(State, RGB),
+    Now = erlang:monotonic_time(microsecond),
+    {DelayMs, Pacing} = ezx_audio_pacing:advance(State#state.audio_pacing,
+                                                 byte_size(Silence), Now),
+    schedule_frame(DelayMs),
+    {noreply, State#state{audio_pacing = Pacing}};
+
+handle_info(frame_tick, #state{machine = Machine0,
                                   frame_count = FC0,
-                                  aplay_port = Port, audio_start_us = StartUs0,
+                                  aplay_port = Port,
                                   perf_start_us = PerfStart0} = State) ->
     try
         Machine2 = ezx_emulator:run_frame(Machine0),
@@ -230,106 +243,19 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
             Fd -> file:write(Fd, PCM)
         end,
 
-        %% Write audio to port
         AudioData = case State#state.muted of
             false -> PCM;
             true  -> <<0:(byte_size(PCM))/unit:8>>
         end,
         port_command(Port, AudioData),
-        ByteSize = byte_size(PCM),
         Now = erlang:monotonic_time(microsecond),
+        {DelayMs, Pacing} = ezx_audio_pacing:advance(State#state.audio_pacing,
+                                                     byte_size(PCM), Now),
 
-       
         FC = FC0 + 1,
         RGB = ezx_emulator:render_frame(Machine3),
-
-        Image0 = wxImage:new(352, 288, RGB),
-
-        ClientDC = wxClientDC:new(Panel),
-        {PW0, PH0} = wxWindow:getClientSize(Panel),
-        {PW, PH} = case State#state.fullscreen_size of
-            {SW, SH} -> {SW, SH};
-            undefined -> {PW0, PH0}
-        end,
-        BmpDC = wxMemoryDC:new(),
-        BufDC = wxBufferedDC:new(ClientDC, {PW, PH}),
-        wxDC:setBackground(BufDC, wxBrush:new({0, 0, 0})),
-        wxDC:clear(BufDC),
-
-        UseExact = State#state.fullscreen andalso State#state.option_crop_border andalso State#state.option_integer_scaling,
-        WindowedCrop = not State#state.fullscreen andalso State#state.option_crop_border,
-        {Bmp, DX, DY, UseBmpScale} = case {UseExact, WindowedCrop} of
-            {true, _} ->
-                ES = State#state.crop_exact_scale,
-                B = wxBitmap:new(Image0),
-                wxImage:destroy(Image0),
-                BorderOff = round(40 * ES),
-                {FSW, FSH} = State#state.fullscreen_size,
-                case FSW / ?DEFAULT_WIDTH >= FSH / ?DEFAULT_HEIGHT of
-                    true  ->
-                        DDX = (PW - round(?DEFAULT_WIDTH * ES)) div 2,
-                        {B, DDX, -BorderOff, ES};
-                    false ->
-                        DDY = (PH - round(?DEFAULT_HEIGHT * ES)) div 2,
-                        {B, -BorderOff, DDY, ES}
-                end;
-            {_, true} ->
-                B = wxBitmap:new(Image0),
-                wxImage:destroy(Image0),
-                BorderOff = 40 * Scale,
-                {B, -BorderOff, -BorderOff, Scale};
-            {false, false} ->
-                B = wxBitmap:new(Image0),
-                wxImage:destroy(Image0),
-                {OffX, OffY} = State#state.crop_off,
-                DDX = max(0, (PW - ?DEFAULT_WIDTH * Scale) div 2),
-                DDY = max(0, (PH - ?DEFAULT_HEIGHT * Scale) div 2),
-                {B, DDX - OffX * Scale, DDY - OffY * Scale, Scale}
-        end,
-        wxMemoryDC:selectObject(BmpDC, Bmp),
-        wxDC:setDeviceOrigin(BufDC, DX, DY),
-        wxDC:setUserScale(BufDC, UseBmpScale, UseBmpScale),
-        wxDC:drawBitmap(BufDC, Bmp, {0, 0}),
-        wxDC:setUserScale(BufDC, 1.0, 1.0),
-        wxDC:setDeviceOrigin(BufDC, 0, 0),
-        wxBufferedDC:destroy(BufDC),
-        wxMemoryDC:destroy(BmpDC),
-        wxClientDC:destroy(ClientDC),
-        wxBitmap:destroy(Bmp),
-
-        %% Estimate buffer level: bytes written - bytes consumed
-        Written0 = State#state.audio_bytes + ByteSize,
-        ElapsedUs = Now - StartUs0,
-        BytesConsumed = ElapsedUs * ?AUDIO_RATE div 1000000,
-        BufferLevel0 = Written0 - BytesConsumed,
-
-        %% If there was a long gap (dialog/snapshot load), reset the clock.
-        %% Buffer going very negative means our estimate is stale.
-        {StartUs, Written, BufferLevel} =
-            case BufferLevel0 < -(?BYTES_PER_FRAME * 2) of
-                true ->
-                    {Now, ByteSize, ByteSize};
-                false ->
-                    {StartUs0, Written0, BufferLevel0}
-            end,
-
-        % case FC rem ?FCREPORT_INTERVAL of
-        %     0 ->
-        %         io:format("Frame ~p: buffer_level=~p bytes~n",
-        %                   [FC, BufferLevel]);
-        %     _ -> ok
-        % end,
-
-        %% Schedule next frame: when buffer drops to ~3 frames worth
-        %% (absorbs GC pauses and delivery jitter without audible latency)
-        Surplus = BufferLevel - (?BYTES_PER_FRAME * 3),
-        case Surplus > 0 of
-            true ->
-                MsUntilLow = Surplus * 1000 div ?AUDIO_RATE,
-                erlang:send_after(max(1, MsUntilLow), self(), frame_tick);
-            false ->
-                erlang:send_after(0, self(), frame_tick)
-        end,
+        draw_frame(State, RGB),
+        schedule_frame(DelayMs),
 
         {MachineN, PerfStartN} =
             case Now - PerfStart0 >= 5000000 andalso State#state.perf_report of
@@ -352,7 +278,7 @@ handle_info(frame_tick, #state{machine = Machine0, panel = Panel,
             end,
 
         {noreply, State#state{machine = MachineN, frame_count = FC,
-                              audio_start_us = StartUs, audio_bytes = Written,
+                              audio_pacing = Pacing,
                               perf_start_us = PerfStartN,
                               audio_filter = AudioFilter1}}
     catch
@@ -389,9 +315,13 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F5}}, State) ->
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = $M, controlDown = true}}, State) ->
     NewState = State#state{muted = not State#state.muted},
-    ActionsMenu = wxMenuBar:getMenu(State#state.menu_bar, 2),
+    ActionsMenu = wxMenuBar:getMenu(State#state.menu_bar, ?MENUBAR_ACTIONS_INDEX),
     wxMenu:check(ActionsMenu, ?MENU_MUTE, NewState#state.muted),
     save_config(NewState),
+    {noreply, NewState};
+
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = $P, controlDown = true}}, State) ->
+    NewState = toggle_pause(State),
     {noreply, NewState};
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = $D, controlDown = true}},
@@ -527,6 +457,9 @@ handle_info(#wx{id = ?MENU_MUTE, event = #wxCommand{type = command_menu_selected
     save_config(NewState),
     {noreply, NewState};
 
+handle_info(#wx{id = ?MENU_PAUSE, event = #wxCommand{type = command_menu_selected}}, State) ->
+    {noreply, toggle_pause(State)};
+
 handle_info(#wx{id = ?MENU_DEBUG_PERF, event = #wxCommand{type = command_menu_selected}}, State) ->
     NewState = State#state{perf_report = not State#state.perf_report},
     save_config(NewState),
@@ -659,7 +592,7 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                         machine_type = NewType,
                         frame_count = 0,
                         mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                        audio_start_us = Now, audio_bytes = 0,
+                        audio_pacing = ezx_audio_pacing:new(?BYTES_PER_FRAME),
                         perf_start_us = Now,
                         audio_filter = ezx_audio_filter:new()
                     },
@@ -690,16 +623,24 @@ terminate(_Reason, #state{frame = Frame, aplay_port = Port}) ->
 
 %% --- Internal ---
 
+schedule_frame(Ms) -> erlang:send_after(Ms, self(), frame_tick).
+
+toggle_pause(State) ->
+    Paused = not State#state.paused,
+    ActionsMenu = wxMenuBar:getMenu(State#state.menu_bar, ?MENUBAR_ACTIONS_INDEX),
+    wxMenu:check(ActionsMenu, ?MENU_PAUSE, Paused),
+    State#state{paused = Paused}.
+
 do_reset(State) ->
     case ezx_ui_lib:init_virtual_machine(State#state.machine_type) of
         {ok, Machine} ->
             Machine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, Machine),
             Now = erlang:monotonic_time(microsecond),
             {noreply, State#state{machine = Machine1, frame_count = 0,
-                                  mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                                  audio_start_us = Now, audio_bytes = 0,
-                                  perf_start_us = Now,
-                                  audio_filter = ezx_audio_filter:new()}};
+                                   mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
+                                   audio_pacing = ezx_audio_pacing:new(?BYTES_PER_FRAME),
+                                   perf_start_us = Now,
+                                   audio_filter = ezx_audio_filter:new()}};
         {error, {_Code, Detail}} ->
             Frame = State#state.frame,
             Dialog = wxMessageDialog:new(Frame, binary_to_list(Detail),
@@ -798,6 +739,65 @@ windowed_client_size(Crop, S) ->
         false -> {?DEFAULT_WIDTH, ?DEFAULT_HEIGHT}
     end,
     {TW * S, TH * S}.
+
+%% @doc Blit the 352x288 RGB frame onto the panel, honoring crop, scale and
+%% fullscreen mode. Used both for running frames and for the frozen display
+%% while paused.
+draw_frame(State, RGB) ->
+    Panel = State#state.panel,
+    Scale = State#state.scale,
+    Image0 = wxImage:new(?DEFAULT_WIDTH, ?DEFAULT_HEIGHT, RGB),
+    ClientDC = wxClientDC:new(Panel),
+    {PW0, PH0} = wxWindow:getClientSize(Panel),
+    {PW, PH} = case State#state.fullscreen_size of
+        {SW, SH} -> {SW, SH};
+        undefined -> {PW0, PH0}
+    end,
+    BmpDC = wxMemoryDC:new(),
+    BufDC = wxBufferedDC:new(ClientDC, {PW, PH}),
+    wxDC:setBackground(BufDC, wxBrush:new({0, 0, 0})),
+    wxDC:clear(BufDC),
+
+    UseExact = State#state.fullscreen andalso State#state.option_crop_border andalso State#state.option_integer_scaling,
+    WindowedCrop = not State#state.fullscreen andalso State#state.option_crop_border,
+    {Bmp, DX, DY, UseBmpScale} = case {UseExact, WindowedCrop} of
+        {true, _} ->
+            ES = State#state.crop_exact_scale,
+            B = wxBitmap:new(Image0),
+            wxImage:destroy(Image0),
+            BorderOff = round(40 * ES),
+            {FSW, FSH} = State#state.fullscreen_size,
+            case FSW / ?DEFAULT_WIDTH >= FSH / ?DEFAULT_HEIGHT of
+                true  ->
+                    DDX = (PW - round(?DEFAULT_WIDTH * ES)) div 2,
+                    {B, DDX, -BorderOff, ES};
+                false ->
+                    DDY = (PH - round(?DEFAULT_HEIGHT * ES)) div 2,
+                    {B, -BorderOff, DDY, ES}
+            end;
+        {_, true} ->
+            B = wxBitmap:new(Image0),
+            wxImage:destroy(Image0),
+            BorderOff = 40 * Scale,
+            {B, -BorderOff, -BorderOff, Scale};
+        {false, false} ->
+            B = wxBitmap:new(Image0),
+            wxImage:destroy(Image0),
+            {OffX, OffY} = State#state.crop_off,
+            DDX = max(0, (PW - ?DEFAULT_WIDTH * Scale) div 2),
+            DDY = max(0, (PH - ?DEFAULT_HEIGHT * Scale) div 2),
+            {B, DDX - OffX * Scale, DDY - OffY * Scale, Scale}
+    end,
+    wxMemoryDC:selectObject(BmpDC, Bmp),
+    wxDC:setDeviceOrigin(BufDC, DX, DY),
+    wxDC:setUserScale(BufDC, UseBmpScale, UseBmpScale),
+    wxDC:drawBitmap(BufDC, Bmp, {0, 0}),
+    wxDC:setUserScale(BufDC, 1.0, 1.0),
+    wxDC:setDeviceOrigin(BufDC, 0, 0),
+    wxBufferedDC:destroy(BufDC),
+    wxMemoryDC:destroy(BmpDC),
+    wxClientDC:destroy(ClientDC),
+    wxBitmap:destroy(Bmp).
 
 
 
