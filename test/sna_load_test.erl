@@ -63,7 +63,7 @@ load_128k_sna_verify_banks_test() ->
     Machine = #machine_state{
         memory = Mem0, memory_module = MemMod,
         cpu = #cpu_state{}, cpu_module = undefined,
-        video_module = undefined, keyboard_module = undefined,
+        keyboard_module = undefined,
         beeper_module = undefined, beeper = undefined, keyboard = undefined
     },
     {ok, M1} = ezx_emulator_128:load_sna(Machine, SnaData),
@@ -91,7 +91,7 @@ load_128k_sna_on_48k_emulator_rejected_test() ->
     Machine = #machine_state{
         memory = Mem0, memory_module = MemMod,
         cpu = #cpu_state{}, cpu_module = undefined,
-        video_module = undefined, keyboard_module = undefined,
+        keyboard_module = undefined,
         beeper_module = undefined, beeper = undefined, keyboard = undefined
     },
     {error, {unsupported_version, _}} = ezx_emulator:load_sna(Machine, SnaData),
@@ -116,7 +116,7 @@ load_48k_sna_on_128k_keeps_initial_paging_test() ->
     Machine = #machine_state{
         memory = Mem0, memory_module = MemMod,
         cpu = #cpu_state{}, cpu_module = undefined,
-        video_module = undefined, keyboard_module = undefined,
+        keyboard_module = undefined,
         beeper_module = undefined, beeper = undefined, keyboard = undefined
     },
     {ok, M1} = ezx_emulator_128:load_sna(Machine, SnaData),
@@ -137,7 +137,7 @@ load_48k_z80_on_128k_keeps_initial_paging_test() ->
     Machine = #machine_state{
         memory = Mem0, memory_module = MemMod,
         cpu = #cpu_state{}, cpu_module = undefined,
-        video_module = undefined, keyboard_module = undefined,
+        keyboard_module = undefined,
         beeper_module = undefined, beeper = undefined, keyboard = undefined
     },
     %% v1 Z80 with PC=0x100, flags=0 (uncompressed), 49152 zero bytes.

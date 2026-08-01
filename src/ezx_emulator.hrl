@@ -11,7 +11,6 @@
     cpu,
     memory_module :: module(),
     memory,
-    video_module :: module(),
     pending_interrupt = none,
     t_states = 0,
     %% ULA screen device (ezx_screen): border color + flash phase.

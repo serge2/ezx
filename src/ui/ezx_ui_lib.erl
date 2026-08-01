@@ -8,7 +8,7 @@
 init_virtual_machine('128k') ->
     case catch read_roms("128-0.rom", "128-1.rom") of
         {Rom0, Rom1} when byte_size(Rom0) =:= 16384, byte_size(Rom1) =:= 16384 ->
-            {ok, ezx_emulator_128:init(z80_cpu, ezx_memory_128_pages512, ezx_screen, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom0, Rom1})};
+            {ok, ezx_emulator_128:init(z80_cpu, ezx_memory_128_pages512, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom0, Rom1})};
         {'EXIT', _} ->
             {error, {rom_not_found, <<"128K ROMs not found (128-0.rom, 128-1.rom)">>}};
         _ ->
@@ -17,7 +17,7 @@ init_virtual_machine('128k') ->
 init_virtual_machine('48k') ->
     case catch read_rom("48.rom") of
         Rom when byte_size(Rom) =:= 16384 ->
-            {ok, ezx_emulator:init(z80_cpu, ezx_memory_48_pages512, ezx_screen, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, Rom)};
+            {ok, ezx_emulator:init(z80_cpu, ezx_memory_48_pages512, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, Rom)};
         {'EXIT', _} ->
             {error, {rom_not_found, <<"48K ROM not found (48.rom)">>}};
         _ ->

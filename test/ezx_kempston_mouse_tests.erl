@@ -127,7 +127,7 @@ init_machine() ->
         filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
     end,
     {ok, Rom} = file:read_file(RomPath),
-    ezx_emulator:init(z80_cpu, ezx_memory_48, ezx_screen, ezx_keyboard, ezx_beeper2, undefined, Rom).
+    ezx_emulator:init(z80_cpu, ezx_memory_48, ezx_keyboard, ezx_beeper2, undefined, Rom).
 
 init_machine_128() ->
     PrivDir = try code:priv_dir(ezx)
@@ -139,7 +139,7 @@ init_machine_128() ->
     Rom1Path = filename:join([PrivDir, "roms", "128-1.rom"]),
     {ok, Rom0} = file:read_file(Rom0Path),
     {ok, Rom1} = file:read_file(Rom1Path),
-    ezx_emulator_128:init(z80_cpu, ezx_memory_128_pages512, ezx_screen, ezx_keyboard,
+    ezx_emulator_128:init(z80_cpu, ezx_memory_128_pages512, ezx_keyboard,
                           ezx_beeper2, ezx_ay38912_seg, {Rom0, Rom1}).
 
 load_program(Machine, BaseAddr, Program) ->

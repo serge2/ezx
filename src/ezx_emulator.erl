@@ -8,7 +8,7 @@
 -include("input/ezx_keyboard.hrl").
 
 -export([
-    init/7,
+    init/6,
     step/1,
     run_frame/1,
     render_frame/1,
@@ -33,8 +33,8 @@
 -define(DEFAULT_BORDER, 1).
 
 %% @doc Create a new machine state with initialized CPU and memory components.
--spec init(module(), module(), module(), module(), module(), module() | undefined, binary()) -> #machine_state{}.
-init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, Rom) ->
+-spec init(module(), module(), module(), module(), module() | undefined, binary()) -> #machine_state{}.
+init(CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, Rom) ->
     HasAy = AyModule =/= undefined,
     MemReadFun =
         fun(ExtContext, _TState, Addr) ->
@@ -104,7 +104,6 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
     #machine_state{
         cpu_module = CPUModule,
         memory_module = MemModule,
-        video_module = VideoModule,
         keyboard_module = KeyboardModule,
         beeper_module = BeeperModule,
         ay_module = AyModule,
@@ -564,19 +563,18 @@ run_frame_1(#machine_state{t_states = StartT} = Machine) ->
     }.
 
 %% @doc Render the current frame to a flat RGB binary (352×288×3 bytes).
-%% Extracts screen memory via bulk read_block and passes to a video module.
+%% Extracts screen memory via bulk read_block and passes to ezx_screen.
 %% Uses the screen artifacts (border changes/color, flash flag) produced by
 %% run_frame/1.
 -spec render_frame(#machine_state{}) -> binary().
 render_frame(Machine) ->
     MemModule = Machine#machine_state.memory_module,
-    VideoModule = Machine#machine_state.video_module,
     FlashOn = Machine#machine_state.flash_on,
     Changes = Machine#machine_state.screen_changes,
     CB = Machine#machine_state.screen_color,
     Mem = Machine#machine_state.memory,
     Videobuffer = MemModule:read_block(Mem, 16384, 6144 + 768),
-    VideoModule:render_screen(Videobuffer, FlashOn, Changes, CB).
+    ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB).
 
 %% @doc Beeper PCM (mono S16LE) produced by the last run_frame/1.
 -spec render_beeper(#machine_state{}) -> {binary(), #machine_state{}}.

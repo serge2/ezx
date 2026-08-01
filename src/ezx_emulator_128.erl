@@ -1,7 +1,7 @@
 -module(ezx_emulator_128).
 
 -export([
-    init/7,
+    init/6,
     step/1,
     run_frame/1,
     render_frame/1,
@@ -22,8 +22,8 @@
 -include("input/ezx_keyboard.hrl").
 
 %% @doc Create a 128K machine state with 0x7FFD paging support.
--spec init(module(), module(), module(), module(), module(), module(), {binary(), binary()}) -> #machine_state{}.
-init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, {Rom0, Rom1}) ->
+-spec init(module(), module(), module(), module(), module(), {binary(), binary()}) -> #machine_state{}.
+init(CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, {Rom0, Rom1}) ->
     MemReadFun =
         fun(ExtContext, _TState, Addr) ->
             Memory = ExtContext#ext_context.memory,
@@ -96,7 +96,6 @@ init(CPUModule, MemModule, VideoModule, KeyboardModule, BeeperModule, AyModule, 
     #machine_state{
         cpu_module = CPUModule,
         memory_module = MemModule,
-        video_module = VideoModule,
         keyboard_module = KeyboardModule,
         beeper_module = BeeperModule,
         ay_module = AyModule,

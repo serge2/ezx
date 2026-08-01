@@ -48,7 +48,7 @@ run(DurationSec) -> compare(DurationSec).
 %% --- Benchmark a single backend ---
 
 bench_one(MemMod, Rom0, Rom1, DurationSec) ->
-    M0 = ezx_emulator_128:init(z80_cpu, MemMod, ezx_screen, ezx_keyboard, ezx_beeper2, ezx_ay38912, {Rom0, Rom1}),
+    M0 = ezx_emulator_128:init(z80_cpu, MemMod, ezx_keyboard, ezx_beeper2, ezx_ay38912, {Rom0, Rom1}),
 
     M1 = warmup(M0, 100),
 
@@ -58,7 +58,7 @@ bench_one(MemMod, Rom0, Rom1, DurationSec) ->
 
     erlang:garbage_collect(),
 
-    M2 = ezx_emulator_128:init(z80_cpu, MemMod, ezx_screen, ezx_keyboard, ezx_beeper2, ezx_ay38912, {Rom0, Rom1}),
+    M2 = ezx_emulator_128:init(z80_cpu, MemMod, ezx_keyboard, ezx_beeper2, ezx_ay38912, {Rom0, Rom1}),
     M3 = warmup(M2, 100),
 
     erlang:garbage_collect(),
@@ -112,13 +112,12 @@ bench_full_timed(MemMod, M, DeadlineUs, CpuAcc, VidAcc) ->
             T1 = erlang:monotonic_time(microsecond),
 
             MemModule = M1#machine_state.memory_module,
-            VideoModule = M1#machine_state.video_module,
             FlashOn = M1#machine_state.flash_on,
             Changes = M1#machine_state.screen_changes,
             CB = M1#machine_state.screen_color,
             Mem = M1#machine_state.memory,
             Videobuffer = MemModule:read_block(Mem, 16384, 6144 + 768),
-            VideoModule:render_screen(Videobuffer, FlashOn, Changes, CB),
+            ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB),
             T2 = erlang:monotonic_time(microsecond),
 
             bench_full_timed(MemMod, M1, DeadlineUs,
