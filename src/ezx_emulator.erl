@@ -655,7 +655,13 @@ render_frame_now(Machine) ->
     Changes = Machine#machine_state.screen_changes,
     CB = Machine#machine_state.screen_color,
     Mem = Machine#machine_state.memory,
-    Videobuffer = MemModule:read_block(Mem, 16384, 6144 + 768),
+    %% 128K memory modules export read_video_block/2, which returns the bank
+    %% selected for the display by p7FFD bit 3 (bank 5 or 7). 48K modules have
+    %% no paging, so the CPU view of 0x4000 is the video memory itself.
+    Videobuffer = case erlang:function_exported(MemModule, read_video_block, 2) of
+        true -> MemModule:read_video_block(Mem, 6144 + 768);
+        false -> MemModule:read_block(Mem, 16384, 6144 + 768)
+    end,
     ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB).
 
 %% @doc Beeper PCM (mono S16LE) produced by the last run_frame/1.

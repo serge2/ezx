@@ -2,6 +2,27 @@
 
 %% @doc 128K memory backend using 512-byte page tuples.
 %%
+%% == Memory map (CPU view) ==
+%% 0x0000-0x3FFF: ROM (0 = editor, 1 = 48K BASIC, selected by p7FFD bit 4)
+%% 0x4000-0x7FFF: RAM (bank 5, always)
+%% 0x8000-0xBFFF: RAM (bank 2, always)
+%% 0xC000-0xFFFF: RAM (bank 0-7, selected by p7FFD bits 0-2)
+%%
+%% == Port 0x7FFD ==
+%%   bits 0-2:  slot 3 (0xC000) bank select 0-7
+%%   bit  3:    ULA display bank (5 or 7) — NOT a CPU mapping change
+%%   bit  4:    ROM select (0 = editor, 1 = 48K BASIC)
+%% The bits are independent. Bit 3 never changes what the CPU sees at
+%% 0x4000-0x7FFF; it only tells the ULA which bank to draw the screen from.
+%%
+%% == Shadow screen (bank 7) ==
+%% The CPU cannot reach bank 7 through 0x4000. To draw the shadow screen it
+%% pages bank 7 into slot 3 (bits 0-2 = 7) and writes to 0xC000-0xFFFF; the
+%% display only switches to bank 7 when bit 3 is set. The typical double
+%% buffer: draw into the non-displayed bank via slot 3, then flip bit 3.
+%% Because 0x4000-0x7FFF is fixed at bank 5, the stack (usually kept there,
+%% e.g. 0x7FFx) survives any paging and display flips.
+%%
 %% == Structure ==
 %% The 64KB address space is split into 128 pages of 512 bytes each.
 %% A page map (128-element tuple) stores the currently visible 512-byte
@@ -17,7 +38,8 @@
 %% == Paging ==
 %% Port 0x7FFD controls three address regions:
 %%   - 0x0000 (ROM):  selects ROM0 (pages 1-32) or ROM1 (pages 33-64)
-%%   - 0x4000 (screen): selects RAM bank 5 or 7
+%%   - 0x4000 (CPU):  always RAM bank 5; p7FFD bit 3 only selects the
+%%                    display bank (5 or 7) for the ULA, not the CPU view
 %%   - 0x8000 (bank 2): fixed at RAM bank 2 (pages 129-160)
 %%   - 0xC000 (slot 3): selects RAM bank 0-7
 %% On write_port_7ffd/2 the page map is rebuilt from PhysPages for
@@ -32,6 +54,7 @@
     new/2,
     read_byte/2,
     read_block/3,
+    read_video_block/2,
     write_byte/3,
     write_port_7ffd/2,
     get_p7ffd/1,
@@ -90,6 +113,15 @@ write_port_7ffd({_, PhysPages, _}, Value) ->
     NewP7 = Value band 16#FF,
     {build_page_map(PhysPages, NewP7), PhysPages, NewP7}.
 
+%% @doc Read the display (ULA video) buffer. p7FFD bit 3 selects whether the
+%% screen is drawn from bank 5 or bank 7, independently of the CPU's 0x4000
+%% mapping (which is always bank 5). `Size' must not exceed 16384.
+-spec read_video_block(state(), non_neg_integer()) -> binary().
+read_video_block({_PageMap, PhysPages, P7ffd}, Size) ->
+    Base = 65 + screen_bank(P7ffd) * ?BANK_PAGES,
+    Pages = [element(I, PhysPages) || I <- lists:seq(Base, Base + ?BANK_PAGES - 1)],
+    binary:part(iolist_to_binary(Pages), 0, Size).
+
 -spec get_p7ffd(state()) -> byte().
 get_p7ffd({_, _, P7ffd}) -> P7ffd.
 
@@ -109,7 +141,7 @@ page_to_phys(Addr, P7ffd) ->
     BankPage = (Addr bsr ?PAGE_BITS) band 31,
     Base = case Slot of
         0 -> error(rom_write);
-        1 -> 65 + screen_bank(P7ffd) * ?BANK_PAGES;
+        1 -> 65 + 5 * ?BANK_PAGES;
         2 -> 65 + 2 * ?BANK_PAGES;
         3 -> 65 + slot3_bank(P7ffd) * ?BANK_PAGES
     end,
@@ -121,7 +153,7 @@ rom_select(P7ffd)  -> case (P7ffd bsr 4) band 1 of 0 -> 1; 1 -> 33 end.
 
 build_page_map(PhysPages, P7ffd) ->
     RomB  = rom_select(P7ffd),
-    ScrB  = 65 + screen_bank(P7ffd) * ?BANK_PAGES,
+    ScrB  = 65 + 5 * ?BANK_PAGES,
     B2B   = 65 + 2 * ?BANK_PAGES,
     S3B   = 65 + slot3_bank(P7ffd) * ?BANK_PAGES,
     list_to_tuple(

@@ -189,17 +189,33 @@ load_sna(Machine, Data) ->
             MemModule = Machine#machine_state.memory_module,
             Mem = Machine#machine_state.memory,
 
-            Mem0 = case P7FFD of
-                undefined -> Mem;
-                _ -> MemModule:write_port_7ffd(Mem, P7FFD)
+            Mem1 = case P7FFD of
+                undefined ->
+                    %% 48K SNA: the 0x4000 dump is bank 5, 0x8000 is bank 2,
+                    %% 0xC000 is the currently-paged slot 3 bank; paging is
+                    %% left untouched.
+                    MemList = binary:bin_to_list(H#sna_header.mem),
+                    {_, M} = lists:foldl(
+                        fun(Byte, {Offset, MemAcc}) ->
+                            Addr = 16384 + Offset,
+                            {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
+                        end, {0, Mem}, MemList),
+                    M;
+                _ ->
+                    %% 128K extended SNA: the 48K dump holds the active display
+                    %% bank at 0x4000 (bank 5 or 7 per p7FFD bit 3), bank 2 at
+                    %% 0x8000, and the slot 3 bank at 0xC000. Load them by bank
+                    %% (write_bank_block only touches PhysPages), then rebuild
+                    %% the page map so the CPU view is consistent.
+                    <<Screen16:16384/binary, Bank2_16:16384/binary, Slot3_16:16384/binary>> =
+                        H#sna_header.mem,
+                    ScreenBank = case (P7FFD bsr 3) band 1 of 0 -> 5; 1 -> 7 end,
+                    Slot3Bank = P7FFD band 16#07,
+                    M0 = MemModule:write_bank_block(Mem, ScreenBank, Screen16),
+                    M1 = MemModule:write_bank_block(M0, 2, Bank2_16),
+                    M2 = MemModule:write_bank_block(M1, Slot3Bank, Slot3_16),
+                    MemModule:write_port_7ffd(M2, P7FFD)
             end,
-
-            MemList = binary:bin_to_list(H#sna_header.mem),
-            {_, Mem1} = lists:foldl(
-                fun(Byte, {Offset, MemAcc}) ->
-                    Addr = 16384 + Offset,
-                    {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
-                end, {0, Mem0}, MemList),
 
             Mem2 = case H#sna_header.raw_extra of
                 undefined -> Mem1;

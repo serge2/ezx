@@ -116,7 +116,10 @@ bench_full_timed(MemMod, M, DeadlineUs, CpuAcc, VidAcc) ->
             Changes = M1#machine_state.screen_changes,
             CB = M1#machine_state.screen_color,
             Mem = M1#machine_state.memory,
-            Videobuffer = MemModule:read_block(Mem, 16384, 6144 + 768),
+            Videobuffer = case erlang:function_exported(MemModule, read_video_block, 2) of
+                true -> MemModule:read_video_block(Mem, 6144 + 768);
+                false -> MemModule:read_block(Mem, 16384, 6144 + 768)
+            end,
             ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB),
             T2 = erlang:monotonic_time(microsecond),
 

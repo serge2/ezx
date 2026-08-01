@@ -79,6 +79,58 @@ load_128k_sna_verify_banks_test() ->
 
     ok.
 
+load_128k_sna_screen_bank7_test() ->
+    Rom0 = <<0:16384/unit:8>>,
+    Rom1 = binary:copy(<<16#22>>, 16384),
+    MemMod = ezx_memory_128,
+    Mem0 = MemMod:new(Rom0, Rom1),
+
+    %% p7FFD = 0x1B: ROM1 (bit 4), display bank 7 (bit 3), slot 3 = bank 3.
+    %% The 48K dump holds: display bank 7, bank 2, slot 3 bank 3.
+    Screen16 = binary:copy(<<16#07>>, 16384),
+    Bank2_16 = binary:copy(<<16#02>>, 16384),
+    Slot3_16 = binary:copy(<<16#03>>, 16384),
+    Mem48 = <<Screen16/binary, Bank2_16/binary, Slot3_16/binary>>,
+
+    %% Banks not covered by the 48K dump: {2, 7, 3} -> [0, 1, 4, 5, 6].
+    ExtraPages = iolist_to_binary([
+        binary:copy(<<16#00>>, 16384),
+        binary:copy(<<16#01>>, 16384),
+        binary:copy(<<16#04>>, 16384),
+        binary:copy(<<16#05>>, 16384),
+        binary:copy(<<16#06>>, 16384)
+    ]),
+
+    ExtHeader = <<16#00, 16#00, 16#1B, 16#00>>,
+    SnaData = <<0:27/unit:8, Mem48/binary, ExtHeader/binary, ExtraPages/binary>>,
+
+    Machine = #machine_state{
+        memory = Mem0, memory_module = MemMod,
+        cpu = #cpu_state{}, cpu_module = undefined,
+        keyboard_module = undefined,
+        beeper_module = undefined, beeper = undefined, keyboard = undefined
+    },
+    {ok, M1} = ezx_emulator_128:load_sna(Machine, SnaData),
+    Mem1 = M1#machine_state.memory,
+
+    ?assertEqual(16#1B, MemMod:get_p7ffd(Mem1)),
+    %% ROM1 selected by bit 4.
+    ?assertEqual(16#22, MemMod:read_byte(Mem1, 16#0000)),
+    %% CPU view of 0x4000-0x7FFF is bank 5, not the display bank 7.
+    ?assertEqual(16#05, MemMod:read_byte(Mem1, 16#4000)),
+    ?assertEqual(16#05, MemMod:read_byte(Mem1, 16#7FFF)),
+    ?assertEqual(16#02, MemMod:read_byte(Mem1, 16#8000)),
+    ?assertEqual(16#03, MemMod:read_byte(Mem1, 16#C000)),
+    %% The ULA display reads bank 7.
+    VB = MemMod:read_video_block(Mem1, 16384),
+    ?assertEqual(16#07, binary:at(VB, 0)),
+    ?assertEqual(16#07, binary:at(VB, 16#3FFF)),
+    %% Paging bank 7 into slot 3 reveals the same data.
+    Mem2 = MemMod:write_port_7ffd(Mem1, 16#07),
+    ?assertEqual(16#07, MemMod:read_byte(Mem2, 16#C000)),
+
+    ok.
+
 load_128k_sna_on_48k_emulator_rejected_test() ->
     MemMod = ezx_memory_48_pages512,
     Rom = <<0:16384/unit:8>>,
