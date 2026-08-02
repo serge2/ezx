@@ -24,7 +24,7 @@
 %% and color, so render_frame/1 does not need to touch the device directly.
 
 -export([new/0, new/1, border_set/3, border_get/1, flash_on/1, frame_start/2, frame_render/2]).
--export([init_helper_tables/0, render_screen/4]).
+-export([init_helper_tables/0, render_screen/4, render_screen/5]).
 
 -on_load(init_helper_tables/0).
 
@@ -129,35 +129,43 @@ init_helper_tables() ->
     persistent_term:put(?TABLES_KEY, {Color8px, MaskTab}),
     ok.
 
+%% @doc Render a frame to a flat RGB binary using the 48K line timing
+%% (224 T-states per scanline). Kept for backward compatibility.
 -spec render_screen(binary(), boolean(), list(), non_neg_integer()) -> binary().
 render_screen(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder) ->
+    render_screen(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder, ?TSTATES_PER_LINE).
+
+%% @doc Render a frame to a flat RGB binary. TStatesPerLine is the horizontal
+%% scanline length in T-states (224 for the 48K raster, 228 for the 128K).
+-spec render_screen(binary(), boolean(), list(), non_neg_integer(), pos_integer()) -> binary().
+render_screen(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder, TStatesPerLine) ->
     {Color8px, MaskTab} = persistent_term:get(?TABLES_KEY),
     <<Bitmap:6144/binary, Attrs:768/binary>> = VideoBuffer,
     Lines = render_lines(Color8px, MaskTab, FlashOn, Bitmap, Attrs,
-                         SortedBorderChanges, CurrentBorder, 0, []),
+                         SortedBorderChanges, CurrentBorder, TStatesPerLine, 0, []),
     list_to_binary(Lines).
 
 %% ============================================================================
 %% Line iteration
 %% ============================================================================
 
-render_lines(_C8, _MT, _FO, _BM, _AR, _SC, _AC, ?FULL_HEIGHT, Acc) ->
+render_lines(_C8, _MT, _FO, _BM, _AR, _SC, _AC, _TSL, ?FULL_HEIGHT, Acc) ->
     lists:reverse(Acc);
-render_lines(C8, MT, FO, BM, AR, SC, AC, Y, Acc) ->
-    {Line, SC1, NewAC} = render_line(C8, MT, FO, BM, AR, SC, AC, Y),
-    render_lines(C8, MT, FO, BM, AR, SC1, NewAC, Y + 1, [Line | Acc]).
+render_lines(C8, MT, FO, BM, AR, SC, AC, TSL, Y, Acc) ->
+    {Line, SC1, NewAC} = render_line(C8, MT, FO, BM, AR, SC, AC, TSL, Y),
+    render_lines(C8, MT, FO, BM, AR, SC1, NewAC, TSL, Y + 1, [Line | Acc]).
 
-render_line(C8, MT, FO, BM, AR, SC, AC, Y) when Y >= ?SCREEN_Y_MIN, Y =< ?SCREEN_Y_MAX ->
-    render_screen_line(C8, MT, FO, BM, AR, SC, AC, Y);
-render_line(_C8, _MT, _FO, _BM, _AR, SC, AC, Y) ->
-    render_border_only_line(SC, AC, Y).
+render_line(C8, MT, FO, BM, AR, SC, AC, TSL, Y) when Y >= ?SCREEN_Y_MIN, Y =< ?SCREEN_Y_MAX ->
+    render_screen_line(C8, MT, FO, BM, AR, SC, AC, TSL, Y);
+render_line(_C8, _MT, _FO, _BM, _AR, SC, AC, TSL, Y) ->
+    render_border_only_line(SC, AC, TSL, Y).
 
 %% ============================================================================
 %% Border-only line
 %% ============================================================================
 
-render_border_only_line(SC, ActiveColor, Y) ->
-    LineT = (Y + ?FULL_Y_OFFSET) * ?TSTATES_PER_LINE,
+render_border_only_line(SC, ActiveColor, TStatesPerLine, Y) ->
+    LineT = (Y + ?FULL_Y_OFFSET) * TStatesPerLine,
     EndT = LineT + 175,
     {StartColor, LineChanges, SC1} = walk_line(SC, ActiveColor, LineT, EndT),
     EndColor = case LineChanges of
@@ -176,8 +184,8 @@ render_border_only_line(SC, ActiveColor, Y) ->
 %% Screen line
 %% ============================================================================
 
-render_screen_line(Color8px, MaskTab, FlashOn, Bitmap, Attrs, SC, ActiveColor, Y) ->
-    LineT = (Y + ?FULL_Y_OFFSET) * ?TSTATES_PER_LINE,
+render_screen_line(Color8px, MaskTab, FlashOn, Bitmap, Attrs, SC, ActiveColor, TStatesPerLine, Y) ->
+    LineT = (Y + ?FULL_Y_OFFSET) * TStatesPerLine,
     EndT = LineT + 175,
     {StartColor, LineChanges, SC1} = walk_line(SC, ActiveColor, LineT, EndT),
     EndColor = case LineChanges of

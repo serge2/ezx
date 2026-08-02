@@ -4,10 +4,10 @@
 %% AY-3-8912 / YM2149 programmable sound generator emulation.
 %% 
 %% Segmented rendering variant: write/3 records each register write with its
-%% T-state timestamp.  At frame end render_channels/2 partitions the frame
-%% into 882 samples and applies register changes at the exact sample boundary
-%% where they occur, producing correct output when the AY registers are changed
-%% mid-frame.
+%% T-state timestamp.  At frame end render_channels/3 partitions the frame
+%% into Samples (machine-model derived) and applies register changes at the
+%% exact sample boundary where they occur, producing correct output when the
+%% AY registers are changed mid-frame.
 %%
 %% Three independent tone channels (A, B, C), each with:
 %%   - a square-wave tone generator (12-bit period, register pair per channel)
@@ -51,7 +51,7 @@
 %%   13   - Envelope shape         (%CAHx, see table above)
 %%   14,15 - I/O ports A, B        (not emulated)
 %%
-%% Output: render_channels/2 returns 3 separate mono PCM binaries (S16LE,
+%% Output: render_channels/3 returns 3 separate mono PCM binaries (S16LE,
 %% -4096..+4096), one per channel.  The caller (UI) handles stereo panning,
 %% per-channel volume, and mixing with the beeper.
 %%
@@ -64,12 +64,13 @@
 %%   1. Call frame_start/2 at the beginning of each video frame (snapshots
 %%      current register state for the render pass).
 %%   2. During emulation call write/3 with the absolute T-state count.
-%%   3. At frame end call render_channels/2 - it segments the frame at
+%%   3. At frame end call render_channels/3 with the frame length in
+%%      T-states and the desired sample count - it segments the frame at
 %%      sample boundaries, applying logged write events at the correct
 %%      sample position.
 %% =============================================================================
 
--export([new/0, latch/2, write/3, read/1, render_channels/2, frame_start/2]).
+-export([new/0, latch/2, write/3, read/1, render_channels/3, frame_start/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -99,10 +100,6 @@
 %%     step intervals of reg * 32 CPU T-states.
 -define(TSTATES_PER_AY_CLOCK, 16).
 -define(TSTATES_PER_AY_SLOW_CLOCK, 32).
-
-%% Number of audio samples produced per video frame at 44100 Hz.
-%% 44100 / 50 = 882.
--define(TONES_PER_FRAME, 882).
 
 -record(ay_state_seg, {
     regs :: {byte(),byte(),byte(),byte(),byte(),byte(),byte(),byte(),
@@ -190,21 +187,21 @@ frame_start(#ay_state_seg{regs = Regs} = AY, TState) ->
         frame_events = []
     }.
 
-%% @doc Render one frame of audio (882 samples per channel) into 3 separate
-%% mono PCM binaries (S16LE, -4096..+4096), one per AY channel A/B/C.
-%% TStates defines the number of emulated Z80 T-states in this frame (typically
-%% 69888 for a 50 Hz frame).  When frame events are present the frame is
-%% segmented at sample boundaries and register changes are applied at the
-%% correct sample position.  Without events falls back to the naive
+%% @doc Render one frame of audio into Samples mono PCM samples per channel
+%% (S16LE, -4096..+4096), one per AY channel A/B/C.  FrameLen defines the
+%% number of emulated Z80 T-states in this frame (e.g. 70908 for a 128K
+%% frame).  Samples is derived by the emulator from the machine model as
+%% trunc(FrameLen * SampleRate / CpuClock).  When frame events are present the
+%% frame is segmented at sample boundaries and register changes are applied at
+%% the correct sample position.  Without events falls back to the naive
 %% equal-step renderer (identical to the simplified implementation).
 %% Returns {ChA, ChB, ChC, NewState}.
--spec render_channels(state(), non_neg_integer()) -> {binary(), binary(), binary(), state()}.
-render_channels(#ay_state_seg{frame_events = []} = AY, TStates) ->
-    render_channels_naive(AY, TStates);
-render_channels(#ay_state_seg{frame_offset = FO, frame_regs = FRegs, frame_events = Events} = AY, TStates) ->
-    RelEvents = [{ET - FO, RI, V} || {ET, RI, V} <- Events, ET >= FO, ET < FO + TStates],
-    Samples = ?TONES_PER_FRAME,
-    Step = TStates div Samples,
+-spec render_channels(state(), non_neg_integer(), pos_integer()) -> {binary(), binary(), binary(), state()}.
+render_channels(#ay_state_seg{frame_events = []} = AY, FrameLen, Samples) ->
+    render_channels_naive(AY, FrameLen, Samples);
+render_channels(#ay_state_seg{frame_offset = FO, frame_regs = FRegs, frame_events = Events} = AY, FrameLen, Samples) ->
+    RelEvents = [{ET - FO, RI, V} || {ET, RI, V} <- Events, ET >= FO, ET < FO + FrameLen],
+    Step = FrameLen div Samples,
     Emap = build_event_map(lists:reverse(RelEvents), Step),
     RenderAY = AY#ay_state_seg{regs = FRegs},
     {ChA, ChB, ChC, AY2} = render_samples(RenderAY, 0, Samples, Step, Emap, <<>>, <<>>, <<>>),
@@ -212,7 +209,7 @@ render_channels(#ay_state_seg{frame_offset = FO, frame_regs = FRegs, frame_event
         regs = AY#ay_state_seg.regs,
         frame_events = []
     },
-    case TStates rem Samples of
+    case FrameLen rem Samples of
         0 -> {ChA, ChB, ChC, AY3};
         Rem -> {_OA, _OB, _OC, AY4} = render_step(AY3, Rem), {ChA, ChB, ChC, AY4}
     end.
@@ -262,12 +259,11 @@ apply_events(AY, _I, Emap) ->
 
 %% @doc Naive fallback renderer used when no frame events were logged
 %% (identical to the simplified ezx_ay38912 implementation).
--spec render_channels_naive(state(), non_neg_integer()) ->
+-spec render_channels_naive(state(), non_neg_integer(), pos_integer()) ->
     {binary(), binary(), binary(), state()}.
-render_channels_naive(#ay_state_seg{} = AY, TStates) ->
-    Samples = ?TONES_PER_FRAME,
-    Step = TStates div Samples,
-    Rem = TStates rem Samples,
+render_channels_naive(#ay_state_seg{} = AY, FrameLen, Samples) ->
+    Step = FrameLen div Samples,
+    Rem = FrameLen rem Samples,
     {ChA, ChB, ChC, AY2} = render_samples_naive(AY, Samples, Step, <<>>, <<>>, <<>>),
     case Rem > 0 of
         true ->

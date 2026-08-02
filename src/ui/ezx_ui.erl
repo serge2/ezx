@@ -22,9 +22,6 @@
 -define(MENU_PAUSE, 3003).
 -define(MENUBAR_ACTIONS_INDEX, 4).
 
-%% Audio: one frame is 882 samples * 2 channels * 2 bytes
--define(BYTES_PER_FRAME, 3528).
-
 -record(state, {
     machine   :: #machine_state{} | undefined,
     machine_type = '48k' :: '48k' | '128k',
@@ -177,7 +174,7 @@ init(_Options) ->
         ay_stereo_mode = Mode,
         audio_filter = ezx_audio_filter:new(),
         aplay_port = AplayPort,
-        audio_pacing = ezx_audio_pacing:new(?BYTES_PER_FRAME),
+        audio_pacing = undefined,
         perf_start_us = Now,
         menu_bar = MenuBar,
         recent_files = RecentFiles0,
@@ -187,7 +184,8 @@ init(_Options) ->
         {ok, Machine} ->
             Machine1 = ezx_ui_mouse:apply_to_machine(Mouse, Machine),
             erlang:send_after(0, self(), frame_tick),
-            {ok, State0#state{machine = Machine1}};
+            {ok, State0#state{machine = Machine1,
+                              audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine1))}};
         {error, {Code, Detail}} ->
             Title = "ezx - ROM error",
             Msg = case Code of
@@ -216,7 +214,7 @@ handle_info(frame_tick, #state{machine = undefined} = State) ->
 
 handle_info(frame_tick, #state{paused = true, machine = Machine,
                                aplay_port = Port} = State) ->
-    Silence = <<0:(?BYTES_PER_FRAME)/unit:8>>,
+    Silence = <<0:(audio_bytes_per_frame(Machine))/unit:8>>,
     port_command(Port, Silence),
     RGB = ezx_emulator:render_frame(Machine),
     draw_frame(State, RGB),
@@ -591,7 +589,7 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                         machine_type = NewType,
                         frame_count = 0,
                         mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                        audio_pacing = ezx_audio_pacing:new(?BYTES_PER_FRAME),
+                        audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine1)),
                         perf_start_us = Now,
                         audio_filter = ezx_audio_filter:new()
                     },
@@ -624,6 +622,10 @@ terminate(_Reason, #state{frame = Frame, aplay_port = Port}) ->
 
 schedule_frame(Ms) -> erlang:send_after(Ms, self(), frame_tick).
 
+%% Audio: one frame is Samples * 2 channels * 2 bytes (stereo S16LE), where
+%% Samples comes from the machine model (see ezx_emulator:samples_per_frame/1).
+audio_bytes_per_frame(Machine) -> ezx_emulator:samples_per_frame(Machine) * 4.
+
 toggle_pause(State) ->
     Paused = not State#state.paused,
     ActionsMenu = wxMenuBar:getMenu(State#state.menu_bar, ?MENUBAR_ACTIONS_INDEX),
@@ -637,7 +639,7 @@ do_reset(State) ->
             Now = erlang:monotonic_time(microsecond),
             {noreply, State#state{machine = Machine1, frame_count = 0,
                                    mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                                   audio_pacing = ezx_audio_pacing:new(?BYTES_PER_FRAME),
+                                   audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine1)),
                                    perf_start_us = Now,
                                    audio_filter = ezx_audio_filter:new()}};
         {error, {_Code, Detail}} ->

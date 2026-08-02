@@ -8,7 +8,7 @@
 -include("input/ezx_keyboard.hrl").
 
 -export([
-    init/6,
+    init/7,
     step/1,
     run_frame/1,
     render_frame/1,
@@ -26,6 +26,8 @@
     set_mouse_enabled/2,
     set_mouse_position/3,
     set_mouse_buttons/2,
+    samples_per_frame/1,
+    set_cpu_frequency/2,
     read_byte/2,
     write_byte/3,
     read_word/2,
@@ -35,9 +37,10 @@
 %% ZX Spectrum frame length in T-states.
 -define(DEFAULT_BORDER, 1).
 
-%% @doc Create a new machine state with initialized CPU and memory components.
--spec init(module(), module(), module(), module(), module() | undefined, binary()) -> #machine_state{}.
-init(CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, Rom) ->
+%% @doc Create a new machine state with initialized CPU and memory components
+%% using the given timing model.
+-spec init(#machine_model{}, module(), module(), module(), module(), module() | undefined, binary()) -> #machine_state{}.
+init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, Rom) ->
     HasAy = AyModule =/= undefined,
     MemReadFun =
         fun(ExtContext, _TState, Addr) ->
@@ -105,6 +108,7 @@ init(CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, Rom) ->
     BusReadFun = fun() -> 16#FF end,
     Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun),
     #machine_state{
+        model = Model,
         cpu_module = CPUModule,
         memory_module = MemModule,
         keyboard_module = KeyboardModule,
@@ -528,18 +532,22 @@ frame_start_devices(#machine_state{ay_module = AyModule, beeper_module = BeeperM
     end.
 
 %% CPU execution of one frame. Two-phase execution:
-%%   Phase 1: 0..31 T-states — normal execution (no interrupt)
-%%   Phase 2: 32..69887 T-states — interrupt raised at boundary, then normal
-%%            execution; the frame boundary is ignored mid-instruction
-%%            (variant A), the overrun is carried as the new t_states tail.
+%%   Phase 1: 0..IntTState-1 T-states — normal execution (no interrupt)
+%%   Phase 2: IntTState..FrameLen-1 T-states — interrupt raised at boundary,
+%%            then normal execution; the frame boundary is ignored
+%%            mid-instruction (variant A), the overrun is carried as the
+%%            new t_states tail.
 execute_frame(#machine_state{t_states = StartT} = Machine) ->
+    Model = Machine#machine_state.model,
+    FrameLen = Model#machine_model.tstates_per_frame,
+    IntTState = Model#machine_model.int_tstate,
     Cpu0 = Machine#machine_state.cpu,
     Cpu0a = z80_cpu:clear_interrupt_request(Cpu0),
     Machine0a = Machine#machine_state{cpu = Cpu0a},
 
-    Machine1 = case StartT < ?INT_TSTATE of
+    Machine1 = case StartT < IntTState of
         true ->
-            run_until_tstates(Machine0a, ?INT_TSTATE);
+            run_until_tstates(Machine0a, IntTState);
         false ->
             Machine0a
     end,
@@ -548,7 +556,7 @@ execute_frame(#machine_state{t_states = StartT} = Machine) ->
     Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
     Machine2 = Machine1#machine_state{cpu = Cpu2},
 
-    Phase2End = StartT + ?TSTATES_PER_FRAME,
+    Phase2End = StartT + FrameLen,
     Machine3 = run_until_tstates(Machine2, Phase2End),
 
     Overshoot = Machine3#machine_state.t_states - Phase2End,
@@ -561,11 +569,12 @@ execute_frame(#machine_state{t_states = StartT} = Machine) ->
         t_states = Overshoot
     }.
 
-%% Phase: render the beeper PCM for the frame (882 S16LE mono samples).
+%% Phase: render the beeper PCM for the frame (Samples S16LE mono samples).
 run_frame_render_beeper(#machine_state{beeper_module = BeeperModule} = Machine) ->
     timed(fun() ->
         Beeper = Machine#machine_state.beeper,
-        {BeeperPcm, Beeper1} = BeeperModule:frame_render(Beeper, ?TSTATES_PER_FRAME),
+        {FrameLen, Samples} = frame_audio_params(Machine),
+        {BeeperPcm, Beeper1} = BeeperModule:frame_render(Beeper, FrameLen, Samples),
         Machine#machine_state{beeper = Beeper1, beeper_pcm = BeeperPcm}
     end).
 
@@ -574,7 +583,8 @@ run_frame_render_beeper(#machine_state{beeper_module = BeeperModule} = Machine) 
 run_frame_render_screen_artifacts(Machine) ->
     timed(fun() ->
         Screen = Machine#machine_state.screen,
-        {Changes, CB, FlashOn, Screen1} = ezx_screen:frame_render(Screen, ?TSTATES_PER_FRAME),
+        FrameLen = (Machine#machine_state.model)#machine_model.tstates_per_frame,
+        {Changes, CB, FlashOn, Screen1} = ezx_screen:frame_render(Screen, FrameLen),
         Machine#machine_state{
             screen = Screen1,
             screen_changes = Changes,
@@ -589,7 +599,8 @@ run_frame_render_ay(#machine_state{ay_module = undefined} = Machine) ->
 run_frame_render_ay(#machine_state{ay_module = AyModule} = Machine) ->
     timed(fun() ->
         AY = Machine#machine_state.ay,
-        {ChA, ChB, ChC, AY1} = AyModule:render_channels(AY, ?TSTATES_PER_FRAME),
+        {FrameLen, Samples} = frame_audio_params(Machine),
+        {ChA, ChB, ChC, AY1} = AyModule:render_channels(AY, FrameLen, Samples),
         Machine#machine_state{ay = AY1, ay_pcm = {ChA, ChB, ChC}}
     end).
 
@@ -640,6 +651,28 @@ read_perf(Machine) -> Machine#machine_state.perf_stats.
 -spec reset_perf(#machine_state{}) -> #machine_state{}.
 reset_perf(Machine) -> Machine#machine_state{perf_stats = #perf_stats{}}.
 
+%% @doc Audio samples produced per frame at the configured sample rate,
+%% derived from the machine model: trunc(FrameLen * SampleRate / CpuClock).
+%% Overclocking the CPU (set_cpu_frequency/2) shortens the real frame time
+%% and thus the sample count.
+-spec samples_per_frame(#machine_state{} | #machine_model{}) -> pos_integer().
+samples_per_frame(#machine_state{model = Model}) ->
+    samples_per_frame(Model);
+samples_per_frame(#machine_model{cpu_clock = CpuClock, tstates_per_frame = FrameLen}) ->
+    (FrameLen * ?SAMPLE_RATE) div CpuClock.
+
+%% @doc Set an arbitrary CPU clock (overclock). The video raster (frame length
+%% in T-states) is unchanged; the real frame time becomes TStatesPerFrame /
+%% CpuClock, so the game runs faster (or slower) and the per-frame audio
+%% sample count adjusts accordingly.
+-spec set_cpu_frequency(#machine_state{}, pos_integer()) -> #machine_state{}.
+set_cpu_frequency(#machine_state{model = Model} = Machine, Hz) when is_integer(Hz), Hz > 0 ->
+    Machine#machine_state{model = Model#machine_model{cpu_clock = Hz}}.
+
+%% Frame length + per-frame sample count, used by the audio render phases.
+frame_audio_params(#machine_state{model = Model}) ->
+    {Model#machine_model.tstates_per_frame, samples_per_frame(Model)}.
+
 %% @doc Render the last frame to a flat RGB binary (352×288×3 bytes).
 %% Returns the bitmap produced inside run_frame/1 when render_screen is
 %% enabled; otherwise falls back to rendering on demand.
@@ -662,7 +695,9 @@ render_frame_now(Machine) ->
         true -> MemModule:read_video_block(Mem, 6144 + 768);
         false -> MemModule:read_block(Mem, 16384, 6144 + 768)
     end,
-    ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB).
+    Model = Machine#machine_state.model,
+    ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB,
+                             Model#machine_model.tstates_per_line).
 
 %% @doc Beeper PCM (mono S16LE) produced by the last run_frame/1.
 -spec render_beeper(#machine_state{}) -> {binary(), #machine_state{}}.

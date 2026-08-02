@@ -19,10 +19,11 @@ setup(M, Writes) ->
         M:write(M:latch(AY, Reg), Val, 0)
     end, M:new(), Writes).
 
-%% Render one frame of TStates T-states; return channel A samples as a list.
+%% Render one frame of TStates T-states into one sample per T-state;
+%% return channel A samples as a list.
 render_ch_a(M, AY, TStates) ->
     AY1 = M:frame_start(AY, 0),
-    {ChA, _, _, _} = M:render_channels(AY1, TStates),
+    {ChA, _, _, _} = M:render_channels(AY1, TStates, TStates),
     [V || <<V:16/little-signed>> <= ChA].
 
 pcm(Level) ->

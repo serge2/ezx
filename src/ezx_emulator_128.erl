@@ -1,7 +1,7 @@
 -module(ezx_emulator_128).
 
 -export([
-    init/6,
+    init/7,
     step/1,
     run_frame/1,
     render_frame/1,
@@ -15,7 +15,9 @@
     load_tap/2,
     press_key/2,
     release_key/2,
-    run_until_tstates/2
+    run_until_tstates/2,
+    samples_per_frame/1,
+    set_cpu_frequency/2
 ]).
 
 -include("z80_records.hrl").
@@ -24,9 +26,10 @@
 -include("lib/sna.hrl").
 -include("input/ezx_keyboard.hrl").
 
-%% @doc Create a 128K machine state with 0x7FFD paging support.
--spec init(module(), module(), module(), module(), module(), {binary(), binary()}) -> #machine_state{}.
-init(CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, {Rom0, Rom1}) ->
+%% @doc Create a 128K machine state with 0x7FFD paging support and the given
+%% timing model.
+-spec init(#machine_model{}, module(), module(), module(), module(), module(), {binary(), binary()}) -> #machine_state{}.
+init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, {Rom0, Rom1}) ->
     MemReadFun =
         fun(ExtContext, _TState, Addr) ->
             Memory = ExtContext#ext_context.memory,
@@ -97,6 +100,7 @@ init(CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, {Rom0, Rom1})
     BusReadFun = fun() -> 16#FF end,
     Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun),
     #machine_state{
+        model = Model,
         cpu_module = CPUModule,
         memory_module = MemModule,
         keyboard_module = KeyboardModule,
@@ -321,6 +325,15 @@ release_key(Machine, Key) -> ezx_emulator:release_key(Machine, Key).
 %% @doc Execute instructions up to a target T-state count.
 -spec run_until_tstates(#machine_state{}, non_neg_integer()) -> #machine_state{}.
 run_until_tstates(Machine, Target) -> ezx_emulator:run_until_tstates(Machine, Target).
+
+%% @doc Audio samples produced per frame at the configured sample rate,
+%% derived from the machine model (see ezx_emulator:samples_per_frame/1).
+-spec samples_per_frame(#machine_state{}) -> pos_integer().
+samples_per_frame(Machine) -> ezx_emulator:samples_per_frame(Machine).
+
+%% @doc Set an arbitrary CPU clock (see ezx_emulator:set_cpu_frequency/2).
+-spec set_cpu_frequency(#machine_state{}, pos_integer()) -> #machine_state{}.
+set_cpu_frequency(Machine, Hz) -> ezx_emulator:set_cpu_frequency(Machine, Hz).
 
 %% --- internal ---
 

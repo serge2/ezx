@@ -5,7 +5,7 @@
 %%
 %% NOTE: This is a simplified implementation.  write/3 accepts a TState
 %% argument for API compatibility but ignores it — register changes are
-%% applied immediately and render_channels/2 divides the frame into 882
+%% applied immediately and render_channels/3 divides the frame into
 %% equally-sized steps without considering when writes actually occurred.
 %% For correct mid-frame register-change timing use ezx_ay38912_seg.
 %%
@@ -51,7 +51,7 @@
 %%   13   — Envelope shape         (%CAHx, see table above)
 %%   14,15 — I/O ports A, B        (not emulated)
 %%
-%% Output: render_channels/2 returns 3 separate mono PCM binaries (S16LE,
+%% Output: render_channels/3 returns 3 separate mono PCM binaries (S16LE,
 %% -4096..+4096), one per channel. The caller (UI) handles stereo panning,
 %% per-channel volume, and mixing with the beeper.
 %%
@@ -61,7 +61,7 @@
 %%   - 0xFFFD: read data from latched register (read/1)
 %% =============================================================================
 
--export([new/0, latch/2, write/3, read/1, render_channels/2, frame_start/2]).
+-export([new/0, latch/2, write/3, read/1, render_channels/3, frame_start/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -91,8 +91,6 @@
 %%     step intervals of reg * 32 CPU T-states.
 -define(TSTATES_PER_AY_CLOCK, 16).
 -define(TSTATES_PER_AY_SLOW_CLOCK, 32).
-
--define(TONES_PER_FRAME, 882).
 
 -record(ay_state, {
     regs :: {byte(),byte(),byte(),byte(),byte(),byte(),byte(),byte(),
@@ -163,17 +161,17 @@ read(#ay_state{regs = Regs, latch = Latch}) ->
 frame_start(#ay_state{} = AY, _TState) ->
     AY.
 
-%% @doc Render one frame of audio (882 samples per channel) into 3 separate
-%% mono PCM binaries (S16LE, 0..+32767), one per AY channel A/B/C.
-%% TStates defines the number of emulated Z80 T-states in this frame (typically
-%% 69888 for a 50 Hz frame). The frame is divided into 882 equal steps; leftover
-%% T-states advance the internal phase counters but produce no extra sample.
+%% @doc Render one frame of audio into Samples mono PCM samples per channel
+%% (S16LE, 0..+32767), one per AY channel A/B/C.  FrameLen defines the number
+%% of emulated Z80 T-states in this frame (e.g. 70908 for a 128K frame) and is
+%% divided into Samples equal steps; leftover T-states advance the internal
+%% phase counters but produce no extra sample.  Samples is derived by the
+%% emulator from the machine model as trunc(FrameLen * SampleRate / CpuClock).
 %% Returns {ChA, ChB, ChC, NewState}.
--spec render_channels(state(), non_neg_integer()) -> {binary(), binary(), binary(), state()}.
-render_channels(#ay_state{} = AY, TStates) ->
-    Samples = ?TONES_PER_FRAME,
-    Step = TStates div Samples,
-    Rem = TStates rem Samples,
+-spec render_channels(state(), non_neg_integer(), pos_integer()) -> {binary(), binary(), binary(), state()}.
+render_channels(#ay_state{} = AY, FrameLen, Samples) ->
+    Step = FrameLen div Samples,
+    Rem = FrameLen rem Samples,
     {ChA, ChB, ChC, AY2} = render_samples(AY, Samples, Step, <<>>, <<>>, <<>>),
     case Rem > 0 of
         true ->

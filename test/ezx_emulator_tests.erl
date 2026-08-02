@@ -30,7 +30,8 @@ machine_128_frame_runs_with_screen_device_test() ->
     Machine0 = init_machine_128(),
     Machine1 = ezx_emulator:run_frame(Machine0),
     ?assertEqual(screen, element(1, Machine1#machine_state.screen)),
-    ?assert(Machine1#machine_state.t_states < ?INT_TSTATE).
+    Model = Machine1#machine_state.model,
+    ?assert(Machine1#machine_state.t_states < Model#machine_model.int_tstate).
 
 machine_loads_byte_lists_into_memory_test() ->
     Machine0 = init_machine(),
@@ -222,7 +223,7 @@ run_frame_produces_beeper_pcm_artifact_test() ->
     Machine0 = init_machine(),
     Machine1 = ezx_emulator:run_frame(Machine0),
     PCM = Machine1#machine_state.beeper_pcm,
-    ?assertEqual(882 * 2, byte_size(PCM)),
+    ?assertEqual(ezx_emulator:samples_per_frame(Machine1) * 2, byte_size(PCM)),
     {PCM2, Machine2} = ezx_emulator:render_beeper(Machine1),
     ?assertEqual(PCM, PCM2),
     ?assertEqual(Machine1, Machine2).
@@ -231,9 +232,9 @@ run_frame_produces_ay_pcm_artifact_test() ->
     Machine0 = init_machine_128(),
     Machine1 = ezx_emulator:run_frame(Machine0),
     {ChA, ChB, ChC} = Machine1#machine_state.ay_pcm,
-    ?assertEqual(882 * 2, byte_size(ChA)),
-    ?assertEqual(882 * 2, byte_size(ChB)),
-    ?assertEqual(882 * 2, byte_size(ChC)),
+    ?assertEqual(ezx_emulator:samples_per_frame(Machine1) * 2, byte_size(ChA)),
+    ?assertEqual(ezx_emulator:samples_per_frame(Machine1) * 2, byte_size(ChB)),
+    ?assertEqual(ezx_emulator:samples_per_frame(Machine1) * 2, byte_size(ChC)),
     {ChA2, ChB2, ChC2, Machine2} = ezx_emulator:render_ay_channels(Machine1),
     ?assertEqual({ChA, ChB, ChC}, {ChA2, ChB2, ChC2}),
     ?assertEqual(Machine1, Machine2).
@@ -255,6 +256,42 @@ run_frame_flash_cadence_test() ->
     ?assertEqual(lists:duplicate(15, false) ++ lists:duplicate(16, true) ++ [false],
                  lists:reverse(Flags)).
 
+%% --- Machine model timing tests ---
+
+machine_model_48k_defaults_test() ->
+    Machine = init_machine(),
+    ?assertEqual(#machine_model{cpu_clock = 3500000, tstates_per_frame = 69888,
+                                tstates_per_line = 224, int_tstate = 32, ay_prescale = 2},
+                 Machine#machine_state.model).
+
+machine_model_128k_defaults_test() ->
+    Machine = init_machine_128(),
+    ?assertEqual(#machine_model{cpu_clock = 3546900, tstates_per_frame = 70908,
+                                tstates_per_line = 228, int_tstate = 32, ay_prescale = 2},
+                 Machine#machine_state.model).
+
+machine_model_frame_lengths_test() ->
+    %% The 48K raster is 69888 T-states, the 128K raster 70908; the real frame
+    %% time is FrameLen / CpuClock (50.08 Hz vs 50.02 Hz).
+    M48 = init_machine(),
+    M128 = init_machine_128(),
+    ?assertEqual(69888, (M48#machine_state.model)#machine_model.tstates_per_frame),
+    ?assertEqual(70908, (M128#machine_state.model)#machine_model.tstates_per_frame),
+    ?assertEqual(880, ezx_emulator:samples_per_frame(M48)),
+    ?assertEqual(881, ezx_emulator:samples_per_frame(M128)).
+
+set_cpu_frequency_keeps_raster_changes_samples_test() ->
+    Machine = init_machine(),
+    BaseSamples = ezx_emulator:samples_per_frame(Machine),
+    Machine1 = ezx_emulator:set_cpu_frequency(Machine, 7000000),
+    ?assertEqual(3500000, (Machine#machine_state.model)#machine_model.cpu_clock),
+    ?assertEqual(7000000, (Machine1#machine_state.model)#machine_model.cpu_clock),
+    ?assertEqual(69888, (Machine1#machine_state.model)#machine_model.tstates_per_frame),
+    OverclockedSamples = ezx_emulator:samples_per_frame(Machine1),
+    ?assertEqual(BaseSamples div 2, OverclockedSamples),
+    Machine2 = ezx_emulator:run_frame(Machine1),
+    ?assertEqual(OverclockedSamples * 2, byte_size(Machine2#machine_state.beeper_pcm)).
+
 %% --- Helpers ---
 
 init_machine() ->
@@ -264,7 +301,7 @@ init_machine() ->
         filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
     end,
     {ok, Rom} = file:read_file(RomPath),
-    ezx_emulator:init(z80_cpu, ezx_memory_48, ezx_keyboard, ezx_beeper2, undefined, Rom).
+    ezx_emulator:init(?SPECTRUM_48_MODEL, z80_cpu, ezx_memory_48, ezx_keyboard, ezx_beeper2, undefined, Rom).
 
 init_machine_128() ->
     RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
@@ -273,7 +310,7 @@ init_machine_128() ->
         filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
     end,
     {ok, Rom} = file:read_file(RomPath),
-    ezx_emulator_128:init(z80_cpu, ezx_memory_128_pages512, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom, Rom}).
+    ezx_emulator_128:init(?SPECTRUM_128_MODEL, z80_cpu, ezx_memory_128_pages512, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom, Rom}).
 
 load_program(Machine, Program) when is_map(Program) ->
     maps:fold(fun(Addr, Byte, M) ->

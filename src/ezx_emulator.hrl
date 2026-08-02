@@ -1,9 +1,35 @@
 %% Machine-level runtime state that keeps CPU, memory, and timing separate.
 
-%% ZX Spectrum frame length in T-states (50 Hz).
--define(TSTATES_PER_FRAME, 69888).
-%% Interrupt is raised 32 T-states into the frame.
--define(INT_TSTATE, 32).
+%% Audio output sample rate (Hz) shared by the machine and the audio devices.
+-define(SAMPLE_RATE, 44100).
+
+%% Machine timing model: raster geometry (T-states) + CPU clock.
+%% The frame length in T-states is fixed by the video raster; the CPU clock
+%% determines real frame time (TStatesPerFrame / CpuClock) and thus the number
+%% of audio samples per frame.  The AY runs at CpuClock / AyPrescale.
+-record(machine_model, {
+    cpu_clock :: pos_integer(),          %% CPU clock in Hz (e.g. 3500000)
+    tstates_per_frame :: pos_integer(),  %% video frame length in T-states
+    tstates_per_line :: pos_integer(),   %% horizontal scanline length in T-states
+    int_tstate :: non_neg_integer(),     %% interrupt raised this many T-states into the frame
+    ay_prescale :: pos_integer()         %% AY clock = CPU clock / ay_prescale
+}).
+
+%% Real hardware: 48K = 3.5 MHz, 224 T-states/line × 312 lines = 69888/frame
+%% (50.08 Hz). 128K = 3.5469 MHz, 228 × 311 = 70908/frame (50.02 Hz).
+-define(SPECTRUM_48_MODEL, #machine_model{
+    cpu_clock = 3500000,
+    tstates_per_frame = 69888,
+    tstates_per_line = 224,
+    int_tstate = 32,
+    ay_prescale = 2}).
+
+-define(SPECTRUM_128_MODEL, #machine_model{
+    cpu_clock = 3546900,
+    tstates_per_frame = 70908,
+    tstates_per_line = 228,
+    int_tstate = 32,
+    ay_prescale = 2}).
 
 %% Per-frame timing accumulators collected by run_frame/1 so the UI can report
 %% where time actually goes. cpu = keyboard + frame_start + execution,
@@ -20,6 +46,8 @@
 
 
 -record(machine_state, {
+    %% Machine timing model (CPU clock + raster geometry).
+    model :: #machine_model{},
     cpu_module :: module(),
     cpu,
     memory_module :: module(),
