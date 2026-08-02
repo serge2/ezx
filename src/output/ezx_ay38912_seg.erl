@@ -88,12 +88,17 @@
 -define(REG_IO_A,           14).
 -define(REG_IO_B,           15).
 
-%% AY clock divider: the chip runs at CPU / 2 (~1.77 MHz vs CPU ~3.55 MHz)
-%% and its internal counters decrement once every 16 CPU T-states.  Tone,
-%% noise, and envelope periods are therefore expressed as
-%%   (register_value + 1) * ?TSTATES_PER_AY_CLOCK
-%% giving the period in Z80 T-states.
+%% AY clock divider: the chip runs at CPU / 2 (~1.77 MHz vs CPU ~3.55 MHz).
+%% Internally (matching Fuse sound.c and MAME ay8910.cpp, both verified
+%% against real hardware):
+%%   - the tone counters tick once per 8 AY clocks (16 CPU T-states) and the
+%%     square-wave output toggles after (register_value + 1) ticks, giving a
+%%     half period of (reg + 1) * 16 CPU T-states (the classic AY tuning);
+%%   - the noise and envelope counters tick once per 16 AY clocks (32 CPU
+%%     T-states) and count the register value as-is (0 treated as 1), giving
+%%     step intervals of reg * 32 CPU T-states.
 -define(TSTATES_PER_AY_CLOCK, 16).
+-define(TSTATES_PER_AY_SLOW_CLOCK, 32).
 
 %% Number of audio samples produced per video frame at 44100 Hz.
 %% 44100 / 50 = 882.
@@ -370,15 +375,25 @@ tone_period3(Regs) ->
     Coarse = element(?REG_TONE_C_COARSE + 1, Regs) band 16#0F,
     (((Coarse bsl 8) bor Fine) + 1) * ?TSTATES_PER_AY_CLOCK.
 
+%% @doc Noise LFSR step interval: the noise counter ticks once per 16 AY
+%% clocks (32 CPU T-states) and counts the 5-bit register value as-is
+%% (0 = 1).  Step interval = reg * 32 CPU T-states.
 -spec noise_period(tuple()) -> pos_integer().
 noise_period(Regs) ->
-    ((element(?REG_NOISE_PERIOD + 1, Regs) band 16#1F) + 1) * ?TSTATES_PER_AY_CLOCK.
+    N = element(?REG_NOISE_PERIOD + 1, Regs) band 16#1F,
+    case N of
+        0 -> ?TSTATES_PER_AY_SLOW_CLOCK;
+        _ -> N * ?TSTATES_PER_AY_SLOW_CLOCK
+    end.
 
 -spec env_period(tuple()) -> pos_integer().
 env_period(Regs) ->
-    Fine = element(?REG_ENV_PERIOD_FINE + 1, Regs),
-    Coarse = element(?REG_ENV_PERIOD_COARSE + 1, Regs),
-    (((Coarse bsl 8) bor Fine) + 1) * ?TSTATES_PER_AY_CLOCK * 32.
+    N = (element(?REG_ENV_PERIOD_COARSE + 1, Regs) bsl 8)
+        bor element(?REG_ENV_PERIOD_FINE + 1, Regs),
+    case N of
+        0 -> ?TSTATES_PER_AY_SLOW_CLOCK;
+        _ -> N * ?TSTATES_PER_AY_SLOW_CLOCK
+    end.
 
 -spec tone_output(non_neg_integer(), pos_integer(), non_neg_integer()) -> {non_neg_integer(), 0..1}.
 tone_output(Phase, Period, TStates) ->
