@@ -43,6 +43,12 @@ Alternatively, from any Erlang shell:
 application:ensure_all_started(ezx).
 ```
 
+Audio output requires the ALSA `aplay` command-line tool (from the
+`alsa-utils` package on most distributions); it is spawned as the sound sink
+when the UI starts. If `aplay` is not installed, the emulator still runs but
+produces no sound. Install it with e.g. `sudo apt install alsa-utils`
+(Debian/Ubuntu) or `sudo dnf install alsa-utils` (Fedora).
+
 ## License
 
 Copyright (c) 2026 Sergii Polkovnikov
