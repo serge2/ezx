@@ -17,7 +17,11 @@
     release_key/2,
     run_until_tstates/2,
     samples_per_frame/1,
-    set_cpu_frequency/2
+    set_cpu_frequency/2,
+    %% 0x7FFD paging port handlers, referenced from this machine's port
+    %% dispatch table in init/7.
+    read_p7ffd/3,
+    write_p7ffd/4
 ]).
 
 -include("z80_records.hrl").
@@ -30,72 +34,24 @@
 %% timing model.
 -spec init(#machine_model{}, module(), module(), module(), module(), module(), {binary(), binary()}) -> #machine_state{}.
 init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, {Rom0, Rom1}) ->
-    MemReadFun =
-        fun(ExtContext, _TState, Addr) ->
-            Memory = ExtContext#ext_context.memory,
-            Byte = MemModule:read_byte(Memory, Addr),
-            {Byte, ExtContext}
-        end,
-    MemWriteFun =
-        fun(ExtContext, _TState, Addr, Byte) ->
-            Memory = ExtContext#ext_context.memory,
-            NewMem = MemModule:write_byte(Memory, Addr, Byte),
-            ExtContext#ext_context{memory = NewMem}
-        end,
+    MemReadFun = fun ezx_emulator:read_memory/3,
+    MemWriteFun = fun ezx_emulator:write_memory/4,
+    PortReadTable =
+        [{16#0001, 16#00FE, fun ezx_emulator:read_keyboard/3},
+         {16#0000, 16#FADB, fun ezx_emulator:read_kempston_mouse/3},
+         {16#8002, 16#0000, fun ezx_emulator_128:read_p7ffd/3},
+         {16#0002, 16#8001, fun ezx_emulator:read_ay/3}],
+    PortWriteTable =
+        [{16#0001, 16#00FE, fun ezx_emulator:write_border_beeper/4},
+         {16#8002, 16#0000, fun ezx_emulator_128:write_p7ffd/4},
+         {16#0002, 16#8001, fun ezx_emulator:write_ay/4}],
     PortReadFun =
-        fun(ExtContext, _TState, Port) ->
-            case Port band 16#FF of
-                16#FE ->
-                    Keyboard = ExtContext#ext_context.keyboard,
-                    UpperByte = (Port bsr 8) band 16#FF,
-                    Result = KeyboardModule:decode(Keyboard, UpperByte),
-                    {Result bor 16#E0, ExtContext};
-                _ ->
-                    case read_kempston(ExtContext, Port) of
-                        undefined ->
-                            case (Port band 16#8002) =:= 0 of
-                                true ->
-                                    Memory = ExtContext#ext_context.memory,
-                                    {MemModule:get_p7ffd(Memory), ExtContext};
-                                false ->
-                                    AY = ExtContext#ext_context.ay,
-                                    {AyModule:read(AY), ExtContext}
-                            end;
-                        Byte ->
-                            {Byte, ExtContext}
-                    end
-            end
+        fun(ExtContext, TState, Port) ->
+            ezx_emulator_lib:read_port(PortReadTable, ExtContext, TState, Port)
         end,
     PortWriteFun =
         fun(ExtContext, TState, Port, Byte) ->
-            case Port band 16#FF of
-                16#FE ->
-                    BeeperLevel = (Byte bsr 4) band 1,
-                    Screen0 = ExtContext#ext_context.screen,
-                    Screen1 = ezx_screen:border_set(Screen0, TState, Byte band 16#07),
-                    Beeper0 = ExtContext#ext_context.beeper,
-                    Beeper1 = BeeperModule:set_level(Beeper0, BeeperLevel, TState),
-                    ExtContext#ext_context{
-                        screen = Screen1,
-                        beeper = Beeper1
-                    };
-                _ ->
-                    case (Port band 16#8002) =:= 0 of
-                        true ->
-                            Memory = ExtContext#ext_context.memory,
-                            NewMem = MemModule:write_port_7ffd(Memory, Byte),
-                            ExtContext#ext_context{memory = NewMem};
-                        false ->
-                            case (Port band 16#4000) =:= 0 of
-                                true ->
-                                    AY = ExtContext#ext_context.ay,
-                                    ExtContext#ext_context{ay = AyModule:write(AY, Byte, TState)};
-                                false ->
-                                    AY = ExtContext#ext_context.ay,
-                                    ExtContext#ext_context{ay = AyModule:latch(AY, Byte)}
-                            end
-                    end
-            end
+            ezx_emulator_lib:write_port(PortWriteTable, ExtContext, TState, Port, Byte)
         end,
     BusReadFun = fun() -> 16#FF end,
     Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun),
@@ -111,7 +67,7 @@ init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, {Rom0,
         screen = ezx_screen:new(),
         beeper = BeeperModule:init(),
         keyboard = KeyboardModule:default(),
-        ay = AyModule:new()
+        ay = case AyModule of undefined -> undefined; _ -> AyModule:new() end
     }.
 
 %% @doc Load a Z80 v1/v2/v3 snapshot into 128K memory.
@@ -368,12 +324,14 @@ set_cpu_frequency(Machine, Hz) -> ezx_emulator:set_cpu_frequency(Machine, Hz).
 
 %% --- internal ---
 
-%% Read the Kempston mouse ports if the mouse is present. Returns
-%% undefined for any other port so the caller falls back to other hardware.
-read_kempston(#ext_context{kempston_mouse = undefined}, _Port) ->
-    undefined;
-read_kempston(#ext_context{kempston_mouse = Mouse}, Port) ->
-    ezx_kempston_mouse:read(Mouse, Port).
+%% 0x7FFD port read row (A15=0, A1=0): returns the current paging byte.
+read_p7ffd(#ext_context{memory = Memory, memory_module = MemModule} = ExtContext, _TState, _Port) ->
+    {MemModule:get_p7ffd(Memory), ExtContext}.
+
+%% 0x7FFD port write row (A15=0, A1=0): applies the paging byte
+%% (ROM switch, screen bank, RAM bank 0-7 at 0xC000).
+write_p7ffd(#ext_context{memory = Memory, memory_module = MemModule} = ExtContext, _TState, _Port, Byte) ->
+    ExtContext#ext_context{memory = MemModule:write_port_7ffd(Memory, Byte)}.
 
 %% @doc Write RAM bank contents into a 128K machine. Keys 0-7 are physical
 %% banks written via write_bank_block; any other key is ignored.

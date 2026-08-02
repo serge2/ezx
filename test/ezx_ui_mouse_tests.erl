@@ -59,8 +59,8 @@ motion_feeds_deltas_when_enabled_test() ->
     {Mouse2, Machine2} = ezx_ui_mouse:motion(Mouse1, Machine1, 105, 98, 1),
     ?assertEqual({105, 98}, ezx_ui_mouse:last_pos(Mouse2)),
     MouseRec = Machine2#machine_state.kempston_mouse,
-    ?assertEqual(5, ezx_kempston_mouse:read(MouseRec, 16#FBDF)),
-    ?assertEqual(2, ezx_kempston_mouse:read(MouseRec, 16#FFDF)).
+    ?assertEqual(5, ezx_kempston_mouse:read(MouseRec, x)),
+    ?assertEqual(2, ezx_kempston_mouse:read(MouseRec, y)).
 
 motion_y_up_is_positive_test() ->
     Machine0 = init_machine(),
@@ -69,12 +69,12 @@ motion_y_up_is_positive_test() ->
     {Mouse1, Machine1} = ezx_ui_mouse:motion(Mouse0, Machine0a, 50, 50, 1),
     {Mouse2, Machine2} = ezx_ui_mouse:motion(Mouse1, Machine1, 50, 40, 1),
     ?assertEqual(0, ezx_kempston_mouse:read(
-        Machine2#machine_state.kempston_mouse, 16#FBDF)),
+        Machine2#machine_state.kempston_mouse, x)),
     ?assertEqual(10, ezx_kempston_mouse:read(
-        Machine2#machine_state.kempston_mouse, 16#FFDF)),
+        Machine2#machine_state.kempston_mouse, y)),
     {_Mouse3, Machine3} = ezx_ui_mouse:motion(Mouse2, Machine2, 50, 45, 1),
     ?assertEqual(5, ezx_kempston_mouse:read(
-        Machine3#machine_state.kempston_mouse, 16#FFDF)).
+        Machine3#machine_state.kempston_mouse, y)).
 
 %% --- window-scale correction ---
 
@@ -201,17 +201,17 @@ move_n(Mouse, Machine, N, Scale) ->
     end, {Mouse1, Machine1}, lists:seq(1, N)).
 
 read_x(Machine) ->
-    ezx_kempston_mouse:read(Machine#machine_state.kempston_mouse, 16#FBDF).
+    ezx_kempston_mouse:read(Machine#machine_state.kempston_mouse, x).
 
 read_y(Machine) ->
-    ezx_kempston_mouse:read(Machine#machine_state.kempston_mouse, 16#FFDF).
+    ezx_kempston_mouse:read(Machine#machine_state.kempston_mouse, y).
 
 button(Mouse, Button, Pressed) ->
     {Mouse1, _} = ezx_ui_mouse:button(Mouse, undefined, Button, Pressed),
     Mouse1.
 
 read_buttons(Machine) ->
-    ezx_kempston_mouse:read(Machine#machine_state.kempston_mouse, 16#FADF).
+    ezx_kempston_mouse:read(Machine#machine_state.kempston_mouse, buttons).
 
 init_machine() ->
     RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])

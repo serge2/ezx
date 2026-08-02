@@ -97,5 +97,11 @@
     keyboard,
     beeper = undefined,
     ay = undefined,
-    kempston_mouse = undefined
+    kempston_mouse = undefined,
+    %% Device modules so the shared port handlers (ezx_emulator:read_* /
+    %% write_*) can call the configured implementation (undefined = absent).
+    memory_module = undefined,
+    keyboard_module = undefined,
+    beeper_module = undefined,
+    ay_module = undefined
 }).

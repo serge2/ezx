@@ -8,43 +8,27 @@
 
 default_state_test() ->
     Mouse = ezx_kempston_mouse:new(),
-    ?assertEqual(0, ezx_kempston_mouse:read(Mouse, 16#FBDF)),
-    ?assertEqual(0, ezx_kempston_mouse:read(Mouse, 16#FFDF)),
-    ?assertEqual(16#07, ezx_kempston_mouse:read(Mouse, 16#FADF)).
+    ?assertEqual(0, ezx_kempston_mouse:read(Mouse, x)),
+    ?assertEqual(0, ezx_kempston_mouse:read(Mouse, y)),
+    ?assertEqual(16#07, ezx_kempston_mouse:read(Mouse, buttons)).
 
 move_accumulates_deltas_test() ->
     Mouse0 = ezx_kempston_mouse:new(),
     Mouse1 = ezx_kempston_mouse:move(Mouse0, 3, 2),
     Mouse2 = ezx_kempston_mouse:move(Mouse1, 2, 4),
-    ?assertEqual(5, ezx_kempston_mouse:read(Mouse2, 16#FBDF)),
-    ?assertEqual(6, ezx_kempston_mouse:read(Mouse2, 16#FFDF)).
+    ?assertEqual(5, ezx_kempston_mouse:read(Mouse2, x)),
+    ?assertEqual(6, ezx_kempston_mouse:read(Mouse2, y)).
 
 move_wraps_counters_test() ->
     Mouse0 = ezx_kempston_mouse:new(),
     Mouse1 = ezx_kempston_mouse:move(Mouse0, 300, -5),
-    ?assertEqual(44, ezx_kempston_mouse:read(Mouse1, 16#FBDF)),
-    ?assertEqual(251, ezx_kempston_mouse:read(Mouse1, 16#FFDF)).
+    ?assertEqual(44, ezx_kempston_mouse:read(Mouse1, x)),
+    ?assertEqual(251, ezx_kempston_mouse:read(Mouse1, y)).
 
 set_buttons_masks_test() ->
     Mouse0 = ezx_kempston_mouse:new(),
     Mouse1 = ezx_kempston_mouse:set_buttons(Mouse0, 16#02),
-    ?assertEqual(16#02, ezx_kempston_mouse:read(Mouse1, 16#FADF)).
-
-read_fb_low_byte_variants_test() ->
-    Mouse = ezx_kempston_mouse:new(),
-    Mouse1 = ezx_kempston_mouse:move(Mouse, 42, 7),
-    Mouse2 = ezx_kempston_mouse:set_buttons(Mouse1, 16#05),
-    ?assertEqual(16#05, ezx_kempston_mouse:read(Mouse2, 16#FADF)),
-    ?assertEqual(16#05, ezx_kempston_mouse:read(Mouse2, 16#FAFB)),
-    ?assertEqual(42, ezx_kempston_mouse:read(Mouse2, 16#FBDF)),
-    ?assertEqual(42, ezx_kempston_mouse:read(Mouse2, 16#FBFB)),
-    ?assertEqual(7, ezx_kempston_mouse:read(Mouse2, 16#FFDF)),
-    ?assertEqual(7, ezx_kempston_mouse:read(Mouse2, 16#FFFB)).
-
-non_mouse_port_returns_undefined_test() ->
-    Mouse = ezx_kempston_mouse:new(),
-    ?assertEqual(undefined, ezx_kempston_mouse:read(Mouse, 16#00FE)),
-    ?assertEqual(undefined, ezx_kempston_mouse:read(Mouse, 16#FFFD)).
+    ?assertEqual(16#02, ezx_kempston_mouse:read(Mouse1, buttons)).
 
 %% --- machine-level integration tests ---
 
@@ -60,6 +44,31 @@ kempston_program() ->
      16#01, 16#DF, 16#FF,
      16#ED, 16#78,
      16#67,
+     16#76].
+
+%% LD BC,0xFAFB; IN A,(C); LD D,A; LD BC,0xFBFB; IN A,(C); LD E,A;
+%% LD BC,0xFFFB; IN A,(C); LD H,A; HALT
+%% Same registers as kempston_program/0, but on the 0xFB low-byte
+%% variants (A2/A5 not decoded on the hardware).
+kempston_fb_program() ->
+    [16#01, 16#FB, 16#FA,
+     16#ED, 16#78,
+     16#57,
+     16#01, 16#FB, 16#FB,
+     16#ED, 16#78,
+     16#5F,
+     16#01, 16#FB, 16#FF,
+     16#ED, 16#78,
+     16#67,
+     16#76].
+
+%% LD BC,0xFFFD; IN A,(C); LD D,A; HALT
+%% 0xFFFD is not a Kempston port (and not decoded on a 48K machine
+%% without an AY chip): the read must fall through to the default 0xFF.
+non_mouse_program() ->
+    [16#01, 16#FD, 16#FF,
+     16#ED, 16#78,
+     16#57,
      16#76].
 
 machine_reads_kempston_ports_test() ->
@@ -107,6 +116,28 @@ machine_kempston_disable_after_enable_test() ->
     Machine5 = run_steps(Machine4, 12),
     ?assertEqual(16#FF, z80_cpu:get_reg_byte(d, Machine5#machine_state.cpu)).
 
+machine_reads_fb_low_byte_variants_test() ->
+    Machine0 = init_machine(),
+    Machine1 = ezx_emulator:set_mouse_enabled(Machine0, true),
+    Machine2 = ezx_emulator:set_mouse_position(Machine1, 42, 7),
+    Machine3 = ezx_emulator:set_mouse_buttons(Machine2, 16#05),
+    Machine4 = load_program(Machine3, 16#4000, kempston_fb_program()),
+    Machine5 = set_pc(Machine4, 16#4000),
+    Machine6 = run_steps(Machine5, 12),
+    Cpu = Machine6#machine_state.cpu,
+    ?assertEqual(16#05, z80_cpu:get_reg_byte(d, Cpu)),
+    ?assertEqual(42, z80_cpu:get_reg_byte(e, Cpu)),
+    ?assertEqual(7, z80_cpu:get_reg_byte(h, Cpu)).
+
+machine_non_mouse_port_returns_ff_test() ->
+    Machine0 = init_machine(),
+    Machine1 = ezx_emulator:set_mouse_enabled(Machine0, true),
+    Machine2 = load_program(Machine1, 16#4000, non_mouse_program()),
+    Machine3 = set_pc(Machine2, 16#4000),
+    Machine4 = run_steps(Machine3, 6),
+    Cpu = Machine4#machine_state.cpu,
+    ?assertEqual(16#FF, z80_cpu:get_reg_byte(d, Cpu)).
+
 machine_kempston_state_survives_steps_test() ->
     Machine0 = init_machine(),
     Machine1 = ezx_emulator:set_mouse_enabled(Machine0, true),
@@ -115,8 +146,8 @@ machine_kempston_state_survives_steps_test() ->
     Machine4 = set_pc(Machine3, 16#4000),
     Machine5 = ezx_emulator:step(Machine4),
     Mouse = Machine5#machine_state.kempston_mouse,
-    ?assertEqual(1, ezx_kempston_mouse:read(Mouse, 16#FBDF)),
-    ?assertEqual(1, ezx_kempston_mouse:read(Mouse, 16#FFDF)).
+    ?assertEqual(1, ezx_kempston_mouse:read(Mouse, x)),
+    ?assertEqual(1, ezx_kempston_mouse:read(Mouse, y)).
 
 %% --- helpers ---
 

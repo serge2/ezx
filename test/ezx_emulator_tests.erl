@@ -239,6 +239,44 @@ run_frame_produces_ay_pcm_artifact_test() ->
     ?assertEqual({ChA, ChB, ChC}, {ChA2, ChB2, ChC2}),
     ?assertEqual(Machine1, Machine2).
 
+ay_port_writes_reach_device_test() ->
+    %% OUT (C),A register writes through 0xFFFD latch + 0xBFFD data must
+    %% reach the AY device: regs set, and the rendered channel is audible
+    %% (near full-scale square wave, not silence).
+    Machine0 = init_machine_128(),
+    Prog = [
+        16#01, 16#FD, 16#FF,          %% LD BC,0xFFFD
+        16#3E, 16#00,                 %% LD A,0
+        16#ED, 16#79,                 %% OUT (C),A       ; R0=0
+        16#01, 16#FD, 16#BF,          %% LD BC,0xBFFD
+        16#3E, 16#F1,                 %% LD A,0xF1
+        16#ED, 16#79,                 %% OUT (C),A       ; tone A period low
+        16#01, 16#FD, 16#FF,          %% LD BC,0xFFFD
+        16#3E, 16#01,                 %% LD A,1
+        16#ED, 16#79,                 %% OUT (C),A       ; R1=1
+        16#01, 16#FD, 16#BF,          %% LD BC,0xBFFD
+        16#3E, 16#01,                 %% LD A,1
+        16#ED, 16#79,                 %% OUT (C),A       ; tone A period high
+        16#01, 16#FD, 16#FF,          %% LD BC,0xFFFD
+        16#3E, 16#08,                 %% LD A,8
+        16#ED, 16#79,                 %% OUT (C),A       ; R8=8 (vol A)
+        16#01, 16#FD, 16#BF,          %% LD BC,0xBFFD
+        16#3E, 16#0F,                 %% LD A,0x0F
+        16#ED, 16#79,                 %% OUT (C),A       ; vol A = max
+        16#76                        %% HALT
+    ],
+    Machine1 = load_program(Machine0, 16#8000, Prog),
+    Machine2 = ezx_emulator:run_frame(set_pc(Machine1, 16#8000)),
+    AY = Machine2#machine_state.ay,
+    ?assertEqual(16#F1, ezx_ay38912_seg:read(ezx_ay38912_seg:latch(AY, 0))),
+    ?assertEqual(16#01, ezx_ay38912_seg:read(ezx_ay38912_seg:latch(AY, 1))),
+    ?assertEqual(16#0F, ezx_ay38912_seg:read(ezx_ay38912_seg:latch(AY, 8))),
+    {ChA, _ChB, _ChC} = Machine2#machine_state.ay_pcm,
+    ?assert(max_pcm_sample(ChA) > 1000).
+
+max_pcm_sample(Pcm) ->
+    lists:max([abs(X) || <<X:16/little-signed>> <= Pcm]).
+
 run_frame_flash_cadence_test() ->
     %% The flash phase advances once per frame inside the screen device; the
     %% flash flag flips on a 16-frame cadence (phase 16..31 of 32) and the
