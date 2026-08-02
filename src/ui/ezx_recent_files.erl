@@ -57,7 +57,7 @@ update(File, RecentFiles) ->
 
 build_menu(RecentFiles) ->
     FileMenu = wxMenu:new(),
-    wxMenu:append(FileMenu, ?wxID_OPEN, "Load file\tCtrl+O", [{help, "Load a .sna or .tap file"}]),
+    wxMenu:append(FileMenu, ?wxID_OPEN, "Load...\tCtrl+O", [{help, "Load a .sna, .z80 or .tap file"}]),
     case RecentFiles of
         [] -> ok;
         _ ->
