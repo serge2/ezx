@@ -122,10 +122,25 @@ load_z80(Machine, Data) ->
             Mem = Machine#machine_state.memory,
             MemModule = Machine#machine_state.memory_module,
 
-            Mem1 = write_128k_pages(MemModule, Mem, H),
-            Mem2 = case H#z80_header.hw_mode >= 2 of
-                true -> MemModule:write_port_7ffd(Mem1, H#z80_header.p7ffd);
-                false -> Mem1
+            Mem1 = case H#z80_header.hw_mode >= 2 of
+                true ->
+                    %% 128K file: Z80-format pages 3-10 are RAM banks 0-7.
+                    %% Convert the page map to a bank map (page = bank + 3)
+                    %% before handing it to the bank-based writer; page 1-2
+                    %% and >10 fall outside banks 0-7 and are ignored.
+                    Banks = #{Page - 3 => PageData ||
+                        {Page, PageData} <- maps:to_list(H#z80_header.pages)},
+                    M = write_128k_banks(MemModule, Mem, Banks),
+                    MemModule:write_port_7ffd(M, H#z80_header.p7ffd);
+                false ->
+                    %% 48K file on a 128K machine: write the 48K dump as a
+                    %% linear 0x4000-0xFFFF image (0x4000 → bank 5, 0x8000 →
+                    %% bank 2, 0xC000 → the current slot 3 bank) and leave the
+                    %% machine's paging untouched. The page numbering in a 48K
+                    %% file (4 = 0x8000, 5 = 0xC000, 8 = 0x4000) differs from
+                    %% the 128K bank numbering, so the page map must not be
+                    %% used directly.
+                    write_48k_dump(MemModule, Mem, H#z80_header.mem)
             end,
 
             Cpu = Machine#machine_state.cpu,
@@ -147,7 +162,7 @@ load_z80(Machine, Data) ->
                 pending_interrupt = none
             },
             {ok, Machine#machine_state{
-                memory = Mem2,
+                memory = Mem1,
                 cpu = Cpu1,
                 screen = ezx_screen:new(H#z80_header.border),
                 t_states = 0,
@@ -198,39 +213,55 @@ load_sna(Machine, Data) ->
                     %% 48K SNA: the 0x4000 dump is bank 5, 0x8000 is bank 2,
                     %% 0xC000 is the currently-paged slot 3 bank; paging is
                     %% left untouched.
-                    MemList = binary:bin_to_list(H#sna_header.mem),
-                    {_, M} = lists:foldl(
-                        fun(Byte, {Offset, MemAcc}) ->
-                            Addr = 16384 + Offset,
-                            {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
-                        end, {0, Mem}, MemList),
-                    M;
+                    write_48k_dump(MemModule, Mem, H#sna_header.mem);
                 _ ->
-                    %% 128K extended SNA: the 48K dump holds the active display
-                    %% bank at 0x4000 (bank 5 or 7 per p7FFD bit 3), bank 2 at
-                    %% 0x8000, and the slot 3 bank at 0xC000. Load them by bank
-                    %% (write_bank_block only touches PhysPages), then rebuild
-                    %% the page map so the CPU view is consistent.
+                    %% 128K extended SNA: the 48K dump holds bank 5 at 0x4000
+                    %% (the CPU's fixed view of the screen area, independent of
+                    %% p7FFD bit 3), bank 2 at 0x8000, and the slot 3 bank at
+                    %% 0xC000. The remaining banks follow as extra pages in
+                    %% ascending order: banks 0,1,3,4,6,7, minus the slot 3
+                    %% bank when slot 3 is one of them (six pages when slot 3
+                    %% is bank 2 or 5, which the format then includes twice).
+                    %% Match every page explicitly into its bank, write them by
+                    %% bank (write_bank_block only touches PhysPages), then
+                    %% rebuild the page map so the CPU view is consistent.
                     <<Screen16:16384/binary, Bank2_16:16384/binary, Slot3_16:16384/binary>> =
                         H#sna_header.mem,
-                    ScreenBank = case (P7FFD bsr 3) band 1 of 0 -> 5; 1 -> 7 end,
                     Slot3Bank = P7FFD band 16#07,
-                    M0 = MemModule:write_bank_block(Mem, ScreenBank, Screen16),
-                    M1 = MemModule:write_bank_block(M0, 2, Bank2_16),
-                    M2 = MemModule:write_bank_block(M1, Slot3Bank, Slot3_16),
-                    MemModule:write_port_7ffd(M2, P7FFD)
-            end,
-
-            Mem2 = case H#sna_header.raw_extra of
-                undefined -> Mem1;
-                Extra -> load_extra_pages(MemModule, Mem1, P7FFD, Extra)
+                    Banks0 = #{5 => Screen16, 2 => Bank2_16, Slot3Bank => Slot3_16},
+                    ExtraBanks = case {Slot3Bank, H#sna_header.raw_extra} of
+                        {S, <<B0:16384/binary, B1:16384/binary, B3:16384/binary,
+                              B4:16384/binary, B6:16384/binary, B7:16384/binary>>}
+                          when S =:= 2; S =:= 5 ->
+                            #{0 => B0, 1 => B1, 3 => B3, 4 => B4, 6 => B6, 7 => B7};
+                        {0, <<B1:16384/binary, B3:16384/binary, B4:16384/binary,
+                              B6:16384/binary, B7:16384/binary>>} ->
+                            #{1 => B1, 3 => B3, 4 => B4, 6 => B6, 7 => B7};
+                        {1, <<B0:16384/binary, B3:16384/binary, B4:16384/binary,
+                              B6:16384/binary, B7:16384/binary>>} ->
+                            #{0 => B0, 3 => B3, 4 => B4, 6 => B6, 7 => B7};
+                        {3, <<B0:16384/binary, B1:16384/binary, B4:16384/binary,
+                              B6:16384/binary, B7:16384/binary>>} ->
+                            #{0 => B0, 1 => B1, 4 => B4, 6 => B6, 7 => B7};
+                        {4, <<B0:16384/binary, B1:16384/binary, B3:16384/binary,
+                              B6:16384/binary, B7:16384/binary>>} ->
+                            #{0 => B0, 1 => B1, 3 => B3, 6 => B6, 7 => B7};
+                        {6, <<B0:16384/binary, B1:16384/binary, B3:16384/binary,
+                              B4:16384/binary, B7:16384/binary>>} ->
+                            #{0 => B0, 1 => B1, 3 => B3, 4 => B4, 7 => B7};
+                        {7, <<B0:16384/binary, B1:16384/binary, B3:16384/binary,
+                              B4:16384/binary, B6:16384/binary>>} ->
+                            #{0 => B0, 1 => B1, 3 => B3, 4 => B4, 6 => B6}
+                    end,
+                    M0 = write_128k_banks(MemModule, Mem, maps:merge(Banks0, ExtraBanks)),
+                    MemModule:write_port_7ffd(M0, P7FFD)
             end,
 
             SP = H#sna_header.sp,
             {PC, SP_Final} = case H#sna_header.pc of
                 undefined ->
-                    PCL = MemModule:read_byte(Mem2, SP band 16#FFFF),
-                    PCH = MemModule:read_byte(Mem2, (SP + 1) band 16#FFFF),
+                    PCL = MemModule:read_byte(Mem1, SP band 16#FFFF),
+                    PCH = MemModule:read_byte(Mem1, (SP + 1) band 16#FFFF),
                     {(PCH bsl 8) bor PCL, (SP + 2) band 16#FFFF};
                 P -> {P, SP}
             end,
@@ -264,7 +295,7 @@ load_sna(Machine, Data) ->
                 pending_interrupt = none
             },
             {ok, Machine#machine_state{
-                memory = Mem2,
+                memory = Mem1,
                 cpu = Cpu1,
                 screen = ezx_screen:new(H#sna_header.border),
                 t_states = 0,
@@ -344,33 +375,27 @@ read_kempston(#ext_context{kempston_mouse = undefined}, _Port) ->
 read_kempston(#ext_context{kempston_mouse = Mouse}, Port) ->
     ezx_kempston_mouse:read(Mouse, Port).
 
-%% @doc Write extra 16KB pages into banks not covered by the 48KB dump.
--spec load_extra_pages(module(), any(), byte(), binary()) -> any().
-load_extra_pages(MemModule, Mem, P7FFD, Extra) ->
-    ScreenBank = case (P7FFD bsr 3) band 1 of 0 -> 5; 1 -> 7 end,
-    Slot3Bank = P7FFD band 16#07,
-    Covered = sets:from_list([2, ScreenBank, Slot3Bank]),
-    Banks = [B || B <- lists:seq(0, 7), not sets:is_element(B, Covered)],
-    load_pages(MemModule, Mem, Banks, Extra).
-
-load_pages(_MemModule, Mem, [], _Extra) -> Mem;
-load_pages(MemModule, Mem, [Bank | Banks], Extra) ->
-    case Extra of
-        <<PageData:16384/binary, Rest/binary>> ->
-            Mem1 = MemModule:write_bank_block(Mem, Bank, PageData),
-            load_pages(MemModule, Mem1, Banks, Rest);
-        _ ->
-            Mem
-    end.
-
-%% @doc Write Z80 memory pages (3-10) into 128K RAM banks (0-7).
--spec write_128k_pages(module(), any(), #z80_header{}) -> any().
-write_128k_pages(MemModule, Mem, H) ->
-    Pages = H#z80_header.pages,
+%% @doc Write RAM bank contents into a 128K machine. Keys 0-7 are physical
+%% banks written via write_bank_block; any other key is ignored.
+-spec write_128k_banks(module(), any(), #{integer() => binary()}) -> any().
+write_128k_banks(MemModule, Mem, Banks) ->
     maps:fold(fun
-        (Page, Data, Acc) when Page >= 3, Page =< 10 ->
-            Bank = Page - 3,
+        (Bank, Data, Acc) when Bank >= 0, Bank =< 7 ->
             MemModule:write_bank_block(Acc, Bank, Data);
-        (_Page, _Data, Acc) ->
+        (_Bank, _Data, Acc) ->
             Acc
-    end, Mem, Pages).
+    end, Mem, Banks).
+
+%% @doc Write a 48K memory dump (0x4000-0xFFFF) into 128K RAM through the
+%% current page map: 0x4000 → bank 5, 0x8000 → bank 2, 0xC000 → the current
+%% slot 3 bank. Used for 48K Z80 files loaded on a 128K machine; paging is
+%% left untouched.
+-spec write_48k_dump(module(), any(), binary()) -> any().
+write_48k_dump(MemModule, Mem, Data) ->
+    MemList = binary:bin_to_list(Data),
+    {_, M} = lists:foldl(
+        fun(Byte, {Offset, MemAcc}) ->
+            Addr = 16384 + Offset,
+            {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
+        end, {0, Mem}, MemList),
+    M.

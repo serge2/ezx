@@ -30,9 +30,12 @@
 %% On load, the emulator reads the return address from [SP] to set PC.
 %%
 %% 128K extended SNA (used by e.g. Fuse):
+%%   The 48KB dump holds the CPU view: bank 5 at 0x4000 (fixed, independent
+%%   of p7FFD bit 3), bank 2 at 0x8000, and the slot 3 bank at 0xC000.
 %%   After 49152 bytes of RAM:
 %%     4 bytes extended header: PC (le), p7FFD, AY flag
-%%     5 x 16384 bytes extra pages (banks not covered by the 48KB dump)
+%%     5 x 16384 bytes extra pages (the remaining banks, ascending order;
+%%     the display bank 5 or 7 per p7FFD bit 3 is among them)
 %%
 %% @end
 -module(ezx_sna).
