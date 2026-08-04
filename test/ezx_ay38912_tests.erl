@@ -26,8 +26,12 @@ render_ch_a(M, AY, TStates) ->
     {ChA, _, _, _} = M:render_channels(AY1, TStates, TStates),
     [V || <<V:16/little-signed>> <= ChA].
 
+%% Expected PCM for a 4-bit level, mirroring the modules' exponential AY DAC
+%% curve (level 15 -> +4096, level 0 -> -4096).  The AY DAC is logarithmic
+%% (3 dB per level), so levels are NOT equally spaced.
 pcm(Level) ->
-    (Level * 8192) div 15 - 4096.
+    element(Level + 1, {0, 64, 90, 128, 181, 256, 362, 512, 724, 1024, 1448,
+                        2048, 2896, 4096, 5793, 8192}) - 4096.
 
 %% ---- envelope step rate: reg * 32 T-states per level step ----
 
@@ -47,15 +51,18 @@ envelope_step_rate_test_() ->
 %% ---- noise LFSR step rate: reg * 32 T-states per step ----
 
 noise_step_rate_test_() ->
-    %% R6 = 14 -> one LFSR step per 448 T-states.  Writing R6 resets the LFSR
-    %% to 0x10000 (bit 0 = 0); one step yields bit 0 = 1.  Over 882 T-states
-    %% the LFSR steps exactly once, at sample index 447.
-    Writes = [{7, 16#F7}, {6, 14}, {8, 16#0F}],
+    %% R6 = 1 -> one LFSR step per 32 T-states.  Writing R6 resets the LFSR
+    %% to 0x10000 (bit 0 = 0).  The AY noise generator is a 17-bit
+    %% RIGHT-shifting LFSR (feedback = bit0 XOR bit3 inserted at bit 16,
+    %% output = bit 0, matching MAME ay8910.cpp), so the single 1 at bit 16
+    %% reaches bit 0 after exactly 16 steps = 512 T-states.  Over 882
+    %% T-states the noise output stays 0 up to sample 511 and turns on at
+    %% sample 512.
+    Writes = [{7, 16#F7}, {6, 1}, {8, 16#0F}],
     [run_each(M, Writes,
         fun(Samples) ->
-            ?assertEqual([pcm(0)], lists:usort(lists:sublist(Samples, 447))),
-            ?assertEqual(pcm(15), lists:nth(448, Samples)),
-            ?assertEqual([pcm(15)], lists:usort(lists:sublist(Samples, 448, 435)))
+            ?assertEqual([pcm(0)], lists:usort(lists:sublist(Samples, 511))),
+            ?assertEqual(pcm(15), lists:nth(512, Samples))
         end) || M <- ?MODULES].
 
 %% ---- tone half period: (reg + 1) * 16 T-states ----

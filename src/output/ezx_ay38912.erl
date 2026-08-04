@@ -11,34 +11,39 @@
 %%
 %% Three independent tone channels (A, B, C), each with:
 %%   - a square-wave tone generator (12-bit period, register pair per channel)
-%%   - a noise mixer (global 5-bit noise period, 17-bit LFSR: x^17 + x^14 + 1)
+%%   - a noise mixer (global 5-bit noise period, 17-bit right-shifting LFSR:
+%%     feedback = bit0 XOR bit3, output = bit0 — matches MAME ay8910.cpp,
+%%     verified on AY-3-8910 and YM2149 chips)
 %%   - amplitude control: fixed 4-bit level or envelope follower (per channel)
 %%
 %% Shared global envelope generator with 16 shapes (R13 = %CAHx):
-%%   C=CONT (0=freeze at end, 1=continue), A=ATT (0=start 15→0, 1=start 0→15)
-%%   H=HOLD (0=loop, 1=freeze), ALT=alternate direction on loop
+%%   C=CONT (0=single cycle, reset to 0 and hold; 1=continue),
+%%   A=ATT (0=start 15→0, 1=start 0→15), H=HOLD (1=freeze at boundary),
+%%   ALT=alternate (invert direction on each cycle)
 %%
 %%   R13  shape  behaviour
 %%   ──────────────────────────────────────────────────────────────────────
-%%   0000  \___  single 15→0, freeze at 0
+%%   0000  \___  single 15→0, reset to 0 and hold
 %%   0001  \___  (dup: Cont=0, Att=0 ⇒ \___ regardless of Alt/Hold)
 %%   0010  \___  (dup: same)
 %%   0011  \___  (dup: same)
 %%   ──────────────────────────────────────────────────────────────────────
-%%   0100  /‾‾‾  single 0→15, freeze at 15
-%%   0101  /‾‾‾  (dup: Cont=0, Att=1 ⇒ /‾‾‾ regardless of Alt/Hold)
-%%   0110  /‾‾‾  (dup: same)
-%%   0111  /‾‾‾  (dup: same)
+%%   0100  /___  single 0→15, reset to 0 and hold (Cont=0 always resets to 0)
+%%   0101  /___  (dup: Cont=0, Att=1 ⇒ /___ regardless of Alt/Hold)
+%%   0110  /___  (dup: same)
+%%   0111  /___  (dup: same)
 %%   ──────────────────────────────────────────────────────────────────────
 %%   1000  \/\/  repeating sawtooth 15→0→15→0… (Alt=0: same direction)
-%%   1001  \___  (dup: Cont=1, Att=0, Hold=1 ⇒ freeze)
-%%   1010  \/\/\ repeating triangle 15↔0↔15…  (Alt=1: alternate)
-%%   1011  \___  (dup: same as 1001 — Hold=1 freezes, Alt ignored)
+%%   1001  \___  single 15→0, hold at 0
+%%   1010  \/\/\ repeating triangle 15↔0↔15… (Alt=1: alternate; boundary
+%%          value held one extra step, as on real hardware)
+%%   1011  \```  single 15→0, reset to 15 and hold (Hold+Alternate reset)
 %%   ──────────────────────────────────────────────────────────────────────
 %%   1100  /\/\  repeating sawtooth 0→15→0→15… (Alt=0: same direction)
-%%   1101  /‾‾‾  (dup: Cont=1, Att=1, Hold=1 ⇒ freeze)
-%%   1110  /\/\/\ repeating triangle 0↔15↔0…  (Alt=1: alternate)
-%%   1111  /‾‾‾  (dup: same as 1101 — Hold=1 freezes, Alt ignored)
+%%   1101  /‾‾‾  single 0→15, hold at 15
+%%   1110  /\/\/\ repeating triangle 0↔15↔0… (Alt=1: alternate; boundary
+%%          value held one extra step, as on real hardware)
+%%   1111  /___  single 0→15, reset to 0 and hold (Hold+Alternate reset)
 %%
 %% Register map (write via latch+data protocol):
 %%   0,1  — Channel A tone period  (fine, coarse, 12 bits)
@@ -144,6 +149,7 @@ write(#ay_state{regs = Regs} = AY, Value, _TState) ->
         ?REG_NOISE_PERIOD -> AY1#ay_state{noise_lfsr = 16#10000};
         ?REG_ENV_SHAPE    ->
             AY1#ay_state{
+                env_counter = 0,
                 env_pos  = case (Value band 16#04) of 0 -> 15; _ -> 0 end,
                 env_dir  = case (Value band 16#04) of 0 -> down; _ -> up end,
                 env_hold = false
@@ -218,10 +224,7 @@ render_step(#ay_state{regs = Regs} = AY, TStates) ->
     {EPos, EDir, EHold} = advance_env(AY#ay_state.env_pos, AY#ay_state.env_dir,
                                        AY#ay_state.env_hold, Regs, ESteps),
 
-    EnvLevel = case EHold of
-        true -> AY#ay_state.env_pos;
-        false -> EPos
-    end,
+    EnvLevel = EPos,
 
     Mixer = element(?REG_MIXER + 1, Regs),
     MuteToneA = (Mixer bsr 0) band 1,
@@ -250,10 +253,31 @@ render_step(#ay_state{regs = Regs} = AY, TStates) ->
     },
     {OutA, OutB, OutC, AY1}.
 
+-define(AY_VOLUME_LEVEL, {
+    0,
+    64,
+    90,
+    128,
+    181,
+    256,
+    362,
+    512,
+    724,
+    1024,
+    1448,
+    2048,
+    2896,
+    4096,
+    5793,
+    8192
+}).
+
+%% @doc Scale a 4-bit sum (0-15) to a signed 16-bit PCM sample (-4096..+4096).
+%% The AY DAC is logarithmic (3 dB per level), not linear; this exponential
+%% curve is a close match to the measured AY-3-8910 output levels.
 -spec pcm_scale(0..15) -> -4096..4096.
-pcm_scale(0) -> -4096;
 pcm_scale(Sum) ->
-    (Sum * 8192) div 15 - 4096.
+    element(Sum + 1, ?AY_VOLUME_LEVEL) - 4096.
 
 %% 12-bit tone period: (Coarse:Fine + 1) * 16 T-states.
 %% Output toggles every Period T-states, giving a square wave period of 2*Period.
@@ -302,59 +326,75 @@ tone_output(Phase, Period, TStates) ->
     Out = case NewPhase < Period of true -> 1; false -> 0 end,
     {NewPhase, Out}.
 
+%% @doc Advances the 17-bit Linear Feedback Shift Register (LFSR) by N steps.
+%% The AY noise generator is a right-shifting register with feedback
+%% Feedback = bit0 XOR bit3 inserted into the MSB (bit 16); bit 0 is the
+%% output (matches MAME ay8910.cpp, verified on AY-3-8910 and YM2149 chips).
 -spec advance_lfsr(non_neg_integer(), non_neg_integer()) -> non_neg_integer().
-advance_lfsr(LFSR, 0) -> LFSR;
+advance_lfsr(LFSR, 0) ->
+    LFSR band 16#1FFFF;
 advance_lfsr(LFSR, N) ->
-    Feedback = ((LFSR bsr 16) bxor (LFSR bsr 13)) band 1,
-    LFSR1 = ((LFSR bsl 1) bor Feedback) band 16#1FFFF,
+    Feedback = (LFSR band 1) bxor ((LFSR bsr 3) band 1),
+    LFSR1 = ((LFSR bsr 1) bor (Feedback bsl 16)) band 16#1FFFF,
     advance_lfsr(LFSR1, N - 1).
 
+%% @doc Advance the envelope position by Steps level-steps.
+%% Once holding, the position stays put (the old code reset it to 0 and the
+%% caller's EHold workaround decayed to silence after two render steps).
 -spec advance_env(0..15, up | down, boolean(), tuple(), non_neg_integer()) ->
     {0..15, up | down, boolean()}.
-advance_env(_Pos, _Dir, true, _Regs, _Steps) ->
-    {0, down, true};
+advance_env(Pos, Dir, true, _Regs, _Steps) ->
+    {Pos, Dir, true};
+advance_env(Pos, Dir, false, _Regs, 0) ->
+    {Pos, Dir, false};
 advance_env(Pos, Dir, false, Regs, Steps) ->
     Shape = element(?REG_ENV_SHAPE + 1, Regs),
     Cont = (Shape bsr 3) band 1,
-    Att = (Shape bsr 2) band 1,
-    Alt = (Shape bsr 1) band 1,
+    Att  = (Shape bsr 2) band 1,
+    Alt  = (Shape bsr 1) band 1,
     Hold = Shape band 1,
-    Inner = Att,
-    advance_env_1(Pos, Dir, Steps, Cont, Alt, Hold, Inner).
+    step_loop(Pos, Dir, Steps, Cont, Att, Alt, Hold).
 
--spec advance_env_1(0..15, up | down, non_neg_integer(), 0..1, 0..1, 0..1, 0..1) ->
-    {0..15, up | down, boolean()}.
-advance_env_1(Pos, _Dir, 0, _Cont, _Alt, _Hold, _Inner) ->
-    {Pos, down, false};
-advance_env_1(Pos, Dir, Steps, Cont, Alt, Hold, Inner) ->
-    {Pos1, Dir1, Hold1} = case Dir of
-        up ->
-            P = Pos + 1,
-            if P > 15 ->
-                env_boundary(Cont, Alt, Hold, Inner, up);
-               true -> {P, up, false}
-            end;
-        down ->
-            P = Pos - 1,
-            if P < 0 ->
-                env_boundary(Cont, Alt, Hold, Inner, down);
-               true -> {P, down, false}
-            end
+%% Step the envelope once; recurse until Steps is exhausted.
+step_loop(Pos, Dir, 0, _Cont, _Att, _Alt, _Hold) ->
+    {Pos, Dir, false};
+step_loop(Pos, Dir, Steps, Cont, Att, Alt, Hold) ->
+    NextPos = case Dir of
+        up   -> Pos + 1;
+        down -> Pos - 1
     end,
-    case Hold1 of
-        true -> {Pos1, Dir1, true};
-        false -> advance_env_1(Pos1, Dir1, Steps - 1, Cont, Alt, Hold, Inner bxor 1)
+    if
+        NextPos >= 0, NextPos =< 15 ->
+            step_loop(NextPos, Dir, Steps - 1, Cont, Att, Alt, Hold);
+        true ->
+            {BoundaryPos, NewDir, IsHold} = env_boundary(Cont, Att, Alt, Hold, Dir),
+            case IsHold of
+                true  -> {BoundaryPos, NewDir, true};
+                false -> step_loop(BoundaryPos, NewDir, Steps - 1, Cont, Att, Alt, Hold)
+            end
     end.
 
+%% Envelope boundary handling (matches MAME ay8910.cpp and the canned shape
+%% tables of other emulators):
+%%   - Cont=0: single cycle, then reset to 0000 and hold (datasheet text).
+%%   - Cont=1, Hold=1: freeze at the boundary; when Alt is also set the
+%%     counter is reset to its initial count before holding.
+%%   - Cont=1, Hold=0, Alt=0: repeating sawtooth (same direction).
+%%   - Cont=1, Hold=0, Alt=1: repeating triangle; the boundary value is held
+%%     one extra step before reversing, as on real hardware.
 -spec env_boundary(0..1, 0..1, 0..1, 0..1, up | down) -> {0..15, up | down, boolean()}.
-env_boundary(0, _Alt, _Hold, _Inner, Dir) ->
-    {case Dir of up -> 15; down -> 0 end, Dir, true};
-env_boundary(1, 0, _Hold, _Inner, Dir) ->
-    {case Dir of up -> 0; down -> 15 end, Dir, false};
-env_boundary(1, 1, 0, _Inner, up) -> {15, down, false};
-env_boundary(1, 1, 0, _Inner, down) -> {0, up, false};
-env_boundary(1, _Alt, 1, _Inner, Dir) ->
-    {case Dir of up -> 15; down -> 0 end, Dir, true}.
+env_boundary(0, _Att, _Alt, _Hold, _Dir) ->
+    {0, down, true};
+env_boundary(1, 0, 1, 1, down) -> {15, up, true};
+env_boundary(1, 1, 1, 1, up)   -> {0, down, true};
+env_boundary(1, _Att, 0, 1, up)   -> {15, up, true};
+env_boundary(1, _Att, 0, 1, down) -> {0, down, true};
+env_boundary(1, _Att, 0, 0, up)   -> {0, up, false};
+env_boundary(1, _Att, 0, 0, down) -> {15, down, false};
+env_boundary(1, _Att, 1, 0, up)   -> {15, down, false};
+env_boundary(1, _Att, 1, 0, down) -> {0, up, false};
+env_boundary(_Cont, _Att, _Alt, _Hold, _Dir) ->
+    {0, down, true}.
 
 -spec amplitude(tuple(), 8..10, 0..15) -> 0..15.
 amplitude(Regs, RegIdx, EnvLevel) ->
