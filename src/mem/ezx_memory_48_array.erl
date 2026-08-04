@@ -6,11 +6,13 @@
 %% `read_byte/2' is a direct `array:get/2' call. Bulk reads iterate
 %% element by element, making `read_block/3' slow (~300 us for 6912 bytes).
 
--export([new/1, read_byte/2, read_block/3, write_byte/3]).
+-export([new/1, read_byte/2, read_block/3, read_video_block/1, write_byte/3]).
 
 -type state() :: array:array(byte()).
 
 -export_type([state/0]).
+
+-define(VIDEO_SIZE, (6144 + 768)).
 
 %% @doc Create a new 64KB memory state from a ROM binary.
 -spec new(binary()) -> state().
@@ -46,6 +48,11 @@ read_seq(_Arr, _Offset, 0, Acc) -> Acc;
 read_seq(Arr, Offset, Remaining, Acc) ->
     read_seq(Arr, Offset + 1, Remaining - 1,
              <<Acc/binary, (array:get(Offset, Arr)):8>>).
+
+%% @doc Read the ULA display buffer (first ?VIDEO_SIZE bytes at 0x4000).
+%% The size is fixed, so no size argument is needed.
+-spec read_video_block(state()) -> binary().
+read_video_block(State) -> read_block(State, 16#4000, ?VIDEO_SIZE).
 
 %% @doc Write `Byte' to `Addr'. ROM area writes are ignored.
 -spec write_byte(state(), non_neg_integer(), byte()) -> state().

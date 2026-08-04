@@ -91,6 +91,10 @@
     perf_stats = #perf_stats{} :: #perf_stats{}
 }).
 
+%% Device context threaded through the CPU: the machine-level devices the CPU
+%% can touch. Undefined module fields mean the device is absent; port handlers
+%% decline with `nomatch` and the port falls through to the 0xFF read /
+%% ignore-write default.
 -record(ext_context, {
     memory,
     screen,

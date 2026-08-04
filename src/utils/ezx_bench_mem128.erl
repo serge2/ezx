@@ -12,8 +12,8 @@
 
 -define(DEFAULT_DURATION_SEC, 30).
 -define(MEM_MODS, [
-    {ezx_memory_128,            "binary slice (8 banks)"},
-    {ezx_memory_128_pages512,   "page map + 512B pages"}
+    {ezx_memory_128_banks, "banks record + 4-slot routing tuple"},
+    {ezx_memory_128_banks_tuples, "banks + byte-tuple pages (default)"}
 ]).
 
 %% --- Public API ---
@@ -116,8 +116,8 @@ bench_full_timed(MemMod, M, DeadlineUs, CpuAcc, VidAcc) ->
             Changes = M1#machine_state.screen_changes,
             CB = M1#machine_state.screen_color,
             Mem = M1#machine_state.memory,
-            Videobuffer = case erlang:function_exported(MemModule, read_video_block, 2) of
-                true -> MemModule:read_video_block(Mem, 6144 + 768);
+            Videobuffer = case erlang:function_exported(MemModule, read_video_block, 1) of
+                true -> MemModule:read_video_block(Mem);
                 false -> MemModule:read_block(Mem, 16384, 6144 + 768)
             end,
             ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB),

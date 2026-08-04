@@ -54,20 +54,20 @@ machine_state_keeps_cpu_and_memory_separate_test() ->
     Machine0 = init_machine(),
     Machine1 = load_program(Machine0, 16#4000, [16#3E, 16#41]),
     ?assertEqual(0, z80_cpu:pc(Machine1#machine_state.cpu)),
-    ?assertEqual(16#3E, ezx_memory_48:read_byte(Machine1#machine_state.memory, 16#4000)),
-    ?assertEqual(16#41, ezx_memory_48:read_byte(Machine1#machine_state.memory, 16#4001)).
+    ?assertEqual(16#3E, ezx_memory_48_pages512_tuples:read_byte(Machine1#machine_state.memory, 16#4000)),
+    ?assertEqual(16#41, ezx_memory_48_pages512_tuples:read_byte(Machine1#machine_state.memory, 16#4001)).
 
 memory_reset_restores_initial_configuration_test() ->
-    State0 = ezx_memory_48:new(<<0:65536/unit:8>>),
-    _State1 = ezx_memory_48:write_byte(State0, 10, 42),
-    State2 = ezx_memory_48:new(<<0:65536/unit:8>>),
-    ?assertEqual(0, ezx_memory_48:read_byte(State2, 10)).
+    State0 = ezx_memory_48_pages512_tuples:new(<<0:65536/unit:8>>),
+    _State1 = ezx_memory_48_pages512_tuples:write_byte(State0, 10, 42),
+    State2 = ezx_memory_48_pages512_tuples:new(<<0:65536/unit:8>>),
+    ?assertEqual(0, ezx_memory_48_pages512_tuples:read_byte(State2, 10)).
 
 memory_reset_to_zero_test() ->
-    Memory0 = ezx_memory_48:new(<<0:8/unit:8>>),
-    _Memory1 = ezx_memory_48:write_byte(Memory0, 4, 16#99),
-    Memory2 = ezx_memory_48:new(<<0:8/unit:8>>),
-    ?assertEqual(0, ezx_memory_48:read_byte(Memory2, 4)).
+    Memory0 = ezx_memory_48_pages512_tuples:new(<<0:8/unit:8>>),
+    _Memory1 = ezx_memory_48_pages512_tuples:write_byte(Memory0, 4, 16#99),
+    Memory2 = ezx_memory_48_pages512_tuples:new(<<0:8/unit:8>>),
+    ?assertEqual(0, ezx_memory_48_pages512_tuples:read_byte(Memory2, 4)).
 
 %% --- run_frame tests ---
 
@@ -200,7 +200,7 @@ run_frame_border_stripes_test() ->
 
     %% --- Verify rendered pixel colors ---
     Mem = M3#machine_state.memory,
-    VB = ezx_memory_48:read_block(Mem, 16384, 6912),
+    VB = ezx_memory_48_pages512_tuples:read_video_block(Mem),
     RGB = ezx_screen:render_screen(VB, M3#machine_state.flash_on, Changes, CB),
 
     Palette = {
@@ -339,7 +339,7 @@ init_machine() ->
         filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
     end,
     {ok, Rom} = file:read_file(RomPath),
-    ezx_emulator:init(?SPECTRUM_48_MODEL, z80_cpu, ezx_memory_48, ezx_keyboard, ezx_beeper2, undefined, Rom).
+    ezx_emulator:init(?SPECTRUM_48_MODEL, z80_cpu, ezx_memory_48_pages512_tuples, ezx_keyboard, ezx_beeper2, undefined, Rom).
 
 init_machine_128() ->
     RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
@@ -348,7 +348,7 @@ init_machine_128() ->
         filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
     end,
     {ok, Rom} = file:read_file(RomPath),
-    ezx_emulator_128:init(?SPECTRUM_128_MODEL, z80_cpu, ezx_memory_128_pages512, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom, Rom}).
+    ezx_emulator_128:init(?SPECTRUM_128_MODEL, z80_cpu, ezx_memory_128_banks_tuples, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom, Rom}).
 
 load_program(Machine, Program) when is_map(Program) ->
     maps:fold(fun(Addr, Byte, M) ->

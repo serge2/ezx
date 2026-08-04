@@ -2,10 +2,13 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-%% The two 128K backends must agree on the 0x7FFD paging semantics:
+%% The 128K backends must agree on the 0x7FFD paging semantics:
 %% 0x4000-0x7FFF is always bank 5 for the CPU; bit 3 only selects the bank
-%% (5 or 7) that read_video_block/2 returns for the ULA display.
--define(MODULES, [ezx_memory_128, ezx_memory_128_pages512]).
+%% (5 or 7) that read_video_block/1 returns for the ULA display.
+%% read_video_block/1 returns the first 6912 bytes of the display bank
+%% (6144 bitmap + 768 attributes), so the last valid offset is 16#1AFF.
+-define(VIDEO_LAST, 16#1AFF).
+-define(MODULES, [ezx_memory_128_banks, ezx_memory_128_banks_tuples]).
 
 cpu_view_4000_always_bank5_test_() ->
     [{lists:flatten(io_lib:format("~p", [Mod])),
@@ -28,15 +31,17 @@ cpu_view_4000_always_bank5(Mod) ->
     ?assertEqual(16#22, Mod:read_byte(S3, 16#0000)),
 
     %% The display bank is now 7: bank 5's content is not what is shown.
-    VB7 = Mod:read_video_block(S3, 16#4000),
+    VB7 = Mod:read_video_block(S3),
     ?assertEqual(16#00, binary:at(VB7, 0)),
-    ?assertEqual(16#00, binary:at(VB7, 16#3FFF)),
+    ?assertEqual(16#00, binary:at(VB7, ?VIDEO_LAST)),
 
     %% Selecting bank 5 for display brings back the CPU-written bytes.
     S4 = Mod:write_port_7ffd(S3, 16#10),
-    VB5 = Mod:read_video_block(S4, 16#4000),
+    VB5 = Mod:read_video_block(S4),
     ?assertEqual(16#AA, binary:at(VB5, 0)),
-    ?assertEqual(16#BB, binary:at(VB5, 16#3FFF)).
+    %% 0x7FFF (offset 16#3FFF in the bank) lies beyond the video buffer, so
+    %% it must not leak into the returned block even though it is bank 5.
+    ?assertEqual(16#00, binary:at(VB5, ?VIDEO_LAST)).
 
 display_bank_written_via_slot3_test_() ->
     [{lists:flatten(io_lib:format("~p", [Mod])),
@@ -50,14 +55,14 @@ display_bank_written_via_slot3(Mod) ->
     %% CPU writes while the display is bank 7 must not touch bank 7.
     S1 = Mod:write_port_7ffd(S0, 16#18),
     S2 = Mod:write_byte(S1, 16#4000, 16#AA),
-    ?assertEqual(16#00, binary:at(Mod:read_video_block(S2, 16384), 0)),
+    ?assertEqual(16#00, binary:at(Mod:read_video_block(S2), 0)),
 
     %% Bank 7 is reachable by paging it into slot 3 (0xC000).
     S3 = Mod:write_port_7ffd(S2, 16#07),  %% slot 3 = 7, display = 5
     S4 = Mod:write_byte(S3, 16#C000, 16#CC),
     S5 = Mod:write_port_7ffd(S4, 16#0F),  %% slot 3 = 7, display = 7
     ?assertEqual(16#CC, Mod:read_byte(S5, 16#C000)),
-    ?assertEqual(16#CC, binary:at(Mod:read_video_block(S5, 16384), 0)).
+    ?assertEqual(16#CC, binary:at(Mod:read_video_block(S5), 0)).
 
 slot3_paging_unchanged_test_() ->
     [{lists:flatten(io_lib:format("~p", [Mod])),
@@ -75,3 +80,50 @@ slot3_paging_unchanged(Mod) ->
         S3 = Mod:write_port_7ffd(S2, Bank),
         ?assertEqual(Bank + 1, Mod:read_byte(S3, 16#C000))
     end, lists:seq(0, 7)).
+
+%% When p7FFD pages bank 5 (or 2) into slot 3, that bank is visible through
+%% TWO page-map slots at once: 0x4000/0xC000 (bank 5) or 0x8000/0xC000
+%% (bank 2). A write through either slot must be visible through the other.
+aliased_slot_visibility_test_() ->
+    [{lists:flatten(io_lib:format("~p", [Mod])),
+      fun() -> aliased_slot_visibility(Mod, Slot, Bank, P7Val) end}
+     || Mod <- ?MODULES,
+        {Slot, Bank, P7Val} <- [{16#4000, 5, 16#05}, {16#8000, 2, 16#02}]].
+
+aliased_slot_visibility(Mod, Slot, Bank, P7Val) ->
+    Rom = <<0:16384/unit:8>>,
+    S0 = Mod:new(Rom, Rom),
+    %% Page the bank into slot 3 so it is visible through both slots.
+    S1 = Mod:write_port_7ffd(S0, P7Val),
+
+    %% Write through the fixed slot, read through the aliased 0xC000 slot.
+    S2 = Mod:write_byte(S1, Slot, Bank + 16#10),
+    ?assertEqual(Bank + 16#10, Mod:read_byte(S2, 16#C000)),
+
+    %% Write through the aliased 0xC000 slot, read back through the fixed slot.
+    S3 = Mod:write_byte(S2, 16#C000, Bank + 16#20),
+    ?assertEqual(Bank + 16#20, Mod:read_byte(S3, Slot)),
+
+    %% Both copies must agree after a write through either slot.
+    ?assertEqual(Bank + 16#20, Mod:read_byte(S3, 16#C000)).
+
+%% Regression: with the aliased bank paged out (slot 3 back to a different
+%% bank) the fixed slot must still hold the written byte.
+aliased_bank_paged_out_test_() ->
+    [{lists:flatten(io_lib:format("~p", [Mod])),
+      fun() -> aliased_bank_paged_out(Mod, Slot, Bank, P7Val) end}
+     || Mod <- ?MODULES,
+        {Slot, Bank, P7Val} <- [{16#4000, 5, 16#05}, {16#8000, 2, 16#02}]].
+
+aliased_bank_paged_out(Mod, Slot, Bank, P7Val) ->
+    Rom = <<0:16384/unit:8>>,
+    S0 = Mod:new(Rom, Rom),
+    S1 = Mod:write_port_7ffd(S0, P7Val),
+    S2 = Mod:write_byte(S1, Slot, Bank + 16#30),
+    S3 = Mod:write_port_7ffd(S2, 16#00),  %% slot 3 -> bank 0
+    ?assertEqual(Bank + 16#30, Mod:read_byte(S3, Slot)),
+
+    %% Paging the bank back in must show the same byte through slot 3.
+    S4 = Mod:write_port_7ffd(S3, P7Val),
+    ?assertEqual(Bank + 16#30, Mod:read_byte(S4, 16#C000)).
+

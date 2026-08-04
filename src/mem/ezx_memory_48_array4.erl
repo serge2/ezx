@@ -6,10 +6,12 @@
 %% `read_block/3' reads dwords with 32-bit little-endian extraction for
 %% ~4x fewer `array:get' calls than array1. Best total (CPU+video) performance.
 
--export([new/1, read_byte/2, read_block/3, write_byte/3]).
+-export([new/1, read_byte/2, read_block/3, read_video_block/1, write_byte/3]).
 
 -type state() :: array:array(non_neg_integer()).
 -export_type([state/0]).
+
+-define(VIDEO_SIZE, (6144 + 768)).
 
 %% @doc Create a new 64KB memory state from a ROM binary.
 -spec new(binary()) -> state().
@@ -85,6 +87,11 @@ read_dwords(Arr, Offset, Remaining, Acc) ->
     Bytes = <<(Value band 16#FF):8, ((Value bsr 8) band 16#FF):8, ((Value bsr 16) band 16#FF):8>>,
     <<Tail:Remaining/binary, _/binary>> = Bytes,
     iolist_to_binary(lists:reverse([Tail | Acc])).
+
+%% @doc Read the ULA display buffer (first ?VIDEO_SIZE bytes at 0x4000).
+%% The size is fixed, so no size argument is needed.
+-spec read_video_block(state()) -> binary().
+read_video_block(State) -> read_block(State, 16#4000, ?VIDEO_SIZE).
 
 %% @doc Write `Byte' to `Addr'. ROM area writes are ignored.
 -spec write_byte(state(), non_neg_integer(), byte()) -> state().

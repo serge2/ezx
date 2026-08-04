@@ -12,12 +12,10 @@
 
 -define(DEFAULT_DURATION_SEC, 30).
 -define(MEM_MODS, [
-    {ezx_memory_48,       "flat binary (64KB)"},
-    {ezx_memory_48_map,   "map of 4KB pages"},
-    {ezx_memory_48_pages, "tuple of 4KB pages"},
     {ezx_memory_48_pages1k, "tuple of 1KB pages"},
     {ezx_memory_48_pages2k, "tuple of 2KB pages"},
     {ezx_memory_48_pages512, "tuple of 512B pages"},
+    {ezx_memory_48_pages512_tuples, "tuple of 512B byte-tuples (default)"},
     {ezx_memory_48_array, "erlang array (1 byte)"},
     {ezx_memory_48_array2, "erlang array (2 bytes)"},
     {ezx_memory_48_array4, "erlang array (4 bytes)"},
@@ -83,7 +81,7 @@ bench_one(MemMod, Rom, DurationSec) ->
     %% === Phase 3: Video memory read_block throughput ===
     Mem3 = M3#machine_state.memory,
     MemModRef = M3#machine_state.memory_module,
-    VideoStats = bench_read_block(MemModRef, Mem3, 16384, 6912, 10000),
+    VideoStats = bench_read_video(MemModRef, Mem3, 10000),
 
     %% Collect final CPU state for correctness check.
     FinalCpu = M3#machine_state.cpu,
@@ -134,7 +132,7 @@ bench_full_timed(MemMod, M, DeadlineUs, CpuAcc, VidAcc) ->
             Changes = M1#machine_state.screen_changes,
             CB = M1#machine_state.screen_color,
             Mem = M1#machine_state.memory,
-            Videobuffer = MemModule:read_block(Mem, 16384, 6144 + 768),
+            Videobuffer = MemModule:read_video_block(Mem),
             ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB),
             T2 = erlang:monotonic_time(microsecond),
 
@@ -160,14 +158,14 @@ finalize_stats(RawTimes) ->
       p99   => Percentile(99),
       count => Count}.
 
-%% Benchmark read_block: measure average time over N iterations.
-bench_read_block(MemMod, Mem, Addr, Size, N) ->
+%% Benchmark read_video_block: measure average time over N iterations.
+bench_read_video(MemMod, Mem, N) ->
     %% Warmup
-    _ = [MemMod:read_block(Mem, Addr, Size) || _ <- lists:seq(1, min(1000, N))],
+    _ = [MemMod:read_video_block(Mem) || _ <- lists:seq(1, min(1000, N))],
     %% Timed
     Times = [begin
         T0 = erlang:monotonic_time(nanosecond),
-        _Block = MemMod:read_block(Mem, Addr, Size),
+        _Block = MemMod:read_video_block(Mem),
         T1 = erlang:monotonic_time(nanosecond),
         T1 - T0
     end || _ <- lists:seq(1, N)],

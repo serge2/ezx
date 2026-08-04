@@ -13,8 +13,7 @@
 init_cpu() ->
     Mem = z80_cpu_mem:new(),
     MemReadFun = fun(ExtContext, _TState, Addr) ->
-        Byte = z80_cpu_mem:read_byte(ExtContext#ext_context.memory, Addr band 16#ffff),
-        {Byte, ExtContext}
+        z80_cpu_mem:read_byte(ExtContext#ext_context.memory, Addr band 16#ffff)
     end,
     MemWriteFun = fun(ExtContext, _TState, Addr, Byte) ->
         NewMem = z80_cpu_mem:write_byte(ExtContext#ext_context.memory, Addr band 16#ffff, Byte band 16#ff),

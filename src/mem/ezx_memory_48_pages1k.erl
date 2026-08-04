@@ -9,6 +9,7 @@
     new/1,
     read_byte/2,
     read_block/3,
+    read_video_block/1,
     write_byte/3
 ]).
 
@@ -18,6 +19,7 @@
 -define(PAGE_SIZE, 1024).
 -define(PAGE_BITS, 10).
 -define(NUM_PAGES, 64).
+-define(VIDEO_SIZE, (6144 + 768)).
 
 %% @doc Create a new 64KB memory state from a ROM binary.
 -spec new(binary()) -> state().
@@ -64,6 +66,11 @@ read_block_pages(Pages, Offset, Remaining, Acc) ->
     Take = min(Remaining, Available),
     <<_:PageOff/binary, Chunk:Take/binary, _/binary>> = Bin,
     read_block_pages(Pages, (Offset + Take) band 16#FFFF, Remaining - Take, <<Acc/binary, Chunk/binary>>).
+
+%% @doc Read the ULA display buffer (first ?VIDEO_SIZE bytes at 0x4000).
+%% The size is fixed, so no size argument is needed.
+-spec read_video_block(state()) -> binary().
+read_video_block(State) -> read_block(State, 16#4000, ?VIDEO_SIZE).
 
 %% @doc Write `Byte' to `Addr'. ROM area writes are ignored.
 -spec write_byte(state(), non_neg_integer(), byte()) -> state().

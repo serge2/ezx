@@ -74,14 +74,28 @@ fetch_word(State) ->
     {Hi, State2} = fetch_byte(State1),
     {?MAKE_PAIR(Hi, Lo), State2}.
 
+%% Memory reads are pure: the mem_read_fun returns just the byte (it cannot
+%% mutate the device context), so the cpu_state record is returned unchanged
+%% — no ext_context dirty-check and no record rebuild on the read path.
 read_byte(State = #cpu_state{mem_read_fun = ReadFun, ext_context = ExtContext, t_states = TState}, Address) ->
-    {Byte, ExtContext1} = ReadFun(ExtContext, TState, Address band 16#ffff),
-    {Byte, State#cpu_state{ext_context = ExtContext1}}.
+    Byte = ReadFun(ExtContext, TState, Address band 16#ffff),
+    {Byte, State}.
 
 
 write_byte(State = #cpu_state{mem_write_fun = WriteFun, ext_context = ExtContext, t_states = TState}, Address, Byte) ->
     ExtContext1 = WriteFun(ExtContext, TState, Address band 16#ffff, Byte band 16#ff),
-    State#cpu_state{ext_context = ExtContext1}.
+    maybe_update_ext_context(State, ExtContext, ExtContext1).
+
+%% Rebuild the #cpu_state{} record only when the device actually changed the
+%% ext_context (a memory read, or a write ignored by the device — e.g. into
+%% ROM — leave it untouched). The `=:=' comparison is O(1) when the terms are
+%% pointer-identical (the common read case), so this avoids allocating a new
+%% ~30-field record on every memory access.
+maybe_update_ext_context(State, ExtContext, ExtContext1) ->
+    case ExtContext1 =:= ExtContext of
+        true -> State;
+        false -> State#cpu_state{ext_context = ExtContext1}
+    end.
 
 read_word(State, Address) ->
     {Lo, State1} = read_byte(State, Address),

@@ -40,7 +40,7 @@ parse_48k_sna_with_trailing_garbage_test() ->
 
 load_128k_sna_verify_banks_test() ->
     Rom = binary:copy(<<0>>, 16384),
-    MemMod = ezx_memory_128,
+    MemMod = ezx_memory_128_banks_tuples,
     Mem0 = MemMod:new(Rom, Rom),
 
     Bank5 = lists:duplicate(16384, 16#05),
@@ -82,7 +82,7 @@ load_128k_sna_verify_banks_test() ->
 load_128k_sna_screen_bank7_test() ->
     Rom0 = <<0:16384/unit:8>>,
     Rom1 = binary:copy(<<16#22>>, 16384),
-    MemMod = ezx_memory_128,
+    MemMod = ezx_memory_128_banks_tuples,
     Mem0 = MemMod:new(Rom0, Rom1),
 
     %% p7FFD = 0x1B: ROM1 (bit 4), display bank 7 (bit 3), slot 3 = bank 3.
@@ -125,9 +125,9 @@ load_128k_sna_screen_bank7_test() ->
     ?assertEqual(16#02, MemMod:read_byte(Mem1, 16#8000)),
     ?assertEqual(16#03, MemMod:read_byte(Mem1, 16#C000)),
     %% The ULA display reads bank 7 (loaded from the extra pages).
-    VB = MemMod:read_video_block(Mem1, 16384),
+    VB = MemMod:read_video_block(Mem1),
     ?assertEqual(16#07, binary:at(VB, 0)),
-    ?assertEqual(16#07, binary:at(VB, 16#3FFF)),
+    ?assertEqual(16#07, binary:at(VB, 16#1AFF)),
     %% Paging bank 7 into slot 3 reveals the same data.
     Mem2 = MemMod:write_port_7ffd(Mem1, 16#07),
     ?assertEqual(16#07, MemMod:read_byte(Mem2, 16#C000)),
@@ -138,7 +138,7 @@ load_128k_sna_screen_bank7_test() ->
     ok.
 
 load_128k_sna_slot3_bank2_six_extra_pages_test() ->
-    MemMod = ezx_memory_128,
+    MemMod = ezx_memory_128_banks_tuples,
     Rom = binary:copy(<<0>>, 16384),
     Mem0 = MemMod:new(Rom, Rom),
 
@@ -201,7 +201,7 @@ load_128k_sna_on_48k_emulator_rejected_test() ->
     ok.
 
 load_48k_sna_on_128k_keeps_initial_paging_test() ->
-    MemMod = ezx_memory_128,
+    MemMod = ezx_memory_128_banks_tuples,
     Rom0 = binary:copy(<<16#00>>, 16384),
     Rom1 = binary:copy(<<16#C3>>, 16384),
     Mem0 = MemMod:new(Rom0, Rom1),
@@ -232,7 +232,7 @@ load_48k_sna_on_128k_keeps_initial_paging_test() ->
 %% --- Z80 tests ---
 
 load_48k_z80_on_128k_keeps_initial_paging_test() ->
-    MemMod = ezx_memory_128,
+    MemMod = ezx_memory_128_banks_tuples,
     Rom0 = binary:copy(<<16#00>>, 16384),
     Rom1 = binary:copy(<<16#C3>>, 16384),
     Mem0 = MemMod:new(Rom0, Rom1),
@@ -264,7 +264,7 @@ load_48k_z80_on_128k_keeps_initial_paging_test() ->
     ok.
 
 load_48k_z80_on_128k_places_dump_correctly_test() ->
-    MemMod = ezx_memory_128,
+    MemMod = ezx_memory_128_banks_tuples,
     Rom0 = binary:copy(<<16#00>>, 16384),
     Rom1 = binary:copy(<<16#C3>>, 16384),
     Mem0 = MemMod:new(Rom0, Rom1),

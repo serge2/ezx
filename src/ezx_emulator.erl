@@ -654,11 +654,12 @@ render_frame_now(Machine) ->
     Changes = Machine#machine_state.screen_changes,
     CB = Machine#machine_state.screen_color,
     Mem = Machine#machine_state.memory,
-    %% 128K memory modules export read_video_block/2, which returns the bank
-    %% selected for the display by p7FFD bit 3 (bank 5 or 7). 48K modules have
-    %% no paging, so the CPU view of 0x4000 is the video memory itself.
-    Videobuffer = case erlang:function_exported(MemModule, read_video_block, 2) of
-        true -> MemModule:read_video_block(Mem, 6144 + 768);
+    %% 128K memory modules export read_video_block/1, which returns the first
+    %% ?VIDEO_SIZE bytes of the bank selected for the display by p7FFD bit 3
+    %% (bank 5 or 7). 48K modules have no paging, so the CPU view of 0x4000
+    %% is the video memory itself.
+    Videobuffer = case erlang:function_exported(MemModule, read_video_block, 1) of
+        true -> MemModule:read_video_block(Mem);
         false -> MemModule:read_block(Mem, 16384, 6144 + 768)
     end,
     Model = Machine#machine_state.model,
@@ -700,12 +701,17 @@ run_until_tstates(Machine, Target) ->
 %% matching state field undefined and the handler declines with nomatch,
 %% falling through to the 0xFF read / ignore-write default.
 
-%% CPU memory access.
-read_memory(#ext_context{memory = Memory, memory_module = MemModule} = ExtContext, _TState, Addr) ->
-    {MemModule:read_byte(Memory, Addr), ExtContext}.
+%% CPU memory access. Memory reads are pure (they never mutate the device
+%% context), so the handler returns just the byte — no {Byte, ExtContext}
+%% round trip on the read path.
+read_memory(#ext_context{memory = Memory, memory_module = MemModule}, _TState, Addr) ->
+    MemModule:read_byte(Memory, Addr).
 
 write_memory(#ext_context{memory = Memory, memory_module = MemModule} = ExtContext, _TState, Addr, Byte) ->
-    ExtContext#ext_context{memory = MemModule:write_byte(Memory, Addr, Byte)}.
+    case MemModule:write_byte(Memory, Addr, Byte) of
+        Memory -> ExtContext;
+        Memory1 -> ExtContext#ext_context{memory = Memory1}
+    end.
 
 %% Keyboard read row (A0=0): the port low byte selects the half-row, the
 %% high byte is the (unused) "menu" bits; unused rows read as 1.
