@@ -416,11 +416,18 @@ write_word(Machine, Addr, Word) ->
 
 
 %% @doc Execute one machine step by advancing the CPU once and updating machine time.
+%% LD-BYTES entries: 0x0556 is the main ROM entry (used by LOAD "" and most
+%% loaders); 0x0563 is the continuation entry right after the flag-setup
+%% prologue that speedloaders jump to with IX/DE already prepared (e.g. the
+%% 128K Robin of the Wood loader pages the target bank, replicates the
+%% INC D; EX AF,AF'; DEC D; DI prologue, then JP 0x0563).  Intercepting both
+%% lets the trap feed the TAP blocks to either kind of loader.
 -spec step(#machine_state{}) -> #machine_state{}.
 step(#machine_state{t_states = MachineTStates, tape_blocks = [_ | _]} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
     case Cpu0#cpu_state.pc of
         16#0556 -> tape_trap(Machine, MachineTStates);
+        16#0563 -> tape_trap(Machine, MachineTStates);
         _ -> step_normal(Machine)
     end;
 step(Machine) ->

@@ -546,6 +546,72 @@ load_tap_empty_binary_test() ->
     Machine = init_machine(),
     {ok, _Machine1} = ezx_emulator:load_tap(Machine, <<>>).
 
+%% --- Tape trap entries ---
+%%
+%% LD-BYTES is trapped at two PC entries: 0x0556 (main ROM entry used by
+%% LOAD "" and most loaders) and 0x0563 (the continuation entry right after
+%% the flag-setup prologue).  Speedloaders such as the 128K Robin of the Wood
+%% loader prepare IX/DE themselves, replicate the prologue, then JP 0x0563;
+%% without the second entry the trap never fires and the loader spins in the
+%% ROM EAR-polling loop.
+
+tape_trap_main_entry_test() ->
+    Machine0 = init_machine(),
+    Payload = <<1, 2, 3, 4, 5>>,
+    {ok, Machine1} = ezx_emulator:load_tap(Machine0, build_tap([Payload])),
+    Dest = 16#8000,
+    Machine2 = set_pc(set_ix_de(Machine1, Dest, byte_size(Payload)), 16#0556),
+    Machine3 = ezx_emulator:step(Machine2),
+    assert_trap_result(Machine3, Dest, Payload).
+
+tape_trap_continuation_entry_test() ->
+    Machine0 = init_machine(),
+    Payload = <<16#AA, 16#BB, 16#CC, 16#DD>>,
+    {ok, Machine1} = ezx_emulator:load_tap(Machine0, build_tap([Payload])),
+    Dest = 16#8000,
+    Machine2 = set_pc(set_ix_de(Machine1, Dest, byte_size(Payload)), 16#0563),
+    Machine3 = ezx_emulator:step(Machine2),
+    assert_trap_result(Machine3, Dest, Payload).
+
+tape_trap_short_block_test() ->
+    %% A speedloader may ask for more bytes than the TAP block holds
+    %% (e.g. a data block that does not fill the requested length); the
+    %% trap must write what is available and not crash.
+    Machine0 = init_machine(),
+    Payload = <<7, 8, 9>>,
+    {ok, Machine1} = ezx_emulator:load_tap(Machine0, build_tap([Payload])),
+    Dest = 16#8000,
+    Machine2 = set_pc(set_ix_de(Machine1, Dest, 100), 16#0563),
+    Machine3 = ezx_emulator:step(Machine2),
+    assert_trap_result(Machine3, Dest, Payload).
+
+set_ix_de(#machine_state{cpu = Cpu} = Machine, IX, DE) ->
+    Cpu1 = Cpu#cpu_state{
+        ixh = (IX bsr 8) band 16#FF,
+        ixl = IX band 16#FF,
+        d = (DE bsr 8) band 16#FF,
+        e = DE band 16#FF
+    },
+    Machine#machine_state{cpu = Cpu1}.
+
+assert_trap_result(Machine, Dest, Payload) ->
+    Cpu = Machine#machine_state.cpu,
+    ?assertEqual(16#05E2, z80_cpu:pc(Cpu)),
+    ?assertEqual([], Machine#machine_state.tape_blocks),
+    ?assertEqual(0, z80_cpu:get_reg_byte(d, Cpu)),
+    ?assertEqual(0, z80_cpu:get_reg_byte(e, Cpu)),
+    ?assertEqual(1, Cpu#cpu_state.f),  % carry set = success
+    Bytes = [begin {B, _} = ezx_emulator:read_byte(Machine, Addr), B end
+            || Addr <- lists:seq(Dest, Dest + byte_size(Payload) - 1)],
+    ?assertEqual(binary:bin_to_list(Payload), Bytes).
+
+build_tap(Payloads) ->
+    iolist_to_binary([begin
+        Body = <<16#FF, P/binary>>,
+        Checksum = lists:foldl(fun(B, Acc) -> Acc bxor B end, 16#FF, binary:bin_to_list(P)),
+        <<(byte_size(Body) + 1):16/little, Body/binary, Checksum>>
+    end || P <- Payloads]).
+
 %% --- Helpers ---
 
 build_v1_header(PC, Flags) ->
