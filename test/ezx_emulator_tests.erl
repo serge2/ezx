@@ -350,6 +350,27 @@ init_machine_128() ->
     {ok, Rom} = file:read_file(RomPath),
     ezx_emulator_128:init(?SPECTRUM_128_MODEL, z80_cpu, ezx_memory_128_banks_tuples, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom, Rom}).
 
+%% --- AY chip selection plumbing ---
+
+ay_chip_from_model_test_() ->
+    %% The sound chip is taken from the machine model's ay_chip field and
+    %% passed to the AY module at init; the module reports it back via chip/1.
+    [init_machine(Chip) || Chip <- [ay, ym]].
+init_machine(Chip) ->
+    fun() ->
+        RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
+        catch error:badarg ->
+            BeamDir = filename:dirname(code:which(?MODULE)),
+            filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
+        end,
+        {ok, Rom} = file:read_file(RomPath),
+        BaseModel = ?SPECTRUM_48_MODEL,
+        Model = BaseModel#machine_model{ay_chip = Chip},
+        Machine = ezx_emulator:init(Model, z80_cpu, ezx_memory_48_pages512_tuples,
+                                    ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, Rom),
+        ?assertEqual(Chip, ezx_ay38912_seg:chip(Machine#machine_state.ay))
+    end.
+
 load_program(Machine, Program) when is_map(Program) ->
     maps:fold(fun(Addr, Byte, M) ->
         ezx_emulator:write_byte(M, Addr, Byte)

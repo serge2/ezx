@@ -2,30 +2,40 @@
 
 -include("ezx_emulator.hrl").
 
--export([init_virtual_machine/1, load_emulator_file/3]).
+-export([init_virtual_machine/1, init_virtual_machine/2, load_emulator_file/3, load_emulator_file/4]).
 
 -spec init_virtual_machine(atom()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
-init_virtual_machine('128k') ->
+init_virtual_machine(MachineType) ->
+    init_virtual_machine(MachineType, ay).
+
+%% @doc Create a fresh machine of the given type using the configured sound
+%% chip ('ay' AY-3-8912 or 'ym' YM2149).
+-spec init_virtual_machine(atom(), ay | ym) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
+init_virtual_machine('128k', Chip) ->
     case catch read_roms("128-0.rom", "128-1.rom") of
         {Rom0, Rom1} when byte_size(Rom0) =:= 16384, byte_size(Rom1) =:= 16384 ->
-            M = ezx_emulator_128:init(?SPECTRUM_128_MODEL, z80_cpu, ezx_memory_128_banks_tuples, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom0, Rom1}),
+            BaseModel = ?SPECTRUM_128_MODEL,
+            Model = BaseModel#machine_model{ay_chip = Chip},
+            M = ezx_emulator_128:init(Model, z80_cpu, ezx_memory_128_banks_tuples, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom0, Rom1}),
             {ok, ezx_emulator:set_render_screen(M, true)};
         {'EXIT', _} ->
             {error, {rom_not_found, <<"128K ROMs not found (128-0.rom, 128-1.rom)">>}};
         _ ->
             {error, {rom_bad_size, <<"128K ROMs must be exactly 16384 bytes each">>}}
     end;
-init_virtual_machine('48k') ->
+init_virtual_machine('48k', Chip) ->
     case catch read_rom("48.rom") of
         Rom when byte_size(Rom) =:= 16384 ->
-            M = ezx_emulator:init(?SPECTRUM_48_MODEL, z80_cpu, ezx_memory_48_pages512_tuples, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, Rom),
+            BaseModel = ?SPECTRUM_48_MODEL,
+            Model = BaseModel#machine_model{ay_chip = Chip},
+            M = ezx_emulator:init(Model, z80_cpu, ezx_memory_48_pages512_tuples, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, Rom),
             {ok, ezx_emulator:set_render_screen(M, true)};
         {'EXIT', _} ->
             {error, {rom_not_found, <<"48K ROM not found (48.rom)">>}};
         _ ->
             {error, {rom_bad_size, <<"48K ROM must be exactly 16384 bytes">>}}
     end;
-init_virtual_machine(Bad) ->
+init_virtual_machine(Bad, _Chip) ->
     {error, {bad_machine_type, iolist_to_binary(io_lib:format("~p", [Bad]))}}.
 
 read_rom(File) ->
@@ -48,28 +58,32 @@ priv_dir() ->
     end.
 
 -spec load_emulator_file(#machine_state{}, string(), atom()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
-load_emulator_file(_Machine, FilePath, MachineType) ->
+load_emulator_file(Machine, FilePath, MachineType) ->
+    load_emulator_file(Machine, FilePath, MachineType, ay).
+
+-spec load_emulator_file(#machine_state{}, string(), atom(), ay | ym) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
+load_emulator_file(_Machine, FilePath, MachineType, Chip) ->
     Mod = emulator_module(MachineType),
     case file:read_file(FilePath) of
         {ok, Data} ->
             Ext = string:lowercase(filename:extension(FilePath)),
             case Ext of
                 ".sna" ->
-                    case init_virtual_machine(MachineType) of
+                    case init_virtual_machine(MachineType, Chip) of
                         {ok, Machine0} ->
                             Mod:load_sna(Machine0, Data);
                         Error ->
                             Error
                     end;
                 ".z80" ->
-                    case init_virtual_machine(MachineType) of
+                    case init_virtual_machine(MachineType, Chip) of
                         {ok, Machine0} ->
                             Mod:load_z80(Machine0, Data);
                         Error ->
                             Error
                     end;
                 ".tap" ->
-                    case init_virtual_machine(MachineType) of
+                    case init_virtual_machine(MachineType, Chip) of
                         {ok, Machine0} ->
                             Mod:load_tap(Machine0, Data);
                         Error ->

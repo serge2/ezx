@@ -12,7 +12,8 @@
     tstates_per_frame :: pos_integer(),  %% video frame length in T-states
     tstates_per_line :: pos_integer(),   %% horizontal scanline length in T-states
     int_tstate :: non_neg_integer(),     %% interrupt raised this many T-states into the frame
-    ay_prescale :: pos_integer()         %% AY clock = CPU clock / ay_prescale
+    ay_prescale :: pos_integer(),        %% AY clock = CPU clock / ay_prescale
+    ay_chip = ay :: ay | ym              %% sound chip: AY-3-8912 ('ay') or YM2149 ('ym')
 }).
 
 %% Real hardware: 48K = 3.5 MHz, 224 T-states/line × 312 lines = 69888/frame

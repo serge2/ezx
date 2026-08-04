@@ -2,7 +2,7 @@
 
 -include_lib("wx/include/wx.hrl").
 
--export([open/4, stereo_pans/1, stereo_mode_from_index/1]).
+-export([open/4, open/5, stereo_pans/1, stereo_mode_from_index/1, chip_from_index/1]).
 
 %% @doc Open the modeless "Sound Settings" dialog parented on Frame.
 %% Returns refs as {Dialog, {BeeperSlider, AySlider, ModeChoice}} so the
@@ -10,6 +10,13 @@
 -spec open(wxFrame:wxFrame(), 0..100, 0..100, acb | abc | mono) ->
     {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice()}}.
 open(Frame, BeeperVol, AyVol, Mode) ->
+    open(Frame, BeeperVol, AyVol, Mode, ay).
+
+%% @doc Open the "Sound Settings" dialog, including the sound chip
+%% (AY-3-8912 vs YM2149) selection.
+-spec open(wxFrame:wxFrame(), 0..100, 0..100, acb | abc | mono, ay | ym) ->
+    {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice(), wxChoice:wxChoice()}}.
+open(Frame, BeeperVol, AyVol, Mode, Chip) ->
     Dialog = wxDialog:new(Frame, -1, "Sound Settings", [{style, ?wxDEFAULT_DIALOG_STYLE}]),
     MainSizer = wxBoxSizer:new(?wxVERTICAL),
 
@@ -27,6 +34,10 @@ open(Frame, BeeperVol, AyVol, Mode) ->
     ModeChoice = wxChoice:new(Dialog, -1, [{choices, ["ACB (Spectrum 128K)", "ABC", "Mono"]}]),
     wxChoice:setSelection(ModeChoice, stereo_mode_index(Mode)),
     wxStaticBoxSizer:add(AySizer, ModeChoice, [{flag, ?wxEXPAND bor ?wxLEFT bor ?wxRIGHT bor ?wxBOTTOM}, {border, 5}]),
+    wxStaticBoxSizer:add(AySizer, wxStaticText:new(Dialog, -1, "Chip"), [{flag, ?wxALL}, {border, 5}]),
+    ChipChoice = wxChoice:new(Dialog, -1, [{choices, ["AY-3-8912", "YM2149"]}]),
+    wxChoice:setSelection(ChipChoice, chip_index(Chip)),
+    wxStaticBoxSizer:add(AySizer, ChipChoice, [{flag, ?wxEXPAND bor ?wxLEFT bor ?wxRIGHT bor ?wxBOTTOM}, {border, 5}]),
     wxSizer:add(MainSizer, AySizer, [{flag, ?wxEXPAND bor ?wxALL}, {border, 10}]),
 
     BtnSizer = wxDialog:createStdDialogButtonSizer(Dialog, ?wxOK bor ?wxCANCEL),
@@ -40,7 +51,7 @@ open(Frame, BeeperVol, AyVol, Mode) ->
     wxDialog:connect(Dialog, close_window),
 
     wxDialog:show(Dialog),
-    {Dialog, {BeeperSlider, AySlider, ModeChoice}}.
+    {Dialog, {BeeperSlider, AySlider, ModeChoice, ChipChoice}}.
 
 %% @doc Stereo pan for each AY channel in the given mixing mode.
 %% Naming matches Fuse: "ACB" = A left, C centre, B right; "ABC" =
@@ -61,3 +72,13 @@ stereo_mode_index(mono) -> 2.
 stereo_mode_from_index(0) -> acb;
 stereo_mode_from_index(1) -> abc;
 stereo_mode_from_index(2) -> mono.
+
+%% @doc Choice widget index for a sound chip.
+-spec chip_index(ay | ym) -> 0..1.
+chip_index(ay) -> 0;
+chip_index(ym) -> 1.
+
+%% @doc Sound chip for a choice widget index (0..1).
+-spec chip_from_index(0..1) -> ay | ym.
+chip_from_index(0) -> ay;
+chip_from_index(1) -> ym.

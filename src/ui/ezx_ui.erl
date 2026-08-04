@@ -49,8 +49,9 @@
     beeper_vol = 100 :: 0..100,
     ay_master_vol = 100 :: 0..100,
     ay_stereo_mode = acb :: acb | abc | mono,
+    ay_chip = ay :: ay | ym,
     audio_filter = undefined :: ezx_audio_filter:state() | undefined,
-    sound_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice()}} | undefined,
+    sound_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice(), wxChoice:wxChoice()}} | undefined,
     mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}} | undefined,
     file_dialog_refs = undefined :: {wxFileDialog:wxFileDialog(), undefined} | undefined,
     blank_cursor = undefined :: wxCursor:wxCursor() | undefined,
@@ -158,6 +159,7 @@ init(_Options) ->
     BeeperVol = maps:get(beeper_vol, Cfg0, 100),
     AyVol = maps:get(ay_master_vol, Cfg0, 100),
     Mode = maps:get(ay_stereo_mode, Cfg0, acb),
+    AyChip = maps:get(ay_chip, Cfg0, ay),
     State0 = #state{
         machine = undefined,
         machine_type = MachineType,
@@ -172,6 +174,7 @@ init(_Options) ->
         beeper_vol = BeeperVol,
         ay_master_vol = AyVol,
         ay_stereo_mode = Mode,
+        ay_chip = AyChip,
         audio_filter = ezx_audio_filter:new(),
         aplay_port = AplayPort,
         audio_pacing = undefined,
@@ -180,7 +183,7 @@ init(_Options) ->
         recent_files = RecentFiles0,
         mouse = Mouse
     },
-    case ezx_ui_lib:init_virtual_machine(MachineType) of
+    case ezx_ui_lib:init_virtual_machine(MachineType, AyChip) of
         {ok, Machine} ->
             Machine1 = ezx_ui_mouse:apply_to_machine(Mouse, Machine),
             erlang:send_after(0, self(), frame_tick),
@@ -417,7 +420,8 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
     case Idx =< length(RecentFiles) of
         true ->
             File = lists:nth(Idx, RecentFiles),
-            case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type) of
+            case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type,
+                                               State#state.ay_chip) of
                 {ok, NewMachine} ->
                     io:format("Loaded: ~s~n", [File]),
                     NewMachine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, NewMachine),
@@ -527,21 +531,30 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
     end;
 
 handle_info(#wx{id = ?MENU_SETTINGS_SOUND, event = #wxCommand{type = command_menu_selected}},
-            #state{frame = Frame, beeper_vol = BV, ay_master_vol = AV, ay_stereo_mode = Mode} = State) ->
-    Refs = ezx_sound_dialog:open(Frame, BV, AV, Mode),
+            #state{frame = Frame, beeper_vol = BV, ay_master_vol = AV,
+                   ay_stereo_mode = Mode, ay_chip = Chip} = State) ->
+    Refs = ezx_sound_dialog:open(Frame, BV, AV, Mode, Chip),
     {noreply, State#state{sound_dialog_refs = Refs}};
 
 handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
-            #state{sound_dialog_refs = {Dialog, {BeeperSlider, AySlider, ModeChoice}}} = State) ->
+            #state{sound_dialog_refs = {Dialog, {BeeperSlider, AySlider, ModeChoice, ChipChoice}}} = State) ->
     BV = wxSlider:getValue(BeeperSlider),
     AV = wxSlider:getValue(AySlider),
     Mode = ezx_sound_dialog:stereo_mode_from_index(wxChoice:getSelection(ModeChoice)),
+    Chip = ezx_sound_dialog:chip_from_index(wxChoice:getSelection(ChipChoice)),
     wxDialog:destroy(Dialog),
     wxWindow:update(State#state.frame),
     NewState = State#state{beeper_vol = BV, ay_master_vol = AV, ay_stereo_mode = Mode,
-                           sound_dialog_refs = undefined},
+                           ay_chip = Chip, sound_dialog_refs = undefined},
     save_config(NewState),
-    {noreply, NewState};
+    case Chip =:= State#state.ay_chip of
+        true ->
+            {noreply, NewState};
+        false ->
+            %% The chip is baked into the AY device state at machine init, so
+            %% switching it requires a fresh machine (like a reset).
+            recreate_machine(NewState)
+    end;
 
 handle_info(#wx{id = ?wxID_CANCEL, event = #wxCommand{type = command_button_clicked}},
             #state{sound_dialog_refs = {Dialog, _}} = State) ->
@@ -552,7 +565,8 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
             #state{file_dialog_refs = {Dialog, _}} = State) ->
     File = wxFileDialog:getPath(Dialog),
     wxFileDialog:destroy(Dialog),
-    case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type) of
+    case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type,
+                                       State#state.ay_chip) of
         {ok, NewMachine} ->
             io:format("Loaded: ~s~n", [File]),
             NewMachine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, NewMachine),
@@ -577,7 +591,7 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
     NewType = machine_type_from_offset(Id - ?MENU_MACHINE_BASE),
     case NewType =/= OldType of
         true ->
-            case ezx_ui_lib:init_virtual_machine(NewType) of
+            case ezx_ui_lib:init_virtual_machine(NewType, State#state.ay_chip) of
                 {ok, Machine} ->
                     MenuBar = State#state.menu_bar,
                     Now = erlang:monotonic_time(microsecond),
@@ -633,7 +647,12 @@ toggle_pause(State) ->
     State#state{paused = Paused}.
 
 do_reset(State) ->
-    case ezx_ui_lib:init_virtual_machine(State#state.machine_type) of
+    recreate_machine(State).
+
+%% @doc Recreate the machine from scratch (used by reset and by the sound
+%% dialog when the chip changes), keeping the UI audio settings.
+recreate_machine(State) ->
+    case ezx_ui_lib:init_virtual_machine(State#state.machine_type, State#state.ay_chip) of
         {ok, Machine} ->
             Machine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, Machine),
             Now = erlang:monotonic_time(microsecond),
@@ -803,11 +822,13 @@ draw_frame(State, RGB) ->
 
 
 save_config(#state{machine_type = MType, option_crop_border = Crop, option_integer_scaling = Exact,
-                   muted = Muted, scale = Scale, beeper_vol = BV, ay_master_vol = AV, ay_stereo_mode = Mode,
+                   muted = Muted, scale = Scale, beeper_vol = BV, ay_master_vol = AV,
+                   ay_stereo_mode = Mode, ay_chip = Chip,
                    perf_report = PerfReport, mouse = Mouse}) ->
     ezx_config:save(#{machine_type => MType, crop_border => Crop, integer_scaling => Exact,
                        muted => Muted, scale => Scale,
                        beeper_vol => BV, ay_master_vol => AV, ay_stereo_mode => Mode,
+                       ay_chip => Chip,
                        perf_report => PerfReport,
                        kempston_mouse => ezx_ui_mouse:enabled(Mouse),
                        mouse_swap_buttons => ezx_ui_mouse:swap_buttons(Mouse)}).

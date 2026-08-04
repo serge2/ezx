@@ -12,8 +12,8 @@
 %% Three independent tone channels (A, B, C), each with:
 %%   - a square-wave tone generator (12-bit period, register pair per channel)
 %%   - a noise mixer (global 5-bit noise period, 17-bit right-shifting LFSR:
-%%     feedback = bit0 XOR bit3, output = bit0 — matches MAME ay8910.cpp,
-%%     verified on AY-3-8910 and YM2149 chips)
+%%     feedback = bit0 XOR bit3, output = bit0 — verified on AY-3-8910 and
+%%     YM2149 chips)
 %%   - amplitude control: fixed 4-bit level or envelope follower (per channel)
 %%
 %% Shared global envelope generator with 16 shapes (R13 = %CAHx):
@@ -56,6 +56,18 @@
 %%   13   — Envelope shape         (%CAHx, see table above)
 %%   14,15 — I/O ports A, B        (not emulated)
 %%
+%% Chip variants: new/1 selects the AY-3-8912 ('ay', default) or the
+%% pin-compatible YM2149 ('ym').  Besides the envelope differences (5-bit
+%% counter, 32 levels, half the step interval — see env_max/1 and
+%% env_period/2) and the different DAC curve, unused bits in a register
+%% read back as 0 on the AY but as written on the YM.  That is the basis
+%% of the software AY-vs-YM detection trick (write 31 to the 4-bit coarse
+%% tone register 1, read back: 15 = AY, 31 = YM) used by demos like Action.
+%% The YM2149 also checks the programmed code in the latch byte (DA7-DA4
+%% must be 0000): latching 0x10+ deactivates the chip until the next valid
+%% latch, so reads return 0xFF (Action uses latch 0x10 + read for its
+%% second detection branch: 0xFF = YM, non-0xFF = AY).
+%%
 %% Output: render_channels/3 returns 3 separate mono PCM binaries (S16LE,
 %% -4096..+4096), one per channel. The caller (UI) handles stereo panning,
 %% per-channel volume, and mixing with the beeper.
@@ -66,7 +78,7 @@
 %%   - 0xFFFD: read data from latched register (read/1)
 %% =============================================================================
 
--export([new/0, latch/2, write/3, read/1, render_channels/3, frame_start/2]).
+-export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, frame_start/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -86,8 +98,7 @@
 -define(REG_IO_B,           15).
 
 %% AY clock divider: the chip runs at CPU / 2 (~1.77 MHz vs CPU ~3.55 MHz).
-%% Internally (matching Fuse sound.c and MAME ay8910.cpp, both verified
-%% against real hardware):
+%% Internally (verified against real hardware):
 %%   - the tone counters tick once per 8 AY clocks (16 CPU T-states) and the
 %%     square-wave output toggles after (register_value + 1) ticks, giving a
 %%     half period of (reg + 1) * 16 CPU T-states (the classic AY tuning);
@@ -98,9 +109,11 @@
 -define(TSTATES_PER_AY_SLOW_CLOCK, 32).
 
 -record(ay_state, {
+    chip :: ay | ym,
     regs :: {byte(),byte(),byte(),byte(),byte(),byte(),byte(),byte(),
              byte(),byte(),byte(),byte(),byte(),byte(),byte(),byte()},
     latch :: byte(),
+    active :: boolean(),
     tone_phase_a :: non_neg_integer(),
     tone_phase_b :: non_neg_integer(),
     tone_phase_c :: non_neg_integer(),
@@ -118,9 +131,19 @@
 %% @doc Create a new AY-3-8912 state with all registers reset to 0.
 -spec new() -> state().
 new() ->
+    new(ay).
+
+%% @doc Create a new sound generator state with all registers reset to 0.
+%% The chip is either the General Instrument AY-3-8912 ('ay', the default,
+%% used in the ZX Spectrum 128) or the pin-compatible Yamaha YM2149 ('ym').
+%% See the module header for the behavioural differences between the two.
+-spec new(ay | ym) -> state().
+new(Chip) when Chip =:= ay; Chip =:= ym ->
     #ay_state{
+        chip = Chip,
         regs = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
         latch = 0,
+        active = true,
         tone_phase_a = 0,
         tone_phase_b = 0,
         tone_phase_c = 0,
@@ -132,16 +155,36 @@ new() ->
         env_hold = false
     }.
 
-%% @doc Select a register for subsequent write/read (latch = Reg & 0x0F).
+%% @doc Select a register for subsequent write/read.  On the AY-3-8912 the
+%% register is selected by the low nibble only (latch = Reg & 0x0F).  The
+%% YM2149 additionally checks the programmed code in DA7-DA4 (must be 0000,
+%% together with A9/A8): latching a byte with the upper nibble set to
+%% anything else drives the data bus high-impedance and deactivates the chip
+%% until the next valid latch — reads then return 0xFF and writes are
+%% ignored.  This is what demos like Action use to tell the chips apart
+%% (latch 0x10, read: 0xFF = YM, non-0xFF = AY).
 -spec latch(state(), byte()) -> state().
-latch(#ay_state{} = AY, Reg) ->
-    AY#ay_state{latch = Reg band 16#0F}.
+latch(#ay_state{chip = ay} = AY, Reg) ->
+    AY#ay_state{latch = Reg band 16#0F};
+latch(#ay_state{chip = ym} = AY, Reg) ->
+    case Reg band 16#F0 of
+        0 -> AY#ay_state{active = true, latch = Reg band 16#0F};
+        _ -> AY#ay_state{active = false}
+    end.
+
+%% @doc The chip variant this state was created for ('ay' or 'ym').
+-spec chip(state()) -> ay | ym.
+chip(#ay_state{chip = Chip}) -> Chip.
 
 %% @doc Write data to the currently latched register.
 %% Special side-effects: writing noise period resets the LFSR;
 %% writing envelope shape resets the envelope generator.
+%% Writes are ignored while the chip is deactivated (YM with a bad
+%% programmed-code latch).
 -spec write(state(), byte(), non_neg_integer()) -> state().
-write(#ay_state{regs = Regs} = AY, Value, _TState) ->
+write(#ay_state{active = false} = AY, _Value, _TState) ->
+    AY;
+write(#ay_state{chip = Chip, regs = Regs} = AY, Value, _TState) ->
     Latch = AY#ay_state.latch,
     NRegs = setelement(Latch + 1, Regs, Value band 16#FF),
     AY1 = AY#ay_state{regs = NRegs},
@@ -150,7 +193,7 @@ write(#ay_state{regs = Regs} = AY, Value, _TState) ->
         ?REG_ENV_SHAPE    ->
             AY1#ay_state{
                 env_counter = 0,
-                env_pos  = case (Value band 16#04) of 0 -> 15; _ -> 0 end,
+                env_pos  = case (Value band 16#04) of 0 -> env_max(Chip); _ -> 0 end,
                 env_dir  = case (Value band 16#04) of 0 -> down; _ -> up end,
                 env_hold = false
             };
@@ -158,9 +201,31 @@ write(#ay_state{regs = Regs} = AY, Value, _TState) ->
     end.
 
 %% @doc Read the currently latched register value.
+%% Unused bits in a register read back as 0 on the AY-3-8912: only the
+%% bits the register implements are returned.  The YM2149 returns every
+%% bit as written.  This is what makes the software chip-detection trick
+%% work (write 31 to the 4-bit coarse tone register 1, read back: 15 = AY,
+%% 31 = YM).  While the chip is deactivated (YM, bad programmed-code latch)
+%% the bus is high-impedance, i.e. reads return 0xFF.
 -spec read(state()) -> byte().
-read(#ay_state{regs = Regs, latch = Latch}) ->
-    element(Latch + 1, Regs).
+read(#ay_state{active = false}) -> 16#FF;
+read(#ay_state{chip = Chip, regs = Regs, latch = Latch}) ->
+    element(Latch + 1, Regs) band mask_read(Chip, Latch).
+
+%% @doc Read-back mask for a register, per chip.  The AY-3-8910 mask table
+%% is (0xff,0x0f,0xff,0x0f,0xff,0x0f,0x1f,0xff,0x1f,0x1f,0x1f,0xff,0xff,
+%% 0x0f,0xff,0xff); the YM2149 has no mask (unused bits read as written).
+-spec mask_read(ay | ym, 0..15) -> byte().
+mask_read(ym, _Latch) -> 16#FF;
+mask_read(ay, ?REG_TONE_A_COARSE) -> 16#0F;
+mask_read(ay, ?REG_TONE_B_COARSE) -> 16#0F;
+mask_read(ay, ?REG_TONE_C_COARSE) -> 16#0F;
+mask_read(ay, ?REG_NOISE_PERIOD)  -> 16#1F;
+mask_read(ay, ?REG_AMPLITUDE_A)   -> 16#1F;
+mask_read(ay, ?REG_AMPLITUDE_B)   -> 16#1F;
+mask_read(ay, ?REG_AMPLITUDE_C)   -> 16#1F;
+mask_read(ay, ?REG_ENV_SHAPE)     -> 16#0F;
+mask_read(ay, _Latch) -> 16#FF.
 
 %% @doc Mark the start of a new frame at the given T-state counter.
 -spec frame_start(state(), non_neg_integer()) -> state().
@@ -194,16 +259,17 @@ render_channels(#ay_state{} = AY, FrameLen, Samples) ->
 render_samples(AY, 0, _Step, ChA, ChB, ChC) -> {ChA, ChB, ChC, AY};
 render_samples(AY, N, Step, ChA, ChB, ChC) ->
     {OutA, OutB, OutC, AY1} = render_step(AY, Step),
+    Chip = AY#ay_state.chip,
     render_samples(AY1, N - 1, Step,
-        <<ChA/binary, (pcm_scale(OutA)):16/little-signed>>,
-        <<ChB/binary, (pcm_scale(OutB)):16/little-signed>>,
-        <<ChC/binary, (pcm_scale(OutC)):16/little-signed>>).
+        <<ChA/binary, (pcm_scale(Chip, OutA)):16/little-signed>>,
+        <<ChB/binary, (pcm_scale(Chip, OutB)):16/little-signed>>,
+        <<ChC/binary, (pcm_scale(Chip, OutC)):16/little-signed>>).
 
--spec render_step(state(), non_neg_integer()) -> {0..15, 0..15, 0..15, state()}.
-render_step(#ay_state{regs = Regs} = AY, TStates) ->
-    PerA = tone_period(Regs),
-    PerB = tone_period2(Regs),
-    PerC = tone_period3(Regs),
+-spec render_step(state(), non_neg_integer()) -> {0..31, 0..31, 0..31, state()}.
+render_step(#ay_state{regs = Regs, chip = Chip} = AY, TStates) ->
+    PerA = tone_period(Regs, ?REG_TONE_A_FINE, ?REG_TONE_A_COARSE),
+    PerB = tone_period(Regs, ?REG_TONE_B_FINE, ?REG_TONE_B_COARSE),
+    PerC = tone_period(Regs, ?REG_TONE_C_FINE, ?REG_TONE_C_COARSE),
 
     {PA, OA} = tone_output(AY#ay_state.tone_phase_a, PerA, TStates),
     {PB, OB} = tone_output(AY#ay_state.tone_phase_b, PerB, TStates),
@@ -217,11 +283,11 @@ render_step(#ay_state{regs = Regs} = AY, TStates) ->
     LFSR1 = advance_lfsr(LFSR0, NSteps),
     Noise = LFSR1 band 1,
 
-    EPer = env_period(Regs),
+    EPer = env_period(Chip, Regs),
     ETotal = AY#ay_state.env_counter + TStates,
     ESteps = ETotal div EPer,
     ECounter = ETotal rem EPer,
-    {EPos, EDir, EHold} = advance_env(AY#ay_state.env_pos, AY#ay_state.env_dir,
+    {EPos, EDir, EHold} = advance_env(Chip, AY#ay_state.env_pos, AY#ay_state.env_dir,
                                        AY#ay_state.env_hold, Regs, ESteps),
 
     EnvLevel = EPos,
@@ -238,9 +304,9 @@ render_step(#ay_state{regs = Regs} = AY, TStates) ->
     MixB = (MuteToneB bor OB) band (MuteNoiseB bor Noise),
     MixC = (MuteToneC bor OC) band (MuteNoiseC bor Noise),
 
-    AmpA = amplitude(Regs, ?REG_AMPLITUDE_A, EnvLevel),
-    AmpB = amplitude(Regs, ?REG_AMPLITUDE_B, EnvLevel),
-    AmpC = amplitude(Regs, ?REG_AMPLITUDE_C, EnvLevel),
+    AmpA = amplitude(Chip, Regs, ?REG_AMPLITUDE_A, EnvLevel),
+    AmpB = amplitude(Chip, Regs, ?REG_AMPLITUDE_B, EnvLevel),
+    AmpC = amplitude(Chip, Regs, ?REG_AMPLITUDE_C, EnvLevel),
 
     OutA = MixA * AmpA,
     OutB = MixB * AmpB,
@@ -272,31 +338,61 @@ render_step(#ay_state{regs = Regs} = AY, TStates) ->
     8192
 }).
 
-%% @doc Scale a 4-bit sum (0-15) to a signed 16-bit PCM sample (-4096..+4096).
-%% The AY DAC is logarithmic (3 dB per level), not linear; this exponential
-%% curve is a close match to the measured AY-3-8910 output levels.
--spec pcm_scale(0..15) -> -4096..4096.
-pcm_scale(Sum) ->
-    element(Sum + 1, ?AY_VOLUME_LEVEL) - 4096.
+%% 32-level YM2149 DAC curve.  Measured YM2149 DAC resistance values
+%% converted to a 0..8192 scale; the YM's internal DAC has 5-bit resolution
+%% for the envelope (smoother sweeps than the AY's 16 steps) and a slightly
+%% different curve from the AY (cleaner but softer mid levels).
+-define(YM_VOLUME_LEVEL, {
+    0,
+    16,
+    39,
+    71,
+    89,
+    111,
+    131,
+    153,
+    185,
+    221,
+    255,
+    293,
+    351,
+    418,
+    483,
+    556,
+    667,
+    798,
+    927,
+    1073,
+    1288,
+    1541,
+    1788,
+    2068,
+    2501,
+    3004,
+    3512,
+    4079,
+    4982,
+    5989,
+    7067,
+    8192
+}).
+
+%% @doc Scale a DAC index to a signed 16-bit PCM sample (-4096..+4096).
+%% AY indexes are 0..15 (envelope and fixed volumes share the 16-step DAC);
+%% YM envelope indexes are 0..31 (5-bit envelope DAC).  The DAC is
+%% logarithmic (3 dB per level for the AY, measured curve for the YM).
+-spec pcm_scale(ay | ym, 0..31) -> -4096..4096.
+pcm_scale(ay, Index) -> element(Index + 1, ?AY_VOLUME_LEVEL) - 4096;
+pcm_scale(ym, Index) -> element(Index + 1, ?YM_VOLUME_LEVEL) - 4096.
 
 %% 12-bit tone period: (Coarse:Fine + 1) * 16 T-states.
 %% Output toggles every Period T-states, giving a square wave period of 2*Period.
--spec tone_period(tuple()) -> pos_integer().
-tone_period(Regs) ->
-    Fine = element(?REG_TONE_A_FINE + 1, Regs),
-    Coarse = element(?REG_TONE_A_COARSE + 1, Regs) band 16#0F,
-    (((Coarse bsl 8) bor Fine) + 1) * ?TSTATES_PER_AY_CLOCK.
-
--spec tone_period2(tuple()) -> pos_integer().
-tone_period2(Regs) ->
-    Fine = element(?REG_TONE_B_FINE + 1, Regs),
-    Coarse = element(?REG_TONE_B_COARSE + 1, Regs) band 16#0F,
-    (((Coarse bsl 8) bor Fine) + 1) * ?TSTATES_PER_AY_CLOCK.
-
--spec tone_period3(tuple()) -> pos_integer().
-tone_period3(Regs) ->
-    Fine = element(?REG_TONE_C_FINE + 1, Regs),
-    Coarse = element(?REG_TONE_C_COARSE + 1, Regs) band 16#0F,
+%% FineReg/CoarseReg select the channel's tone period register pair
+%% (channel A: 0/1, B: 2/3, C: 4/5).
+-spec tone_period(tuple(), 0..4, 1..5) -> pos_integer().
+tone_period(Regs, FineReg, CoarseReg) ->
+    Fine = element(FineReg + 1, Regs),
+    Coarse = element(CoarseReg + 1, Regs) band 16#0F,
     (((Coarse bsl 8) bor Fine) + 1) * ?TSTATES_PER_AY_CLOCK.
 
 %% @doc Noise LFSR step interval: the noise counter ticks once per 16 AY
@@ -310,13 +406,20 @@ noise_period(Regs) ->
         _ -> N * ?TSTATES_PER_AY_SLOW_CLOCK
     end.
 
--spec env_period(tuple()) -> pos_integer().
-env_period(Regs) ->
+-spec env_period(ay | ym, tuple()) -> pos_integer().
+env_period(ay, Regs) ->
+    env_period_1(Regs, ?TSTATES_PER_AY_SLOW_CLOCK);
+env_period(ym, Regs) ->
+    %% The YM2149 paces the envelope counter twice as fast as the AY:
+    %% each step interval is halved.
+    env_period_1(Regs, ?TSTATES_PER_AY_CLOCK).
+
+env_period_1(Regs, SlowClock) ->
     N = (element(?REG_ENV_PERIOD_COARSE + 1, Regs) bsl 8)
         bor element(?REG_ENV_PERIOD_FINE + 1, Regs),
     case N of
-        0 -> ?TSTATES_PER_AY_SLOW_CLOCK;
-        _ -> N * ?TSTATES_PER_AY_SLOW_CLOCK
+        0 -> SlowClock;
+        _ -> N * SlowClock
     end.
 
 -spec tone_output(non_neg_integer(), pos_integer(), non_neg_integer()) -> {non_neg_integer(), 0..1}.
@@ -329,7 +432,7 @@ tone_output(Phase, Period, TStates) ->
 %% @doc Advances the 17-bit Linear Feedback Shift Register (LFSR) by N steps.
 %% The AY noise generator is a right-shifting register with feedback
 %% Feedback = bit0 XOR bit3 inserted into the MSB (bit 16); bit 0 is the
-%% output (matches MAME ay8910.cpp, verified on AY-3-8910 and YM2149 chips).
+%% output (verified on AY-3-8910 and YM2149 chips).
 -spec advance_lfsr(non_neg_integer(), non_neg_integer()) -> non_neg_integer().
 advance_lfsr(LFSR, 0) ->
     LFSR band 16#1FFFF;
@@ -338,68 +441,82 @@ advance_lfsr(LFSR, N) ->
     LFSR1 = ((LFSR bsr 1) bor (Feedback bsl 16)) band 16#1FFFF,
     advance_lfsr(LFSR1, N - 1).
 
+%% @doc Top envelope position for a chip: 15 (4-bit counter) on the AY,
+%% 31 (5-bit counter) on the YM.
+-spec env_max(ay | ym) -> 15 | 31.
+env_max(ay) -> 15;
+env_max(ym) -> 31.
+
 %% @doc Advance the envelope position by Steps level-steps.
 %% Once holding, the position stays put (the old code reset it to 0 and the
 %% caller's EHold workaround decayed to silence after two render steps).
--spec advance_env(0..15, up | down, boolean(), tuple(), non_neg_integer()) ->
-    {0..15, up | down, boolean()}.
-advance_env(Pos, Dir, true, _Regs, _Steps) ->
+-spec advance_env(ay | ym, 0..31, up | down, boolean(), tuple(), non_neg_integer()) ->
+    {0..31, up | down, boolean()}.
+advance_env(_Chip, Pos, Dir, true, _Regs, _Steps) ->
     {Pos, Dir, true};
-advance_env(Pos, Dir, false, _Regs, 0) ->
+advance_env(_Chip, Pos, Dir, false, _Regs, 0) ->
     {Pos, Dir, false};
-advance_env(Pos, Dir, false, Regs, Steps) ->
+advance_env(Chip, Pos, Dir, false, Regs, Steps) ->
     Shape = element(?REG_ENV_SHAPE + 1, Regs),
     Cont = (Shape bsr 3) band 1,
     Att  = (Shape bsr 2) band 1,
     Alt  = (Shape bsr 1) band 1,
     Hold = Shape band 1,
-    step_loop(Pos, Dir, Steps, Cont, Att, Alt, Hold).
+    step_loop(Chip, Pos, Dir, Steps, Cont, Att, Alt, Hold).
 
 %% Step the envelope once; recurse until Steps is exhausted.
-step_loop(Pos, Dir, 0, _Cont, _Att, _Alt, _Hold) ->
+step_loop(_Chip, Pos, Dir, 0, _Cont, _Att, _Alt, _Hold) ->
     {Pos, Dir, false};
-step_loop(Pos, Dir, Steps, Cont, Att, Alt, Hold) ->
+step_loop(Chip, Pos, Dir, Steps, Cont, Att, Alt, Hold) ->
     NextPos = case Dir of
         up   -> Pos + 1;
         down -> Pos - 1
     end,
+    Top = env_max(Chip),
     if
-        NextPos >= 0, NextPos =< 15 ->
-            step_loop(NextPos, Dir, Steps - 1, Cont, Att, Alt, Hold);
+        NextPos >= 0, NextPos =< Top ->
+            step_loop(Chip, NextPos, Dir, Steps - 1, Cont, Att, Alt, Hold);
         true ->
-            {BoundaryPos, NewDir, IsHold} = env_boundary(Cont, Att, Alt, Hold, Dir),
+            {BoundaryPos, NewDir, IsHold} = env_boundary(Chip, Cont, Att, Alt, Hold, Dir),
             case IsHold of
                 true  -> {BoundaryPos, NewDir, true};
-                false -> step_loop(BoundaryPos, NewDir, Steps - 1, Cont, Att, Alt, Hold)
+                false -> step_loop(Chip, BoundaryPos, NewDir, Steps - 1, Cont, Att, Alt, Hold)
             end
     end.
 
-%% Envelope boundary handling (matches MAME ay8910.cpp and the canned shape
-%% tables of other emulators):
+%% Envelope boundary handling (canned shape behaviour):
 %%   - Cont=0: single cycle, then reset to 0000 and hold (datasheet text).
 %%   - Cont=1, Hold=1: freeze at the boundary; when Alt is also set the
 %%     counter is reset to its initial count before holding.
 %%   - Cont=1, Hold=0, Alt=0: repeating sawtooth (same direction).
 %%   - Cont=1, Hold=0, Alt=1: repeating triangle; the boundary value is held
 %%     one extra step before reversing, as on real hardware.
--spec env_boundary(0..1, 0..1, 0..1, 0..1, up | down) -> {0..15, up | down, boolean()}.
-env_boundary(0, _Att, _Alt, _Hold, _Dir) ->
+-spec env_boundary(ay | ym, 0..1, 0..1, 0..1, 0..1, up | down) ->
+    {0..31, up | down, boolean()}.
+env_boundary(_Chip, 0, _Att, _Alt, _Hold, _Dir) ->
     {0, down, true};
-env_boundary(1, 0, 1, 1, down) -> {15, up, true};
-env_boundary(1, 1, 1, 1, up)   -> {0, down, true};
-env_boundary(1, _Att, 0, 1, up)   -> {15, up, true};
-env_boundary(1, _Att, 0, 1, down) -> {0, down, true};
-env_boundary(1, _Att, 0, 0, up)   -> {0, up, false};
-env_boundary(1, _Att, 0, 0, down) -> {15, down, false};
-env_boundary(1, _Att, 1, 0, up)   -> {15, down, false};
-env_boundary(1, _Att, 1, 0, down) -> {0, up, false};
-env_boundary(_Cont, _Att, _Alt, _Hold, _Dir) ->
+env_boundary(Chip, 1, 0, 1, 1, down) -> {env_max(Chip), up, true};
+env_boundary(_Chip, 1, 1, 1, 1, up)   -> {0, down, true};
+env_boundary(Chip, 1, _Att, 0, 1, up)   -> {env_max(Chip), up, true};
+env_boundary(_Chip, 1, _Att, 0, 1, down) -> {0, down, true};
+env_boundary(_Chip, 1, _Att, 0, 0, up)   -> {0, up, false};
+env_boundary(Chip, 1, _Att, 0, 0, down) -> {env_max(Chip), down, false};
+env_boundary(Chip, 1, _Att, 1, 0, up)   -> {env_max(Chip), down, false};
+env_boundary(_Chip, 1, _Att, 1, 0, down) -> {0, up, false};
+env_boundary(_Chip, _Cont, _Att, _Alt, _Hold, _Dir) ->
     {0, down, true}.
 
--spec amplitude(tuple(), 8..10, 0..15) -> 0..15.
-amplitude(Regs, RegIdx, EnvLevel) ->
+%% @doc Amplitude DAC index for a channel: the fixed 4-bit volume (mapped to
+%% the even YM taps so volume 0 is silence) or the current envelope position.
+-spec amplitude(ay | ym, tuple(), 8..10, 0..31) -> 0..31.
+amplitude(ay, Regs, RegIdx, EnvLevel) ->
+    amplitude_1(Regs, RegIdx, EnvLevel, 0);
+amplitude(ym, Regs, RegIdx, EnvLevel) ->
+    amplitude_1(Regs, RegIdx, EnvLevel, 1).
+
+amplitude_1(Regs, RegIdx, EnvLevel, YmShift) ->
     V = element(RegIdx + 1, Regs),
     case (V bsr 4) band 1 of
-        0 -> V band 16#0F;
+        0 -> (V band 16#0F) bsl YmShift;
         1 -> EnvLevel
     end.

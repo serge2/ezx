@@ -67,7 +67,10 @@ init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, {Rom0,
         screen = ezx_screen:new(),
         beeper = BeeperModule:init(),
         keyboard = KeyboardModule:default(),
-        ay = case AyModule of undefined -> undefined; _ -> AyModule:new() end
+        ay = case AyModule of
+            undefined -> undefined;
+            _ -> AyModule:new(Model#machine_model.ay_chip)
+        end
     }.
 
 %% @doc Load a Z80 v1/v2/v3 snapshot into 128K memory.

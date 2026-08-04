@@ -81,7 +81,10 @@ init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, Rom) -
         screen = ezx_screen:new(),
         beeper = BeeperModule:init(),
         keyboard = KeyboardModule:default(),
-        ay = case AyModule of undefined -> undefined; _ -> AyModule:new() end
+        ay = case AyModule of
+            undefined -> undefined;
+            _ -> AyModule:new(Model#machine_model.ay_chip)
+        end
     }.
 
 -spec press_key(#machine_state{}, non_neg_integer()) -> #machine_state{}.

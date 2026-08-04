@@ -5,19 +5,25 @@
 -define(MODULES, [ezx_ay38912, ezx_ay38912_seg]).
 
 %% ---------------------------------------------------------------------------
-%% Timing model under test (matches Fuse sound.c and MAME ay8910.cpp):
+%% Timing model under test:
 %%   - tone:    (reg + 1) * 16 CPU T-states per half square-wave period
 %%   - noise:   reg * 32 CPU T-states per LFSR step      (0 treated as 1)
-%%   - envelope: reg * 32 CPU T-states per level step    (0 treated as 1)
-%% Mixing formula (MAME): (ToneOn | ToneDisable) & (NoiseOn | NoiseDisable).
+%%   - envelope (AY):  reg * 32 CPU T-states per level step, 4-bit counter
+%%     (16 levels)
+%%   - envelope (YM):  reg * 16 CPU T-states per level step, 5-bit counter
+%%     (32 levels); twice the AY's step rate, same sweep duration
+%% Mixing formula: (ToneOn | ToneDisable) & (NoiseOn | NoiseDisable).
 %% ---------------------------------------------------------------------------
 
 %% ---- helpers ----
 
 setup(M, Writes) ->
+    setup(M, ay, Writes).
+
+setup(M, Chip, Writes) ->
     lists:foldl(fun({Reg, Val}, AY) ->
         M:write(M:latch(AY, Reg), Val, 0)
-    end, M:new(), Writes).
+    end, M:new(Chip), Writes).
 
 %% Render one frame of TStates T-states into one sample per T-state;
 %% return channel A samples as a list.
@@ -32,6 +38,14 @@ render_ch_a(M, AY, TStates) ->
 pcm(Level) ->
     element(Level + 1, {0, 64, 90, 128, 181, 256, 362, 512, 724, 1024, 1448,
                         2048, 2896, 4096, 5793, 8192}) - 4096.
+
+%% Expected PCM for a YM2149 DAC level (0..31), mirroring the modules' YM
+%% curve (the measured YM2149 DAC resistances on a 0..8192 scale).
+pcm_ym(Level) ->
+    element(Level + 1, {0, 16, 39, 71, 89, 111, 131, 153, 185, 221, 255, 293,
+                        351, 418, 483, 556, 667, 798, 927, 1073, 1288, 1541,
+                        1788, 2068, 2501, 3004, 3512, 4079, 4982, 5989, 7067,
+                        8192}) - 4096.
 
 %% ---- envelope step rate: reg * 32 T-states per level step ----
 
@@ -54,7 +68,7 @@ noise_step_rate_test_() ->
     %% R6 = 1 -> one LFSR step per 32 T-states.  Writing R6 resets the LFSR
     %% to 0x10000 (bit 0 = 0).  The AY noise generator is a 17-bit
     %% RIGHT-shifting LFSR (feedback = bit0 XOR bit3 inserted at bit 16,
-    %% output = bit 0, matching MAME ay8910.cpp), so the single 1 at bit 16
+    %% output = bit 0), so the single 1 at bit 16
     %% reaches bit 0 after exactly 16 steps = 512 T-states.  Over 882
     %% T-states the noise output stays 0 up to sample 511 and turns on at
     %% sample 512.
@@ -102,9 +116,99 @@ mixer_tone_and_noise_are_anded_test_() ->
             ?assertEqual([pcm(0)], lists:usort(Samples))
         end) || M <- ?MODULES].
 
+%% ---- YM2149: envelope counter is 5-bit and steps twice as fast ----
+
+ym_envelope_step_rate_test_() ->
+    %% Same write setup as envelope_step_rate_test_ (N = 14) but on the YM
+    %% each level step takes 14 * 16 = 224 T-states: 31 -> 30 at sample 224,
+    %% 30 -> 29 at sample 448, 29 -> 28 at sample 672.
+    Writes = [{7, 16#FF}, {8, 16#10}, {11, 14}, {12, 0}, {13, 0}],
+    [run_each_ym(M, Writes,
+        fun(Samples) ->
+            ?assertEqual(pcm_ym(31), hd(Samples)),
+            ?assertEqual([pcm_ym(31)], lists:usort(lists:sublist(Samples, 223))),
+            ?assertEqual(pcm_ym(30), lists:nth(224, Samples)),
+            ?assertEqual(pcm_ym(29), lists:nth(448, Samples)),
+            ?assertEqual(pcm_ym(28), lists:nth(672, Samples)),
+            ?assertEqual([pcm_ym(28)], lists:usort(lists:sublist(Samples, 672, 211)))
+        end) || M <- ?MODULES].
+
+ym_envelope_32_levels_test_() ->
+    %% N = 1 -> one level step per 16 T-states on the YM (32 steps within
+    %% 882 T-states): the full 5-bit sweep 31..0 then hold at 0.  The AY
+    %% (step = 32 T-states) only sweeps its 16 levels.
+    Writes = [{7, 16#FF}, {8, 16#10}, {11, 1}, {12, 0}, {13, 0}],
+    YmAssert = fun(Samples) -> ?assertEqual(32, length(lists:usort(Samples))) end,
+    AyAssert = fun(Samples) -> ?assertEqual(16, length(lists:usort(Samples))) end,
+    [run_each_ym(M, Writes, YmAssert) || M <- ?MODULES] ++
+    [run_each(M, Writes, AyAssert) || M <- ?MODULES].
+
+ym_fixed_volume_even_taps_test_() ->
+    %% On the YM the 4-bit fixed volume drives the 5-bit DAC at the even
+    %% taps (volume V -> level 2V), so volume 3 -> level 6.  The AY uses its
+    %% own 16-level curve.
+    Writes = [{7, 16#FF}, {8, 3}],
+    YmAssert = fun(Samples) -> ?assertEqual([pcm_ym(6)], lists:usort(Samples)) end,
+    AyAssert = fun(Samples) -> ?assertEqual([pcm(3)], lists:usort(Samples)) end,
+    [run_each_ym(M, Writes, YmAssert) || M <- ?MODULES] ++
+    [run_each(M, Writes, AyAssert) || M <- ?MODULES].
+
+%% ---- AY-vs-YM chip detection: unused bits read back differently ----
+
+chip_detect_readback_test_() ->
+    %% Detection trick: write 31 to the 4-bit coarse tone register 1 and
+    %% read it back.  The AY-3-8912 zeroes the unused upper bits (reads 15);
+    %% the YM2149 returns every bit as written (reads 31).  The same applies
+    %% to the other partial-width registers (R6 noise = 5 bits, R13 envelope
+    %% shape = 4 bits).
+    [run_readback(M, ay, 1, 16#1F, 16#0F) || M <- ?MODULES] ++
+    [run_readback(M, ym, 1, 16#1F, 16#1F) || M <- ?MODULES] ++
+    [run_readback(M, ay, 6, 16#FF, 16#1F) || M <- ?MODULES] ++
+    [run_readback(M, ym, 6, 16#FF, 16#FF) || M <- ?MODULES] ++
+    [run_readback(M, ay, 13, 16#FF, 16#0F) || M <- ?MODULES] ++
+    [run_readback(M, ym, 13, 16#FF, 16#FF) || M <- ?MODULES].
+
+run_readback(M, Chip, Reg, WriteVal, Expected) ->
+    fun() ->
+        AY = M:write(M:latch(M:new(Chip), Reg), WriteVal, 0),
+        ?assertEqual(Expected, M:read(AY))
+    end.
+
+%% ---- AY-vs-YM chip detection: latch with upper nibble set (Action intro) ----
+%%
+%% Action latches 0x10 and reads back: the YM2149 checks the programmed
+%% code DA7-DA4 (must be 0000) and drives the bus high-impedance on a
+%% mismatch, so the read returns 0xFF; the AY-3-8912 selects the register by
+%% the low nibble only and reads back the previously written register 0
+%% value (0x40).  The chip stays deactivated until the next valid latch, and
+%% data writes while deactivated are ignored.
+
+chip_detect_latch_upper_nibble_test_() ->
+    [fun() ->
+        AY = M:write(M:latch(M:new(ay), 0), 16#40, 0),
+        AY1 = M:latch(AY, 16#10),
+        ?assertEqual(16#40, M:read(AY1))
+     end || M <- ?MODULES] ++
+    [fun() ->
+        AY = M:write(M:latch(M:new(ym), 0), 16#40, 0),
+        AY1 = M:latch(AY, 16#10),
+        ?assertEqual(16#FF, M:read(AY1)),
+        AY2 = M:write(AY1, 16#20, 0),
+        ?assertEqual(16#FF, M:read(AY2)),
+        AY3 = M:latch(AY2, 0),
+        ?assertEqual(16#40, M:read(AY3))
+     end || M <- ?MODULES].
+
 %% Run one render (882 T-states) and apply the per-module assertions.
 run_each(M, Writes, Assert) ->
     fun() ->
         Samples = render_ch_a(M, setup(M, Writes), 882),
+        Assert(Samples)
+    end.
+
+%% Same but on the YM2149 variant.
+run_each_ym(M, Writes, Assert) ->
+    fun() ->
+        Samples = render_ch_a(M, setup(M, ym, Writes), 882),
         Assert(Samples)
     end.
