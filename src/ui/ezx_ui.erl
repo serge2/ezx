@@ -346,6 +346,27 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = $Q, controlDown = true
     init:stop(),
     {stop, normal, State};
 
+%% Ctrl+F12: dump the whole machine state (term_to_binary) so a stuck/interesting
+%% state can be reproduced headlessly for debugging. The modifier guards against
+%% accidental dumps; files land in the app state dir (like recent files), not /tmp.
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F12, controlDown = true}},
+            #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F12, controlDown = true}},
+            #state{machine = Machine} = State) ->
+    DumpDir = filename:join([ezx_ui_lib:app_dir(), "dumps"]),
+    filelib:ensure_dir(filename:join(DumpDir, "dummy")),
+    Path = filename:join(DumpDir, dump_filename()),
+    Bin = term_to_binary(Machine),
+    case file:write_file(Path, Bin) of
+        ok ->
+            io:format("DIAG: machine state dumped to ~s (~p bytes)~n",
+                      [Path, byte_size(Bin)]);
+        {error, Reason} ->
+            io:format("DIAG: failed to dump machine state to ~s: ~p~n", [Path, Reason])
+    end,
+    {noreply, State};
+
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = _Key, rawCode = _RawCode} = _E}, #state{machine = undefined} = State) ->
     {noreply, State};
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = Key, rawCode = _RawCode} = _E}, State) ->
@@ -962,3 +983,9 @@ pan_right(_V, right) -> _V.
 clamp16(S) when S > 32767 -> 32767;
 clamp16(S) when S < -32768 -> -32768;
 clamp16(S) -> S.
+
+%% Timestamped name for a Ctrl+F12 state dump (one file per dump, no overwrites).
+dump_filename() ->
+    {{Y, Mo, D}, {H, Mi, S}} = calendar:local_time(),
+    io_lib:format("state-~4..0B~2..0B~2..0B-~2..0B~2..0B~2..0B.bin",
+                  [Y, Mo, D, H, Mi, S]).
