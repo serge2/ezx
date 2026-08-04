@@ -88,6 +88,60 @@ run_frame_int_fires_test() ->
     Pc = z80_cpu:pc(Cpu),
     ?assert(Pc >= 16#0038).
 
+run_frame_int_pulse_dropped_when_disabled_test() ->
+    %% The ULA asserts INT as a short pulse at the start of the frame; if
+    %% interrupts are disabled during the whole pulse, the request is dropped
+    %% and does not linger for the rest of the frame.
+    Machine0 = init_machine(),
+    %% DI, then NOPs long enough to cover the pulse (t in 32..64).
+    Machine1 = load_program(Machine0, 16#4000, [16#F3 | lists:duplicate(40, 16#00)]),
+    Machine1b = set_pc(Machine1, 16#4000),
+    Machine2 = ezx_emulator:run_frame(Machine1b),
+    Cpu = Machine2#machine_state.cpu,
+    ?assertEqual(none, Cpu#cpu_state.pending_interrupt),
+    ?assertEqual(0, Cpu#cpu_state.iff1),
+    ?assert(z80_cpu:pc(Cpu) >= 16#4000).
+
+run_frame_ei_after_pulse_does_not_fire_test() ->
+    %% Regression test for the frozen-tone bug: the ULA asserts INT only as a
+    %% short pulse at the start of the frame. An EI executed mid-frame (after
+    %% the pulse has ended) must not fire the request in the same frame; the
+    %% interrupt is serviced at the next frame's pulse instead. A custom IM2
+    %% handler increments a RAM counter so services are counted precisely.
+    Machine0 = init_machine(),
+    Main = [16#3E, 16#40,          %% LD A, 0x40
+            16#ED, 16#47,          %% LD I, A
+            16#ED, 16#5E,          %% IM 2
+            16#F3,                 %% DI
+            lists:duplicate(20, 16#00),  %% cover the pulse (t in 32..64)
+            16#FB,                 %% EI
+            16#18, 16#FE],         %% JR $
+    Handler = [16#3A, 16#00, 16#43,  %% LD A, (0x4300)
+               16#3C,                %% INC A
+               16#32, 16#00, 16#43,  %% LD (0x4300), A
+               16#FB,                %% EI
+               16#C9],               %% RET
+    MainBytes = lists:flatten(Main),
+    HandlerBytes = Handler,
+    Vector = [{16#40FF, 16#00}, {16#4100, 16#42}],  %% IM2 vector -> 0x4200
+    MainMap = lists:zip(lists:seq(16#4000, 16#4000 + length(MainBytes) - 1), MainBytes),
+    HandlerMap = lists:zip(lists:seq(16#4200, 16#4200 + length(HandlerBytes) - 1), HandlerBytes),
+    Prog = maps:from_list(MainMap ++ Vector ++ HandlerMap ++ [{16#4300, 16#00}]),
+    Machine1 = load_program(Machine0, Prog),
+    Machine1b = set_pc(Machine1, 16#4000),
+    Machine2 = ezx_emulator:run_frame(Machine1b),
+    %% The mid-frame EI must not have serviced the request in this frame.
+    {Counter2, _} = ezx_emulator:read_byte(Machine2, 16#4300),
+    ?assertEqual(0, Counter2),
+    ?assertEqual(1, (Machine2#machine_state.cpu)#cpu_state.iff1),
+    Machine3 = ezx_emulator:run_frame(Machine2),
+    %% The next frame's pulse services it exactly once.
+    {Counter3, _} = ezx_emulator:read_byte(Machine3, 16#4300),
+    ?assertEqual(1, Counter3),
+    Machine4 = ezx_emulator:run_frame(Machine3),
+    {Counter4, _} = ezx_emulator:read_byte(Machine4, 16#4300),
+    ?assertEqual(2, Counter4).
+
 run_frame_screen_changes_recorded_test() ->
     Machine0 = init_machine(),
     Machine1 = load_program(Machine0, #{16#4000 => 16#3E, 16#4001 => 16#04, 16#4002 => 16#D3, 16#4003 => 16#FE}),
@@ -299,13 +353,15 @@ run_frame_flash_cadence_test() ->
 machine_model_48k_defaults_test() ->
     Machine = init_machine(),
     ?assertEqual(#machine_model{cpu_clock = 3500000, tstates_per_frame = 69888,
-                                tstates_per_line = 224, int_tstate = 32, ay_prescale = 2},
+                                tstates_per_line = 224, int_tstate = 32, int_pulse = 32,
+                                ay_prescale = 2},
                  Machine#machine_state.model).
 
 machine_model_128k_defaults_test() ->
     Machine = init_machine_128(),
     ?assertEqual(#machine_model{cpu_clock = 3546900, tstates_per_frame = 70908,
-                                tstates_per_line = 228, int_tstate = 32, ay_prescale = 2},
+                                tstates_per_line = 228, int_tstate = 32, int_pulse = 36,
+                                ay_prescale = 2},
                  Machine#machine_state.model).
 
 machine_model_frame_lengths_test() ->

@@ -513,10 +513,16 @@ frame_start_devices(#machine_state{ay_module = AyModule, beeper_module = BeeperM
 %%            then normal execution; the frame boundary is ignored
 %%            mid-instruction (variant A), the overrun is carried as the
 %%            new t_states tail.
+%% The ULA asserts INT only for a short pulse (int_pulse T-states) from the
+%% interrupt point; if the CPU has not serviced it by the end of the pulse
+%% (e.g. interrupts disabled), the request is dropped — a mid-frame EI does
+%% not fire an interrupt that was asserted at the start of the frame, exactly
+%% like the real hardware.
 execute_frame(#machine_state{t_states = StartT} = Machine) ->
     Model = Machine#machine_state.model,
     FrameLen = Model#machine_model.tstates_per_frame,
     IntTState = Model#machine_model.int_tstate,
+    IntPulse = Model#machine_model.int_pulse,
     Cpu0 = Machine#machine_state.cpu,
     Cpu0a = z80_cpu:clear_interrupt_request(Cpu0),
     Machine0a = Machine#machine_state{cpu = Cpu0a},
@@ -532,8 +538,15 @@ execute_frame(#machine_state{t_states = StartT} = Machine) ->
     Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
     Machine2 = Machine1#machine_state{cpu = Cpu2},
 
+    %% End of the INT pulse: an unacknowledged request is dropped.
+    PulseEnd = IntTState + IntPulse,
+    Machine2a = run_until_tstates(Machine2, PulseEnd),
+    Cpu2a = Machine2a#machine_state.cpu,
+    Cpu2b = z80_cpu:clear_interrupt_request(Cpu2a),
+    Machine2b = Machine2a#machine_state{cpu = Cpu2b},
+
     Phase2End = StartT + FrameLen,
-    Machine3 = run_until_tstates(Machine2, Phase2End),
+    Machine3 = run_until_tstates(Machine2b, Phase2End),
 
     Overshoot = Machine3#machine_state.t_states - Phase2End,
 

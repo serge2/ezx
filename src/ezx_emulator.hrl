@@ -12,17 +12,22 @@
     tstates_per_frame :: pos_integer(),  %% video frame length in T-states
     tstates_per_line :: pos_integer(),   %% horizontal scanline length in T-states
     int_tstate :: non_neg_integer(),     %% interrupt raised this many T-states into the frame
+    int_pulse :: pos_integer(),          %% INT pulse length in T-states (how long the INT line stays low)
     ay_prescale :: pos_integer(),        %% AY clock = CPU clock / ay_prescale
     ay_chip = ay :: ay | ym              %% sound chip: AY-3-8912 ('ay') or YM2149 ('ym')
 }).
 
 %% Real hardware: 48K = 3.5 MHz, 224 T-states/line × 312 lines = 69888/frame
 %% (50.08 Hz). 128K = 3.5469 MHz, 228 × 311 = 70908/frame (50.02 Hz).
+%% The ULA asserts INT low once per frame as a short pulse: 32 T-states on the
+%% 48K, 36 T on the 128K. If the CPU does not acknowledge within the pulse
+%% (e.g. interrupts disabled), the request is dropped until the next frame.
 -define(SPECTRUM_48_MODEL, #machine_model{
     cpu_clock = 3500000,
     tstates_per_frame = 69888,
     tstates_per_line = 224,
     int_tstate = 32,
+    int_pulse = 32,
     ay_prescale = 2}).
 
 -define(SPECTRUM_128_MODEL, #machine_model{
@@ -30,6 +35,7 @@
     tstates_per_frame = 70908,
     tstates_per_line = 228,
     int_tstate = 32,
+    int_pulse = 36,
     ay_prescale = 2}).
 
 %% Per-frame timing accumulators collected by run_frame/1 so the UI can report
