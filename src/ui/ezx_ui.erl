@@ -65,6 +65,7 @@
     sound_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice(), wxChoice:wxChoice()}} | undefined,
     mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}} | undefined,
     file_dialog_refs = undefined :: {wxFileDialog:wxFileDialog(), undefined} | undefined,
+    file_dialog_dir = undefined :: string() | undefined,
     saves_dialog_refs = undefined :: {wxDialog:wxDialog(), wxListCtrl:wxListCtrl(),
                                       wxButton:wxButton(), wxButton:wxButton(), wxButton:wxButton(),
                                       wxStaticBitmap:wxStaticBitmap()} | undefined,
@@ -678,6 +679,7 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
             ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
             {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
                                    current_file = File,
+                                   file_dialog_dir = filename:dirname(File),
                                    mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                                    file_dialog_refs = undefined,
                                    audio_filter = ezx_audio_filter:new()}};
@@ -834,13 +836,19 @@ recreate_machine(State) ->
     end.
 
 %% @doc Open the modeless load-file dialog (SNA/Z80/TAP). No-op when a file
-%% dialog is already open.
+%% dialog is already open. It starts in the directory of the last loaded file
+%% (held in memory only, not persisted), or the current directory the first
+%% time.
 -spec handle_open_file(#state{}) -> {noreply, #state{}}.
-handle_open_file(#state{file_dialog_refs = undefined} = State) ->
-    Dialog = wxFileDialog:new(State#state.frame, [
-        {message, "Load snapshot or tape"},
-        {wildCard, "ZX Spectrum files (*.sna,*.z80,*.tap)|*.sna;*.z80;*.tap|SNA files (*.sna)|*.sna|Z80 files (*.z80)|*.z80|TAP files (*.tap)|*.tap"},
-        {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}]),
+handle_open_file(#state{file_dialog_refs = undefined, file_dialog_dir = Dir} = State) ->
+    Options = [{message, "Load snapshot or tape"},
+               {wildCard, "ZX Spectrum files (*.sna,*.z80,*.tap)|*.sna;*.z80;*.tap|SNA files (*.sna)|*.sna|Z80 files (*.z80)|*.z80|TAP files (*.tap)|*.tap"},
+               {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}],
+    Options1 = case Dir of
+                   undefined -> Options;
+                   _ -> [{defaultDir, Dir} | Options]
+               end,
+    Dialog = wxFileDialog:new(State#state.frame, Options1),
     wxFileDialog:connect(Dialog, command_button_clicked),
     wxDialog:show(Dialog),
     {noreply, State#state{file_dialog_refs = {Dialog, undefined}}};
