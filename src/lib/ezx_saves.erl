@@ -22,10 +22,11 @@
 %% the sp_too_low restriction, and it stores IFF1/IFF2 directly.
 %%
 %% The Z80 layout written here is described in ezx_z80: a 48K snapshot with
-%% PC != 0 is a v1 file (30-byte header + uncompressed 0x4000-0xFFFF image);
-%% a 48K snapshot with PC == 0, and every 128K snapshot, use the extended
-%% v2-style format with the 2-byte length, the extended header (real PC,
-%% hw_mode, p7ffd) and uncompressed page blocks.
+%% PC != 0 is a v1 file (30-byte header + the 0x4000-0xFFFF image, RLE
+%% compressed when that is smaller); a 48K snapshot with PC == 0, and every
+%% 128K snapshot, use the extended v2-style format with the 2-byte length,
+%% the extended header (real PC, hw_mode, p7ffd) and per-page blocks, each
+%% RLE compressed when that is smaller.
 %%
 %% == Save files ==
 %% All saves live flat in SavesRoot (no per-game subdirectories), so a save
