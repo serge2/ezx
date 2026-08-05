@@ -604,11 +604,13 @@ load_tap_empty_binary_test() ->
 
 %% --- Tape trap entries ---
 %%
-%% LD-BYTES is trapped at two PC entries: 0x0556 (main ROM entry used by
-%% LOAD "" and most loaders) and 0x0563 (the continuation entry right after
-%% the flag-setup prologue).  Speedloaders such as the 128K Robin of the Wood
-%% loader prepare IX/DE themselves, replicate the prologue, then JP 0x0563;
-%% without the second entry the trap never fires and the loader spins in the
+%% LD-BYTES is trapped at three PC entries: 0x0556 (main ROM entry used by
+%% LOAD "" and most loaders), 0x0563 (the continuation entry right after the
+%% flag-setup prologue) and 0x0562 (the ROM's start-of-block EAR-poll point,
+%% IN A,(0xFE)).  Speedloaders such as the 128K Robin of the Wood loader
+%% prepare IX/DE themselves, replicate the prologue, then JP 0x0563; the
+%% Halaga loader instead CALLs 0x0562 so the ROM reads the block for it.
+%% Without these entries the trap never fires and the loader spins in the
 %% ROM EAR-polling loop.
 
 tape_trap_main_entry_test() ->
@@ -626,6 +628,18 @@ tape_trap_continuation_entry_test() ->
     {ok, Machine1} = ezx_emulator:load_tap(Machine0, build_tap([Payload])),
     Dest = 16#8000,
     Machine2 = set_pc(set_ix_de(Machine1, Dest, byte_size(Payload)), 16#0563),
+    Machine3 = ezx_emulator:step(Machine2),
+    assert_trap_result(Machine3, Dest, Payload).
+
+tape_trap_ear_entry_test() ->
+    %% The Halaga loader enters the ROM at 0x0562 (IN A,(0xFE)) with a
+    %% CALL after replicating the flag-setup prologue, so the trap must
+    %% serve the block from that entry too.
+    Machine0 = init_machine(),
+    Payload = <<16#15, 16#39, 16#BD, 16#FF>>,
+    {ok, Machine1} = ezx_emulator:load_tap(Machine0, build_tap([Payload])),
+    Dest = 16#4000,
+    Machine2 = set_pc(set_ix_de(Machine1, Dest, byte_size(Payload)), 16#0562),
     Machine3 = ezx_emulator:step(Machine2),
     assert_trap_result(Machine3, Dest, Payload).
 
