@@ -89,6 +89,7 @@ init(_Options) ->
     Frame = wxFrame:new(wx:null(), -1, "ezx - ZX Spectrum emulator",
                         [{size, {InitW, InitH}},
                          {style, ?wxDEFAULT_FRAME_STYLE band (bnot ?wxRESIZE_BORDER)}]),
+    set_frame_icon(Frame),
     MenuBar = wxMenuBar:new(),
     RecentFiles0 = ezx_recent_files:load(),
     FileMenu0 = ezx_recent_files:build_menu(RecentFiles0),
@@ -1065,6 +1066,26 @@ windowed_client_size(Crop, S) ->
         false -> {?DEFAULT_WIDTH, ?DEFAULT_HEIGHT}
     end,
     {TW * S, TH * S}.
+
+%% @doc Set the app icon on the main window (titlebar/taskbar). The icon file
+%% lives in priv/ (bundled into releases); a missing file is not an error.
+set_frame_icon(Frame) ->
+    case icon_file() of
+        {ok, Path} ->
+            Icon = wxIcon:new(Path, []),
+            wxFrame:setIcon(Frame, Icon),
+            wxIcon:destroy(Icon);
+        error ->
+            ok
+    end.
+
+%% @doc Resolve the icon PNG inside the app's priv directory.
+icon_file() ->
+    Path = filename:join(ezx_ui_lib:priv_dir(), "ezx.png"),
+    case filelib:is_file(Path) of
+        true -> {ok, Path};
+        false -> error
+    end.
 
 %% @doc Blit the 352x288 RGB frame onto the panel, honoring crop, scale and
 %% fullscreen mode. Used both for running frames and for the frozen display

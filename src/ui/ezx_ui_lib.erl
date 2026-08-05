@@ -3,7 +3,7 @@
 -include("ezx_emulator.hrl").
 
 -export([init_virtual_machine/1, init_virtual_machine/2, load_emulator_file/3,
-         app_dir/0]).
+         app_dir/0, priv_dir/0]).
 
 %% @doc App state directory for persistent per-user data (recent files, dumps).
 %% Follows the XDG state dir on Unix and LocalAppData/AppData on Windows, so
