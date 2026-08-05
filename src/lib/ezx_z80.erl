@@ -45,13 +45,16 @@
 %%    3       1    128K paging byte (p7FFD; 0 for 48K)
 %%    4      19    Padding (zeros)
 %%
-%% After that come the memory blocks, each `FF FF <page> <16384 bytes>` for
-%% the uncompressed layout written here. Page numbering follows libspectrum:
-%% a 48K file uses pages 4 (0x8000), 5 (0xC000) and 8 (0x4000); a 128K file
-%% uses pages 3-10 = RAM banks 0-7.
+%% After that come the memory blocks. Each is RLE-compressed when that
+%% shrinks it; the raw form is `FF FF <page> <16384 bytes>', the compressed
+%% form is `16-bit length <page> <RLE data>'. Page numbering follows
+%% libspectrum: a 48K file uses pages 4 (0x8000), 5 (0xC000) and 8 (0x4000);
+%% a 128K file uses pages 3-10 = RAM banks 0-7.
 %%
-%% RLE compression: ED ED <len> <byte> repeats byte len times.
-%% End marker for v1: 00 ED ED 00. compose/1 always writes uncompressed data.
+%% RLE compression (see rle/1): ED ED <len> <byte> repeats byte len times,
+%% used for runs of at least 5 bytes (2 for a run of 0xED); a literal 0xED is
+%% always followed by its next byte (`ED <byte>'). The v1 end marker is
+%% 00 ED ED 00.
 %% @end
 -module(ezx_z80).
 
@@ -224,15 +227,26 @@ decompress_block_n(<<Byte, Rest/binary>>, N, Acc) when N >= 1 ->
 
 %% @doc Serialize a #z80_header{} record into a Z80 snapshot binary.
 %%
-%% Always writes uncompressed data. A 48K snapshot with PC != 0 becomes a
-%% v1 file (30-byte header + the 49152-byte image). A 48K snapshot with
+%% Applies the format's RLE compression and falls back to raw data when it
+%% would not help. A 48K snapshot with PC != 0 becomes a v1 file (30-byte
+%% header + the 49152-byte image, RLE-compressed with the compressed flag and
+%% the 00 ED ED 00 end marker when that is smaller). A 48K snapshot with
 %% PC == 0, and every 128K snapshot, use the extended format: header PC=0,
 %% the 2-byte length, the extended header (real PC, hw_mode, p7ffd) and the
-%% page blocks from the record's pages map. The inverse of parse/1 in the
-%% sense that compose(to_header from ezx_saves) reloads to the same state.
+%% page blocks from the record's pages map (compressed unless the raw
+%% 16384-byte form is smaller). The inverse of parse/1 in the sense that
+%% compose(to_header from ezx_saves) reloads to the same state.
 -spec compose(z80_header()) -> binary().
 compose(#z80_header{is_128k = false, pc = PC} = H) when PC =/= 0 ->
-    <<(base_header(H))/binary, (H#z80_header.mem)/binary>>;
+    Mem = H#z80_header.mem,
+    Compressed = rle(Mem),
+    case byte_size(Compressed) < byte_size(Mem) of
+        true ->
+            <<(set_v1_compressed_flag(base_header(H)))/binary,
+              Compressed/binary, 16#00, 16#ED, 16#ED, 16#00>>;
+        false ->
+            <<(base_header(H))/binary, Mem/binary>>
+    end;
 compose(#z80_header{pc = PC} = H) when is_integer(PC) ->
     Base = base_header(H#z80_header{pc = 0}),
     Ext = <<PC:16/little,
@@ -256,9 +270,78 @@ base_header(#z80_header{a = A, f = F, bc = BC, hl = HL, pc = PC, sp = SP,
       Aa:8, Fa:8, IY:16/little, IX:16/little,
       IFF1:8, IFF2:8, (IM band 16#03):8>>.
 
-%% @private The memory blocks, one per page, in ascending page order. The
-%% uncompressed form is a literal `FF FF <page> <16384 bytes>' prefix.
+%% @private Set the v1 "data is compressed" bit (bit 5 of the Flags byte).
+set_v1_compressed_flag(<<Head:12/binary, Flags:8, Tail/binary>>) ->
+    <<Head/binary, (Flags bor 16#20):8, Tail/binary>>.
+
+%% @private The memory blocks, one per page, in ascending page order. Each
+%% block is RLE-compressed when that shrinks it, otherwise written raw as
+%% `FF FF <page> <16384 bytes>'.
 blocks(#z80_header{pages = Pages}) ->
     Sorted = lists:sort(maps:to_list(Pages)),
-    iolist_to_binary([<<16#FF, 16#FF, Page, Data:16384/bytes>>
-                      || {Page, Data} <- Sorted]).
+    iolist_to_binary([block(Page, Data) || {Page, Data} <- Sorted]).
+
+%% @private One page block. A compressed block is `16-bit length, page, data';
+%% the 0xFFFF length marker means the raw 16384 bytes follow.
+block(Page, Data) ->
+    Compressed = rle(Data),
+    case byte_size(Compressed) < byte_size(Data) of
+        true ->
+            <<(byte_size(Compressed)):16/little, Page, Compressed/binary>>;
+        false ->
+            <<16#FF, 16#FF, Page, Data:16384/bytes>>
+    end.
+
+%% --- RLE compression ---
+
+%% @doc RLE-encode a memory block following the Z80 scheme (the exact inverse
+%% of decompress_block_n/3).
+%%
+%% A run of identical bytes is coded as `ED ED <count> <byte>' once it is at
+%% least 5 bytes long, or 2 bytes for a run of 0xED (shorter runs of 0xED
+%% would otherwise be mistaken for run markers). Shorter non-ED runs are
+%% written literally. A literal 0xED is always paired with the byte after it
+%% as `ED <byte>': a bare 0xED in the stream would be consumed as the start
+%% of a marker, so the byte directly following a literal ED is never taken
+%% into a block. Runs longer than 255 split into consecutive markers, which
+%% keeps the stream free of stray ED bytes and therefore immune to the v1
+%% end-marker 00 ED ED 00 colliding with the data.
+-spec rle(binary()) -> binary().
+rle(Data) ->
+    rle_runs(Data, <<>>).
+
+%% @private
+rle_runs(<<>>, Acc) -> Acc;
+rle_runs(Bin, Acc) ->
+    {Count, Byte, Rest} = scan_run(Bin),
+    case Byte of
+        16#ED ->
+            case Count of
+                1 ->
+                    case Rest of
+                        <<Next, Rest1/binary>> ->
+                            rle_runs(Rest1, <<Acc/binary, 16#ED, Next>>);
+                        <<>> ->
+                            <<Acc/binary, 16#ED>>
+                    end;
+                _ ->
+                    rle_runs(Rest, <<Acc/binary, 16#ED, 16#ED, Count, 16#ED>>)
+            end;
+        _ when Count >= 5 ->
+            rle_runs(Rest, <<Acc/binary, 16#ED, 16#ED, Count, Byte>>);
+        _ ->
+            rle_runs(Rest, <<Acc/binary, (binary:copy(<<Byte>>, Count))/binary>>)
+    end.
+
+%% @private Scan a maximal run of identical bytes at the head of Bin, capped
+%% at 255 (the run-count byte cannot hold more). Returns {Count, Byte, Rest}.
+scan_run(Bin) ->
+    case Bin of
+        <<>> -> {0, 0, <<>>};
+        <<Byte, Rest/binary>> -> scan_run_1(Rest, Byte, 1)
+    end.
+
+scan_run_1(<<>>, Byte, Count) -> {Count, Byte, <<>>};
+scan_run_1(<<Byte, Rest/binary>>, Byte, Count) when Count < 255 ->
+    scan_run_1(Rest, Byte, Count + 1);
+scan_run_1(Bin, Byte, Count) -> {Count, Byte, Bin}.

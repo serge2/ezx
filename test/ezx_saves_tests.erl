@@ -24,8 +24,11 @@ z80_48k_round_trip_test() ->
     Machine = M1#machine_state{screen = Screen0},
 
     {ok, Z80} = ezx_saves:serialize_z80(Machine),
-    %% PC != 0 -> v1: 30-byte header + the 49152-byte image.
-    ?assertEqual(30 + 49152, byte_size(Z80)),
+    %% PC != 0 -> v1: 30-byte header + the 49152-byte image, RLE-compressed
+    %% (with the compressed flag and end marker) because the memory is sparse.
+    ?assert(byte_size(Z80) < 30 + 49152),
+    %% The compressed flag must be set so load_z80 decompresses it.
+    ?assertEqual(1, (binary:at(Z80, 12) band 16#20) bsr 5),
 
     {ok, Loaded} = ezx_emulator:load_z80(init_machine(), Z80),
     Cpu2 = Loaded#machine_state.cpu,
@@ -71,7 +74,9 @@ z80_48k_pc_zero_extended_test() ->
     Cpu = Machine0#machine_state.cpu,
     M = Machine0#machine_state{cpu = Cpu#cpu_state{pc = 0, sp = 16#A000, iff1 = 1}},
     {ok, Z80} = ezx_saves:serialize_z80(M),
-    ?assertEqual(30 + 2 + 23 + 3 * 16387, byte_size(Z80)),
+    %% Extended format, but the all-zero pages compress, so it is smaller
+    %% than the raw 30 + 2 + 23 + 3 * 16387 bytes.
+    ?assert(byte_size(Z80) < 30 + 2 + 23 + 3 * 16387),
     {ok, Loaded} = ezx_emulator:load_z80(init_machine(), Z80),
     Cpu2 = Loaded#machine_state.cpu,
     ?assertEqual(0, Cpu2#cpu_state.pc),
@@ -94,9 +99,9 @@ z80_128k_round_trip_test() ->
 
     {ok, Z80} = ezx_saves:serialize_z80(M1),
     %% 128K always uses the extended format: header PC=0, length, extended
-    %% header, and one block per bank (8 pages, 3-10); each block is the
-    %% `FF FF <page>' prefix plus 16384 bytes of data.
-    ?assertEqual(30 + 2 + 23 + 8 * 16387, byte_size(Z80)),
+    %% header, and one block per bank (8 pages, 3-10). Each bank is filled
+    %% with a single byte, so the blocks compress to a few dozen bytes.
+    ?assert(byte_size(Z80) < 30 + 2 + 23 + 8 * 16387),
 
     {ok, Loaded} = ezx_emulator_128:load_z80(init_machine_128(), Z80),
     Cpu2 = Loaded#machine_state.cpu,
@@ -272,8 +277,10 @@ quick_save_and_path_test() ->
         ?assert(filelib:is_regular(Z80Path)),
         ?assert(filelib:is_regular(MetaPath)),
         {ok, Z80} = file:read_file(Z80Path),
-        %% Fresh machine: pc = 0 -> extended format (30 + 2 + 23 + 3 pages).
-        ?assertEqual(30 + 2 + 23 + 3 * 16387, byte_size(Z80)),
+        %% Fresh machine: pc = 0 -> extended format; the sparse (mostly
+        %% zeroed) pages compress, so the file is far smaller than the raw
+        %% 30 + 2 + 23 + 3 * 16387 bytes.
+        ?assert(byte_size(Z80) < 30 + 2 + 23 + 3 * 16387),
         #z80_header{is_128k = false} = ezx_z80:parse(Z80),
         %% The fixed slot is always listed first.
         [{Quick, "", QuickPath, _QuickMeta} | _] = ezx_saves:list_history(Root),
