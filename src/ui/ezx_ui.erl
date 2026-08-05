@@ -12,6 +12,12 @@
 
 -define(DEFAULT_WIDTH, 352).
 -define(DEFAULT_HEIGHT, 288).
+-define(SCREEN_WIDTH, 256).                          %% ZX Spectrum playfield, px
+-define(SCREEN_HEIGHT, 192).                         %% ZX Spectrum playfield, px
+-define(BORDER_FRAME, 8).                            %% border frame kept after crop, px per side
+-define(BORDER_TRIM, (((?DEFAULT_WIDTH - ?SCREEN_WIDTH) div 2) - ?BORDER_FRAME)).
+-define(CROP_WIDTH, (?SCREEN_WIDTH + 2 * ?BORDER_FRAME)).
+-define(CROP_HEIGHT, (?SCREEN_HEIGHT + 2 * ?BORDER_FRAME)).
 -define(DEFAULT_SCALE, 2).
 -define(FCREPORT_INTERVAL, 100).
 -define(MENU_FULLSCREEN, 2001).
@@ -1000,8 +1006,8 @@ reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = Stat
     ExactScale = case State#state.option_integer_scaling of
         true  ->
             case SW / ?DEFAULT_WIDTH >= SH / ?DEFAULT_HEIGHT of
-                true  -> SH / (?DEFAULT_HEIGHT - 80);
-                false -> SW / (?DEFAULT_WIDTH - 80)
+                true  -> SH / ?CROP_HEIGHT;
+                false -> SW / ?CROP_WIDTH
             end;
         false -> 1.0
     end,
@@ -1019,8 +1025,8 @@ toggle_fullscreen(#state{frame = Frame, fullscreen = false, scale = WindowedScal
     ExactScale = case Crop andalso State#state.option_integer_scaling of
         true  ->
             case SW / ?DEFAULT_WIDTH >= SH / ?DEFAULT_HEIGHT of
-                true  -> SH / (?DEFAULT_HEIGHT - 80);   %% wide screen: 208 visible rows (8px border T+B)
-                false -> SW / (?DEFAULT_WIDTH - 80)     %% tall screen: 272 visible cols (8px border L+R)
+                true  -> SH / ?CROP_HEIGHT;          %% wide screen: CROP_HEIGHT visible rows (8px border T+B)
+                false -> SW / ?CROP_WIDTH            %% tall screen: CROP_WIDTH visible cols (8px border L+R)
             end;
         false -> 1.0
     end,
@@ -1062,7 +1068,7 @@ calc_scale_offset(true, SW, SH) ->
 %% Client area size for windowed mode.
 windowed_client_size(Crop, S) ->
     {TW, TH} = case Crop of
-        true  -> {272, 208};
+        true  -> {?CROP_WIDTH, ?CROP_HEIGHT};
         false -> {?DEFAULT_WIDTH, ?DEFAULT_HEIGHT}
     end,
     {TW * S, TH * S}.
@@ -1112,7 +1118,7 @@ draw_frame(State, RGB) ->
             ES = State#state.crop_exact_scale,
             B = wxBitmap:new(Image0),
             wxImage:destroy(Image0),
-            BorderOff = round(40 * ES),
+            BorderOff = round(?BORDER_TRIM * ES),
             {FSW, FSH} = State#state.fullscreen_size,
             case FSW / ?DEFAULT_WIDTH >= FSH / ?DEFAULT_HEIGHT of
                 true  ->
@@ -1125,9 +1131,9 @@ draw_frame(State, RGB) ->
         {_, true} ->
             B = wxBitmap:new(Image0),
             wxImage:destroy(Image0),
-            BorderOff = 40 * Scale,
-            DDX = max(0, (PW - (?DEFAULT_WIDTH - 80) * Scale) div 2) - BorderOff,
-            DDY = max(0, (PH - (?DEFAULT_HEIGHT - 80) * Scale) div 2) - BorderOff,
+            BorderOff = ?BORDER_TRIM * Scale,
+            DDX = max(0, (PW - ?CROP_WIDTH * Scale) div 2) - BorderOff,
+            DDY = max(0, (PH - ?CROP_HEIGHT * Scale) div 2) - BorderOff,
             {B, DDX, DDY, Scale};
         {false, false} ->
             B = wxBitmap:new(Image0),
