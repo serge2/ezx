@@ -1126,7 +1126,9 @@ draw_frame(State, RGB) ->
             B = wxBitmap:new(Image0),
             wxImage:destroy(Image0),
             BorderOff = 40 * Scale,
-            {B, -BorderOff, -BorderOff, Scale};
+            DDX = max(0, (PW - (?DEFAULT_WIDTH - 80) * Scale) div 2) - BorderOff,
+            DDY = max(0, (PH - (?DEFAULT_HEIGHT - 80) * Scale) div 2) - BorderOff,
+            {B, DDX, DDY, Scale};
         {false, false} ->
             B = wxBitmap:new(Image0),
             wxImage:destroy(Image0),
