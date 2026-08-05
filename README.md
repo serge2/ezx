@@ -1,19 +1,20 @@
 # ezx
 
-ZX Spectrum 48K emulator written in Erlang.
+ZX Spectrum 48K/128K emulator written in Erlang.
 
 Just for fun and as a proof of concept — exploring how far you can get with a functional language for real-time emulation.
 
-## Status
+## Features
 
-Working prototype with:
-- Z80 CPU (full instruction set)
-- 48K memory model
-- Screen rendering (352x288 with border)
-- Keyboard input
-- Beeper audio
-- SNA/TAP file loading
-- Tape trap emulation for auto-loading
+- Runs both ZX Spectrum models — the classic 48K and the 128K.
+- Windowed and fullscreen display, with border cropping if you want a cleaner picture.
+- Sound: the iconic beeper plus the AY-3-8912 / YM2149 sound chips.
+- Optional Kempston mouse.
+- Loads games and snapshots in the common formats: SNA, Z80, TAP.
+- Save your place anytime — quick save and named saves, so you can pick up where you left off.
+
+Common shortcuts: `F2` save, `F3` load, `F5` quick save, `F9` quick load,
+`F7` reset, `F11` fullscreen, `Ctrl+O` open, `Ctrl+P` pause, `Ctrl+M` mute.
 
 ## Build
 
