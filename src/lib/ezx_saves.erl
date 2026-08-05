@@ -35,9 +35,11 @@
 %% `Last Quicksave`; F9 always loads it, whatever game (if any) is loaded.
 %% Each quick save also writes an archive copy named
 %% `<Program>-quicksave-<stamp>` where <Program> is the loaded game's title
-%% (or "Basic" when nothing is loaded) and <stamp> = YYYYMMDD-HHMMSS. F2
-%% named saves are `<Name>-<stamp>` files (the name sanitized to a
-%% filesystem-safe form, the stamp keeping them unique), carrying the full
+%% (or "Basic" when nothing is loaded) and <stamp> = YYYYMMDD-HHMMSS. The
+%% archive copy carries the human name `<Program> - Quicksave` in its meta
+%% (shown by the manager dialog); the fixed slot keeps its `Last Quicksave`
+%% identity. F2 named saves are `<Name>-<stamp>` files (the name sanitized to
+%% a filesystem-safe form, the stamp keeping them unique), carrying the full
 %% human `name` in the meta (shown by the manager dialog). list_history/1
 %% lists every `.z80` save in the root, newest first (the fixed quick slot
 %% sorts to the top); older `.sna` saves are ignored.
@@ -298,19 +300,26 @@ is_quick_slot(Stamp) ->
 
 %% @doc Quick save (F5): overwrite the fixed `Last Quicksave` slot and write
 %% an archive copy named <Program>-quicksave-<stamp>. The Z80 serializer has
-%% no failure case (PC is stored explicitly); both files share the save's meta.
+%% no failure case (PC is stored explicitly). The slot keeps the plain machine
+%% meta (its fixed file name is its identity, shown by the manager dialog);
+%% only the archive copy carries the human name `<Program> - Quicksave`.
 -spec quick_save(#machine_state{}, string(), string()) ->
     ok | {error, term()}.
 quick_save(Machine, SavesRoot, Source) ->
-    case write_save(quick_path_z80(SavesRoot), Machine, Source) of
+    SlotMeta = build_meta(Machine, Source),
+    ArchiveMeta = SlotMeta#{"name" => quick_name(Source)},
+    case write_save(quick_path_z80(SavesRoot), Machine, SlotMeta) of
         ok ->
             Archive = archive_path(SavesRoot, Source),
-            Meta = build_meta(Machine, Source),
             filelib:ensure_dir(filename:join(SavesRoot, "dummy")),
-            write_two(Archive, meta_path(Archive), Machine, Meta);
+            write_two(Archive, meta_path(Archive), Machine, ArchiveMeta);
         Err ->
             Err
     end.
+
+%% @doc Human name for the quick-save archive copy.
+quick_name(Source) ->
+    program_name(Source) ++ " - Quicksave".
 
 %% @doc Paths for the fixed quick slot, or `none' when no quick save exists yet.
 -spec quick_path(string()) -> {ok, string(), string()} | none.
@@ -343,17 +352,19 @@ save_history(Machine, SavesRoot, Source, Name) ->
 
 %% @doc Every save in the root, newest first (sorted by file modification
 %% time as a proxy for creation time); the fixed quick slot is always listed
-%% first. Entries are [{Stamp, Name, Z80Path, MetaPath}]. Only `.z80` saves
-%% are listed; older `.sna` saves are ignored.
--spec list_history(string()) -> [{string(), string(), string(), string()}].
+%% first. Entries are [{Base, Name, Timestamp, Z80Path, MetaPath}] where Base
+%% is the file base (`<name>-<stamp>' for named saves) used to address the
+%% files, and Name/Timestamp are the display fields from the save's meta.
+%% Only `.z80` saves are listed; older `.sna` saves are ignored.
+-spec list_history(string()) ->
+    [{string(), string(), string(), string(), string()}].
 list_history(SavesRoot) ->
     case file:list_dir(SavesRoot) of
         {ok, Names} ->
             Z80s = [N || N <- Names, filename:extension(N) =:= ".z80"],
             Stamps = [filename:basename(N, ".z80") || N <- Z80s],
             Sorted = sort_by_mtime(SavesRoot, Stamps),
-            [{St, history_name(SavesRoot, St), filename:join(SavesRoot, St ++ ".z80"),
-              filename:join(SavesRoot, St ++ ".meta")} || St <- Sorted];
+            [history_entry(St, history_meta(SavesRoot, St), SavesRoot) || St <- Sorted];
         {error, enoent} -> []
     end.
 
@@ -493,8 +504,7 @@ strip_dots(S) ->
     lists:reverse(lists:dropwhile(fun(C) -> C =:= $. orelse C =:= $\s end,
                                   lists:reverse(NoLeading))).
 
-write_save(Z80Path, Machine, Source) ->
-    Meta = build_meta(Machine, Source),
+write_save(Z80Path, Machine, Meta) ->
     filelib:ensure_dir(filename:join(filename:dirname(Z80Path), "dummy")),
     write_two(Z80Path, meta_path(Z80Path), Machine, Meta).
 
@@ -541,11 +551,18 @@ available_path(Z80, N) ->
                            N + 1)
     end.
 
-history_name(SavesRoot, Stamp) ->
+%% @doc The display fields for a history entry, read from its meta sidecar:
+%% the human name and the save timestamp ("" when the sidecar is missing).
+history_meta(SavesRoot, Stamp) ->
     case read_meta(filename:join(SavesRoot, Stamp ++ ".meta")) of
-        undefined -> "";
-        Meta -> maps:get("name", Meta, "")
+        undefined -> {"", ""};
+        Meta -> {maps:get("name", Meta, ""), maps:get("timestamp", Meta, "")}
     end.
+
+history_entry(Stamp, {Name, Timestamp}, SavesRoot) ->
+    {Stamp, Name, Timestamp,
+     filename:join(SavesRoot, Stamp ++ ".z80"),
+     filename:join(SavesRoot, Stamp ++ ".meta")}.
 
 %% @doc Stamps newest first by modification time, with the fixed quick slot
 %% pinned to the front.

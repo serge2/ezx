@@ -59,9 +59,9 @@
     sound_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice(), wxChoice:wxChoice()}} | undefined,
     mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}} | undefined,
     file_dialog_refs = undefined :: {wxFileDialog:wxFileDialog(), undefined} | undefined,
-    saves_dialog_refs = undefined :: {wxDialog:wxDialog(), wxListBox:wxListBox(),
+    saves_dialog_refs = undefined :: {wxDialog:wxDialog(), wxListCtrl:wxListCtrl(),
                                       wxButton:wxButton(), wxButton:wxButton(), wxButton:wxButton()} | undefined,
-    saves_entries = [] :: [{string(), string(), string(), string()}],
+    saves_entries = [] :: [{string(), string(), string(), string(), string()}],
     blank_cursor = undefined :: wxCursor:wxCursor() | undefined,
     cursor_hidden = false :: boolean(),
     mouse = undefined :: any(),
@@ -685,35 +685,35 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
     {noreply, State#state{saves_dialog_refs = undefined, saves_entries = []}};
 
 handle_info(#wx{id = ?BTN_LOAD, event = #wxCommand{type = command_button_clicked}},
-            #state{saves_dialog_refs = {Dialog, ListBox, _, _, _}, saves_entries = Entries} = State) ->
-    load_selected_save(State, Dialog, ListBox, Entries);
+            #state{saves_dialog_refs = {Dialog, List, _, _, _}, saves_entries = Entries} = State) ->
+    load_selected_save(State, Dialog, List, Entries);
 
-handle_info(#wx{id = ?LIST_SAVES, event = #wxCommand{type = command_listbox_selected}},
-            #state{saves_dialog_refs = {_Dialog, ListBox, LoadBtn, DeleteBtn, RenameBtn},
+handle_info(#wx{id = ?LIST_SAVES, event = #wxList{type = command_list_item_selected}},
+            #state{saves_dialog_refs = {_Dialog, List, LoadBtn, DeleteBtn, RenameBtn},
                    saves_entries = Entries} = State) ->
-    ezx_saves_dialog:update_buttons(ListBox, Entries, LoadBtn, DeleteBtn, RenameBtn),
+    ezx_saves_dialog:update_buttons(List, Entries, LoadBtn, DeleteBtn, RenameBtn),
     {noreply, State};
 
-handle_info(#wx{id = ?LIST_SAVES, event = #wxCommand{type = command_listbox_doubleclicked}},
-            #state{saves_dialog_refs = {Dialog, ListBox, _, _, _}, saves_entries = Entries} = State) ->
-    load_selected_save(State, Dialog, ListBox, Entries);
+handle_info(#wx{id = ?LIST_SAVES, event = #wxList{type = command_list_item_activated}},
+            #state{saves_dialog_refs = {Dialog, List, _, _, _}, saves_entries = Entries} = State) ->
+    load_selected_save(State, Dialog, List, Entries);
 
 handle_info(#wx{id = ?BTN_DELETE, event = #wxCommand{type = command_button_clicked}},
-            #state{saves_dialog_refs = {_Dialog, ListBox, _, _, _}, saves_entries = Entries} = State) ->
-    case ezx_saves_dialog:selected_entry(ListBox, Entries) of
+            #state{saves_dialog_refs = {_Dialog, List, _, _, _}, saves_entries = Entries} = State) ->
+    case ezx_saves_dialog:selected_entry(List, Entries) of
         undefined ->
             {noreply, State};
-        {Stamp, _Name, _SavePath, _MetaPath} ->
+        {Stamp, _Name, _Timestamp, _SavePath, _MetaPath} ->
             ezx_saves:delete_history(saves_root(), Stamp),
             {noreply, refresh_saves_dialog(State)}
     end;
 
 handle_info(#wx{id = ?BTN_RENAME, event = #wxCommand{type = command_button_clicked}},
-            #state{saves_dialog_refs = {Dialog, ListBox, _, _, _}, saves_entries = Entries} = State) ->
-    case ezx_saves_dialog:selected_entry(ListBox, Entries) of
+            #state{saves_dialog_refs = {Dialog, List, _, _, _}, saves_entries = Entries} = State) ->
+    case ezx_saves_dialog:selected_entry(List, Entries) of
         undefined ->
             {noreply, State};
-        {Stamp, Name, _SavePath, _MetaPath} ->
+        {Stamp, Name, _Timestamp, _SavePath, _MetaPath} ->
             NameDlg = wxTextEntryDialog:new(Dialog, "New name for this save:",
                                             [{caption, "Rename Save"}, {value, Name}]),
             case wxDialog:showModal(NameDlg) of
@@ -927,11 +927,11 @@ refresh_saves_dialog(#state{saves_dialog_refs = Refs} = State) ->
 
 %% @doc Load the save selected in the manager list box (used by the Load
 %% button and by a double click on an entry), then close the dialog.
-load_selected_save(State, Dialog, ListBox, Entries) ->
-    case ezx_saves_dialog:selected_entry(ListBox, Entries) of
+load_selected_save(State, Dialog, List, Entries) ->
+    case ezx_saves_dialog:selected_entry(List, Entries) of
         undefined ->
             {noreply, State};
-        {_Stamp, _Name, SavePath, MetaPath} ->
+        {_Stamp, _Name, _Timestamp, SavePath, MetaPath} ->
             wxDialog:destroy(Dialog),
             {noreply, State1} = load_save(State, SavePath, MetaPath),
             {noreply, State1#state{saves_dialog_refs = undefined, saves_entries = []}}

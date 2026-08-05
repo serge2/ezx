@@ -178,7 +178,7 @@ load_save_round_trip_test() ->
         Cpu = Machine0#machine_state.cpu,
         Machine1 = Machine0#machine_state{cpu = Cpu#cpu_state{pc = 16#8000, iff1 = 1}},
         {ok, _} = ezx_saves:save_history(Machine1, Root, "g.tap", "level 1"),
-        [{_Stamp, _, SavePath, MetaPath}] = ezx_saves:list_history(Root),
+        [{_Stamp, _, _, SavePath, MetaPath}] = ezx_saves:list_history(Root),
         %% One call loads the snapshot, resolves the machine type/chip from the
         %% meta, and applies the audio side; the caller gets the ready machine
         %% plus the meta it can reconfigure the UI from.
@@ -283,14 +283,16 @@ quick_save_and_path_test() ->
         %% 30 + 2 + 23 + 3 * 16387 bytes.
         ?assert(byte_size(Z80) < 30 + 2 + 23 + 3 * 16387),
         #z80_header{is_128k = false} = ezx_z80:parse(Z80),
-        %% The fixed slot is always listed first.
-        [{Quick, "", QuickPath, _QuickMeta} | _] = ezx_saves:list_history(Root),
+        %% The fixed slot is always listed first and keeps its bare identity
+        %% (no name in its meta); the archive copy carries the human
+        %% quick-save name "<Program> - Quicksave".
+        [{Quick, "", _, QuickPath, _QuickMeta} | _] = ezx_saves:list_history(Root),
         ?assertEqual("Last Quicksave", Quick),
         ?assertEqual(Z80Path, QuickPath),
-        %% A quick save also writes an archive copy <Program>-quicksave-<stamp>;
-        %% both live flat in the root.
-        [{ArchiveStamp, "", ArchivePath, _ArchiveMeta} | _]
-            = [E || E = {S, _, _, _} <- ezx_saves:list_history(Root),
+        %% A quick save also writes an archive copy <Program>-quicksave-<stamp>
+        %% (same name in its meta); both live flat in the root.
+        [{ArchiveStamp, "g - Quicksave", _, ArchivePath, _ArchiveMeta} | _]
+            = [E || E = {S, _, _, _, _} <- ezx_saves:list_history(Root),
                     S =/= "Last Quicksave"],
         ?assertEqual("g", string:left(ArchiveStamp, 1)),
         ?assertNotEqual(nomatch, string:find(ArchiveStamp, "-quicksave-")),
@@ -310,12 +312,13 @@ history_named_save_test() ->
         Machine = init_machine(),
         {ok, Path} = ezx_saves:save_history(Machine, Root, "g.tap", "level 1"),
         ?assert(filelib:is_regular(Path)),
-        [{Stamp, "level 1", _S, _M}] = ezx_saves:list_history(Root),
+        [{Stamp, "level 1", Timestamp, _S, _M}] = ezx_saves:list_history(Root),
         %% The file is named <name>-<stamp>.z80 so it can be found on disk.
         ?assert(lists:prefix("level 1-", Stamp)),
+        ?assert(lists:suffix(Timestamp, Stamp)),
         ?assertEqual(Stamp, filename:basename(Path, ".z80")),
         ok = ezx_saves:rename_history(Root, Stamp, "level 1 hard"),
-        [{Stamp2, "level 1 hard", _S2, _M2}] = ezx_saves:list_history(Root),
+        [{Stamp2, "level 1 hard", Timestamp, _S2, _M2}] = ezx_saves:list_history(Root),
         %% Rename moved the pair: the old base is gone, the new one exists,
         %% and the stamp (the save's identity) carried over.
         ?assert(lists:prefix("level 1 hard-", Stamp2)),
@@ -339,7 +342,7 @@ history_name_is_sanitized_in_filename_test() ->
         ?assert(lists:prefix("save 1 уровень-", Base)),
         ?assertNotEqual(nomatch, string:find(Base, "уровень")),
         ?assertEqual(0, length([C || C <- Base, C =:= $/])),
-        [{Stamp, "save/1: уровень", _, _}] = ezx_saves:list_history(Root),
+        [{Stamp, "save/1: уровень", _, _, _}] = ezx_saves:list_history(Root),
         ?assertEqual(Stamp, filename:basename(Path, ".z80"))
     after
         file:del_dir_r(Root)
@@ -354,7 +357,7 @@ history_name_falls_back_to_stamp_test() ->
         %% plain <stamp> file, like an empty name.
         {ok, Path} = ezx_saves:save_history(Machine, Root, "g.tap", "/:"),
         Base = filename:basename(Path, ".z80"),
-        [{Stamp, Name, _, _}] = ezx_saves:list_history(Root),
+        [{Stamp, Name, _, _, _}] = ezx_saves:list_history(Root),
         ?assertEqual(Base, Stamp),
         ?assertEqual(Stamp, Name),
         ?assertNotEqual(nomatch, string:find(Stamp, "-"))
@@ -369,7 +372,7 @@ history_ordering_test() ->
         Machine = init_machine(),
         {ok, _} = ezx_saves:save_history(Machine, Root, "g.tap", "first"),
         {ok, _} = ezx_saves:save_history(Machine, Root, "g.tap", "second"),
-        Names = [N || {_, N, _, _} <- ezx_saves:list_history(Root)],
+        Names = [N || {_, N, _, _, _} <- ezx_saves:list_history(Root)],
         ?assertEqual(lists:sort(["first", "second"]), lists:sort(Names)),
         ?assertEqual(2, length(Names))
     after
@@ -382,7 +385,7 @@ history_default_name_is_stamp_test() ->
     try
         Machine = init_machine(),
         {ok, _} = ezx_saves:save_history(Machine, Root, "g.tap", ""),
-        [{Stamp, Name, _S, _M}] = ezx_saves:list_history(Root),
+        [{Stamp, Name, _T, _S, _M}] = ezx_saves:list_history(Root),
         ?assertEqual(Stamp, Name),
         ?assertNotEqual(nomatch, string:find(Stamp, "-"))
     after
@@ -400,11 +403,11 @@ list_history_sorts_by_mtime_test() ->
         timer:sleep(1100),
         {ok, _} = ezx_saves:save_history(Machine, Root, "g.tap", "new"),
         ok = ezx_saves:quick_save(Machine, Root, "g.tap"),
-        [{Quick, _, _, _} | Rest] = ezx_saves:list_history(Root),
+        [{Quick, _, _, _, _} | Rest] = ezx_saves:list_history(Root),
         ?assertEqual("Last Quicksave", Quick),
         %% Newest first by mtime: "new" precedes "old" (the quicksave archive
         %% copy has no name and is filtered out of the order check).
-        Ordered = [N || {_, N, _, _} <- Rest, N =:= "new" orelse N =:= "old"],
+        Ordered = [N || {_, N, _, _, _} <- Rest, N =:= "new" orelse N =:= "old"],
         ?assertEqual(["new", "old"], Ordered)
     after
         file:del_dir_r(Root)
