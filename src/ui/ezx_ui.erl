@@ -123,6 +123,10 @@ init(_Options) ->
     wxMenu:appendCheckItem(DebugMenu, ?MENU_DEBUG_PERF, "Performance report",
                            [{help, "Print performance stats to console every 5 seconds"}]),
     wxMenuBar:append(MenuBar, DebugMenu, "Debug"),
+    HelpMenu = wxMenu:new(),
+    wxMenu:append(HelpMenu, ?MENU_ABOUT, "About ezx...",
+                  [{help, "Show information about this emulator"}]),
+    wxMenuBar:append(MenuBar, HelpMenu, "Help"),
     wxFrame:setMenuBar(Frame, MenuBar),
 
     %% Apply saved config to menu checkmarks
@@ -553,6 +557,10 @@ handle_info(#wx{id = ?MENU_SAVE_STATE, event = #wxCommand{type = command_menu_se
 
 handle_info(#wx{id = ?MENU_MANAGE_SAVES, event = #wxCommand{type = command_menu_selected}}, State) ->
     manage_saves(State);
+
+handle_info(#wx{id = ?MENU_ABOUT, event = #wxCommand{type = command_menu_selected}}, #state{frame = Frame} = State) ->
+    ezx_about_dialog:show(Frame),
+    {noreply, State};
 
 handle_info(#wx{id = ?MENU_SETTINGS_MOUSE, event = #wxCommand{type = command_menu_selected}},
             #state{frame = Frame, mouse = Mouse} = State) ->
