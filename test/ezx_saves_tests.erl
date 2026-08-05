@@ -254,8 +254,9 @@ program_name_test() ->
     ?assertEqual("Basic", ezx_saves:program_name("")),
     ?assertEqual("Basic", ezx_saves:program_name("/")),
     ?assertEqual("My Game", ezx_saves:program_name("/some/dir/My Game.tap")),
-    ?assertEqual("Game 1985", ezx_saves:program_name("Game (1985).sna")),
-    ?assertEqual("a_b_c", ezx_saves:program_name("a__b__c.tap")).
+    ?assertEqual("Game (1985)", ezx_saves:program_name("Game (1985).sna")),
+    ?assertEqual("a__b__c", ezx_saves:program_name("a__b__c.tap")),
+    ?assertEqual("Игра 1", ezx_saves:program_name("Игра 1.tap")).
 
 is_quick_slot_test() ->
     ?assert(ezx_saves:is_quick_slot("Last Quicksave")),
@@ -310,10 +311,53 @@ history_named_save_test() ->
         {ok, Path} = ezx_saves:save_history(Machine, Root, "g.tap", "level 1"),
         ?assert(filelib:is_regular(Path)),
         [{Stamp, "level 1", _S, _M}] = ezx_saves:list_history(Root),
+        %% The file is named <name>-<stamp>.z80 so it can be found on disk.
+        ?assert(lists:prefix("level 1-", Stamp)),
+        ?assertEqual(Stamp, filename:basename(Path, ".z80")),
         ok = ezx_saves:rename_history(Root, Stamp, "level 1 hard"),
-        [{_Stamp, "level 1 hard", _S2, _M2}] = ezx_saves:list_history(Root),
-        ok = ezx_saves:delete_history(Root, Stamp),
+        [{Stamp2, "level 1 hard", _S2, _M2}] = ezx_saves:list_history(Root),
+        %% Rename moved the pair: the old base is gone, the new one exists,
+        %% and the stamp (the save's identity) carried over.
+        ?assert(lists:prefix("level 1 hard-", Stamp2)),
+        ?assertNot(filelib:is_regular(filename:join(Root, Stamp ++ ".z80"))),
+        ?assert(filelib:is_regular(filename:join(Root, Stamp2 ++ ".z80"))),
+        ok = ezx_saves:delete_history(Root, Stamp2),
         ?assertEqual([], ezx_saves:list_history(Root))
+    after
+        file:del_dir_r(Root)
+    end.
+
+history_name_is_sanitized_in_filename_test() ->
+    Root = temp_root(),
+    file:del_dir_r(Root),
+    try
+        Machine = init_machine(),
+        %% Filesystem-hostile chars become spaces and Unicode letters survive,
+        %% so the file is still findable by the typed name.
+        {ok, Path} = ezx_saves:save_history(Machine, Root, "g.tap", "save/1: уровень"),
+        Base = filename:basename(Path, ".z80"),
+        ?assert(lists:prefix("save 1 уровень-", Base)),
+        ?assertNotEqual(nomatch, string:find(Base, "уровень")),
+        ?assertEqual(0, length([C || C <- Base, C =:= $/])),
+        [{Stamp, "save/1: уровень", _, _}] = ezx_saves:list_history(Root),
+        ?assertEqual(Stamp, filename:basename(Path, ".z80"))
+    after
+        file:del_dir_r(Root)
+    end.
+
+history_name_falls_back_to_stamp_test() ->
+    Root = temp_root(),
+    file:del_dir_r(Root),
+    try
+        Machine = init_machine(),
+        %% A name that sanitizes to nothing (only hostile chars) leaves a
+        %% plain <stamp> file, like an empty name.
+        {ok, Path} = ezx_saves:save_history(Machine, Root, "g.tap", "/:"),
+        Base = filename:basename(Path, ".z80"),
+        [{Stamp, Name, _, _}] = ezx_saves:list_history(Root),
+        ?assertEqual(Base, Stamp),
+        ?assertEqual(Stamp, Name),
+        ?assertNotEqual(nomatch, string:find(Stamp, "-"))
     after
         file:del_dir_r(Root)
     end.

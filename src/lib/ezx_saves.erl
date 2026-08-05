@@ -35,10 +35,11 @@
 %% Each quick save also writes an archive copy named
 %% `<Program>-quicksave-<stamp>` where <Program> is the loaded game's title
 %% (or "Basic" when nothing is loaded) and <stamp> = YYYYMMDD-HHMMSS. F2
-%% named saves are timestamped `<stamp>` files carrying a human `name` in the
-%% meta (shown by the manager dialog). list_history/1 lists every `.z80` save
-%% in the root, newest first (the fixed quick slot sorts to the top); older
-%% `.sna` saves are ignored.
+%% named saves are `<Name>-<stamp>` files (the name sanitized to a
+%% filesystem-safe form, the stamp keeping them unique), carrying the full
+%% human `name` in the meta (shown by the manager dialog). list_history/1
+%% lists every `.z80` save in the root, newest first (the fixed quick slot
+%% sorts to the top); older `.sna` saves are ignored.
 %%
 %% All filesystem functions take the saves root explicitly so tests can point
 %% them at a temporary directory; the UI passes ezx_ui_lib:app_dir()/saves.
@@ -71,6 +72,7 @@
 -define(QUICK_STAMP, "Last Quicksave").
 -define(SAVE_EXT, ".z80").
 -define(DEFAULT_PROGRAM, "Basic").
+-define(NAME_MAX_LEN, 60).
 
 %% @doc Build a Fuse-compatible Z80 binary from a machine state (the format
 %% used for saves). Unlike SNA there is no error case: the Z80 format stores
@@ -156,9 +158,11 @@ build_meta(#machine_state{} = Machine, Source) ->
     }.
 
 %% @doc Serialize a meta map to key=value lines (one per line, \n-terminated).
+%% Values are written as UTF-8, so Unicode names survive the round trip (raw
+%% codepoints above 255 are not valid iodata and would fail the write).
 -spec meta_to_iodata(#{string() => string()}) -> iodata().
 meta_to_iodata(Meta) ->
-    [[K, "=", V, "\n"] || {K, V} <- maps:to_list(Meta)].
+    [[K, "=", unicode:characters_to_binary(V), "\n"] || {K, V} <- maps:to_list(Meta)].
 
 %% @doc Parse a .meta file binary into a string() => string() map.
 %% Unknown lines are skipped; the first "=" on a line separates key from value.
@@ -168,7 +172,8 @@ parse_meta(Bin) ->
     lists:foldl(fun(Line, Acc) ->
         case string:split(Line, "=") of
             [K, V] ->
-                Acc#{string:trim(binary_to_list(K)) => string:trim(binary_to_list(V))};
+                Acc#{unicode:characters_to_list(string:trim(K)) =>
+                     unicode:characters_to_list(string:trim(V))};
             _ ->
                 Acc
         end
@@ -274,13 +279,13 @@ meta_chip(Meta, Default) ->
     end.
 
 %% @doc Human title of the loaded game, used for save file names: the source
-%% file's base name with the extension stripped and the filename sanitized to
-%% [a-zA-Z0-9 _-] (runs of underscores collapsed); "Basic" when nothing is
+%% file's base name with the extension stripped and sanitized to a
+%% filesystem-safe form (see sanitize_filename/1); "Basic" when nothing is
 %% loaded or the sanitized result is empty.
 -spec program_name(string()) -> string().
 program_name(Source) ->
-    case sanitize(filename:rootname(filename:basename(Source))) of
-        [] -> ?DEFAULT_PROGRAM;
+    case sanitize_filename(filename:rootname(filename:basename(Source))) of
+        "" -> ?DEFAULT_PROGRAM;
         S -> S
     end.
 
@@ -315,19 +320,22 @@ quick_path(SavesRoot) ->
         false -> none
     end.
 
-%% @doc Append a timestamped history entry. Name is the human display name
-%% shown by the manager dialog; "" selects the timestamp as the default.
+%% @doc Append a history entry. The file is named `<name>-<stamp>.z80` (the
+%% name sanitized to a filesystem-safe form) so it can be found on disk; the
+%% stamp suffix keeps names unique. An empty name falls back to `<stamp>.z80`.
+%% The human name is also kept in the meta, where the manager dialog reads it.
 -spec save_history(#machine_state{}, string(), string(), string()) ->
     {ok, string()} | {error, term()}.
 save_history(Machine, SavesRoot, Source, Name) ->
     filelib:ensure_dir(filename:join(SavesRoot, "dummy")),
-    {Stamp, Z80Path, MetaPath} = new_history_path(SavesRoot),
+    Stamp = stamp_now(),
+    Z80Path = history_path(SavesRoot, Name, Stamp),
     Meta0 = build_meta(Machine, Source),
-    Meta = (Meta0#{"name" => case Name of
+    Meta = (Meta0#{"name" => case sanitize_filename(Name) of
         "" -> Stamp;
         _ -> Name
     end})#{"timestamp" => Stamp},
-    case write_two(Z80Path, MetaPath, Machine, Meta) of
+    case write_two(Z80Path, meta_path(Z80Path), Machine, Meta) of
         ok -> {ok, Z80Path};
         {error, _} = Err -> Err
     end.
@@ -362,13 +370,38 @@ delete_history(SavesRoot, Stamp) ->
         {{error, R}, _} -> {error, R}
     end.
 
-%% @doc Rename a save (rewrites its meta `name' field).
+%% @doc Rename a save: the `.z80`/`.meta` pair is moved to the new
+%% `<name>-<stamp>.z80` base (same stamp, so the save's identity survives)
+%% and the meta `name' field is rewritten. Renaming to the same name only
+%% updates the meta.
 -spec rename_history(string(), string(), string()) -> ok | {error, term()}.
 rename_history(SavesRoot, Stamp, NewName) ->
     MetaPath = filename:join(SavesRoot, Stamp ++ ".meta"),
     case read_meta(MetaPath) of
-        undefined -> {error, enoent};
-        Meta -> file:write_file(MetaPath, meta_to_iodata(Meta#{"name" => NewName}))
+        undefined ->
+            {error, enoent};
+        Meta ->
+            OldZ80 = filename:join(SavesRoot, Stamp ++ ".z80"),
+            Timestamp = maps:get("timestamp", Meta, Stamp),
+            Meta1 = Meta#{"name" => case NewName of
+                "" -> Timestamp;
+                _ -> NewName
+            end},
+            NewBase = history_base(NewName, Timestamp),
+            case NewBase of
+                Stamp ->
+                    file:write_file(MetaPath, meta_to_iodata(Meta1));
+                _ ->
+                    NewZ80 = available_path(
+                        filename:join(SavesRoot, NewBase ++ ?SAVE_EXT), 0),
+                    case file:rename(OldZ80, NewZ80) of
+                        ok ->
+                            file:write_file(meta_path(NewZ80),
+                                            meta_to_iodata(Meta1)),
+                            file:delete(MetaPath);
+                        {error, _} = Err -> Err
+                    end
+            end
     end.
 
 %% --- internal ---
@@ -420,23 +453,44 @@ parse_regs(Str) ->
         end
      end || S <- string:split(Str, ",", all), S =/= <<>>].
 
-sanitize(S) ->
-    Kept = [C || C <- S, is_safe_char(C)],
-    Trimmed = string:trim(collapse_underscores(Kept), both, "_"),
-    collapse_underscores(Trimmed).
+%% @doc Turn a human-facing name into a filesystem-safe file base name.
+%% Printable characters survive (Unicode included); control characters and
+%% the filesystem-hostile set `/\:*?"<>|` become spaces; whitespace collapses;
+%% leading dots (hidden files) and trailing dots/spaces (Windows quirk) are
+%% dropped; the result is capped so a stamp suffix always fits. An input that
+%% sanitizes to nothing stays empty so callers can fall back to a pure stamp.
+sanitize_filename(S) ->
+    Clean = [sanitize_char(C) || C <- S],
+    Collapsed = collapse_spaces(string:trim(Clean)),
+    Safe = strip_dots(Collapsed),
+    case Safe of
+        [] -> "";
+        _ -> lists:sublist(Safe, ?NAME_MAX_LEN)
+    end.
 
-is_safe_char(C) when C >= $a, C =< $z -> true;
-is_safe_char(C) when C >= $A, C =< $Z -> true;
-is_safe_char(C) when C >= $0, C =< $9 -> true;
-is_safe_char(C) when C =:= $ ; C =:= $_; C =:= $- -> true;
-is_safe_char(_) -> false.
+sanitize_char(C) when C < 16#20; C =:= 16#7F -> $\s;
+sanitize_char($/) -> $\s;
+sanitize_char($\\) -> $\s;
+sanitize_char($:) -> $\s;
+sanitize_char($*) -> $\s;
+sanitize_char($?) -> $\s;
+sanitize_char($") -> $\s;
+sanitize_char($<) -> $\s;
+sanitize_char($>) -> $\s;
+sanitize_char($|) -> $\s;
+sanitize_char(C) -> C.
 
-collapse_underscores(S) ->
-    lists:reverse(collapse_underscores_1(S, [])).
+collapse_spaces(S) ->
+    lists:reverse(collapse_spaces_1(S, [])).
 
-collapse_underscores_1([], Acc) -> Acc;
-collapse_underscores_1([$_, $_ | Rest], Acc) -> collapse_underscores_1([$_ | Rest], Acc);
-collapse_underscores_1([C | Rest], Acc) -> collapse_underscores_1(Rest, [C | Acc]).
+collapse_spaces_1([], Acc) -> Acc;
+collapse_spaces_1([$\s, $\s | Rest], Acc) -> collapse_spaces_1([$\s | Rest], Acc);
+collapse_spaces_1([C | Rest], Acc) -> collapse_spaces_1(Rest, [C | Acc]).
+
+strip_dots(S) ->
+    NoLeading = lists:dropwhile(fun(C) -> C =:= $. end, S),
+    lists:reverse(lists:dropwhile(fun(C) -> C =:= $. orelse C =:= $\s end,
+                                  lists:reverse(NoLeading))).
 
 write_save(Z80Path, Machine, Source) ->
     Meta = build_meta(Machine, Source),
@@ -462,11 +516,19 @@ archive_path(SavesRoot, Source) ->
                                  program_name(Source) ++ "-quicksave-" ++ Stamp ++ ?SAVE_EXT),
                    0).
 
-new_history_path(SavesRoot) ->
-    Stamp = stamp_now(),
-    Z80 = filename:join(SavesRoot, Stamp ++ ?SAVE_EXT),
-    Final = available_path(Z80, 0),
-    {filename:basename(Final, ?SAVE_EXT), Final, meta_path(Final)}.
+%% @doc The file base for a named save: `<sanitized name>-<stamp>`, or just
+%% `<stamp>` when the name is empty or sanitizes to nothing.
+history_base(Name, Stamp) ->
+    case sanitize_filename(Name) of
+        "" -> Stamp;
+        Clean -> Clean ++ "-" ++ Stamp
+    end.
+
+%% @doc The `.z80` path for a new named save, uniquified if a file with the
+%% same base already exists (same-second saves with the same name).
+history_path(SavesRoot, Name, Stamp) ->
+    available_path(filename:join(SavesRoot,
+                                 history_base(Name, Stamp) ++ ?SAVE_EXT), 0).
 
 available_path(Z80, N) ->
     case filelib:is_regular(Z80) of
