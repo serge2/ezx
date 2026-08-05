@@ -66,7 +66,8 @@
     mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}} | undefined,
     file_dialog_refs = undefined :: {wxFileDialog:wxFileDialog(), undefined} | undefined,
     saves_dialog_refs = undefined :: {wxDialog:wxDialog(), wxListCtrl:wxListCtrl(),
-                                      wxButton:wxButton(), wxButton:wxButton(), wxButton:wxButton()} | undefined,
+                                      wxButton:wxButton(), wxButton:wxButton(), wxButton:wxButton(),
+                                      wxStaticBitmap:wxStaticBitmap()} | undefined,
     saves_entries = [] :: [{string(), string(), string(), string(), string()}],
     blank_cursor = undefined :: wxCursor:wxCursor() | undefined,
     cursor_hidden = false :: boolean(),
@@ -686,26 +687,28 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
     end;
 
 handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
-            #state{saves_dialog_refs = {Dialog, _, _, _, _}} = State) ->
+            #state{saves_dialog_refs = {Dialog, _, _, _, _, _}} = State) ->
     wxDialog:destroy(Dialog),
     {noreply, State#state{saves_dialog_refs = undefined, saves_entries = []}};
 
 handle_info(#wx{id = ?BTN_LOAD, event = #wxCommand{type = command_button_clicked}},
-            #state{saves_dialog_refs = {Dialog, List, _, _, _}, saves_entries = Entries} = State) ->
+            #state{saves_dialog_refs = {Dialog, List, _, _, _, _}, saves_entries = Entries} = State) ->
     load_selected_save(State, Dialog, List, Entries);
 
 handle_info(#wx{id = ?LIST_SAVES, event = #wxList{type = command_list_item_selected}},
-            #state{saves_dialog_refs = {_Dialog, List, LoadBtn, DeleteBtn, RenameBtn},
+            #state{saves_dialog_refs = {_Dialog, List, LoadBtn, DeleteBtn, RenameBtn, Preview},
                    saves_entries = Entries} = State) ->
+    Entry = ezx_saves_dialog:selected_entry(List, Entries),
     ezx_saves_dialog:update_buttons(List, Entries, LoadBtn, DeleteBtn, RenameBtn),
+    ezx_saves_dialog:update_preview(Preview, Entry),
     {noreply, State};
 
 handle_info(#wx{id = ?LIST_SAVES, event = #wxList{type = command_list_item_activated}},
-            #state{saves_dialog_refs = {Dialog, List, _, _, _}, saves_entries = Entries} = State) ->
+            #state{saves_dialog_refs = {Dialog, List, _, _, _, _}, saves_entries = Entries} = State) ->
     load_selected_save(State, Dialog, List, Entries);
 
 handle_info(#wx{id = ?BTN_DELETE, event = #wxCommand{type = command_button_clicked}},
-            #state{saves_dialog_refs = {_Dialog, List, _, _, _}, saves_entries = Entries} = State) ->
+            #state{saves_dialog_refs = {_Dialog, List, _, _, _, _}, saves_entries = Entries} = State) ->
     case ezx_saves_dialog:selected_entry(List, Entries) of
         undefined ->
             {noreply, State};
@@ -715,7 +718,7 @@ handle_info(#wx{id = ?BTN_DELETE, event = #wxCommand{type = command_button_click
     end;
 
 handle_info(#wx{id = ?BTN_RENAME, event = #wxCommand{type = command_button_clicked}},
-            #state{saves_dialog_refs = {Dialog, List, _, _, _}, saves_entries = Entries} = State) ->
+            #state{saves_dialog_refs = {Dialog, List, _, _, _, _}, saves_entries = Entries} = State) ->
     case ezx_saves_dialog:selected_entry(List, Entries) of
         undefined ->
             {noreply, State};
@@ -870,13 +873,27 @@ current_source(State) ->
 quick_save(State) ->
     case ezx_saves:quick_save(State#state.machine, saves_root(),
                               current_source(State)) of
-        ok ->
+        {ok, ArchiveZ80} ->
             io:format("Quick save written~n"),
+            write_quick_screenshots(State, ArchiveZ80),
             {noreply, set_toast(State, save)};
         {error, Reason} ->
             io:format("Quick save failed: ~p~n", [Reason]),
             {noreply, State}
     end.
+
+%% @doc Write the playfield screenshot sidecars for both files a quick save
+%% just wrote: the fixed slot and the archive copy. ArchiveZ80 is the path
+%% quick_save actually wrote — the timestamped, uniquified name is only known
+%% there, so it is passed back rather than recomputed. Best-effort — a
+%% failing screenshot never fails the save itself.
+write_quick_screenshots(#state{machine = Machine}, ArchiveZ80) ->
+    case ezx_saves:quick_path(saves_root()) of
+        {ok, SlotZ80, _} -> write_screenshot(Machine, SlotZ80);
+        none -> ok
+    end,
+    write_screenshot(Machine, ArchiveZ80),
+    ok.
 
 %% @doc Quick load (F9): restore the fixed `Last Quicksave` slot, no matter
 %% which (if any) game is loaded. No-op when there is no quick save yet.
@@ -908,6 +925,7 @@ do_save_state(State, Name) ->
                                 current_source(State), Name) of
         {ok, Path} ->
             io:format("Save state: ~s~n", [Path]),
+            write_screenshot(State#state.machine, Path),
             {noreply, set_toast(State, save)};
         {error, Reason} ->
             io:format("Save state failed: ~p~n", [Reason]),
@@ -1092,6 +1110,32 @@ icon_file() ->
         true -> {ok, Path};
         false -> error
     end.
+
+%% @doc Write the screenshot sidecar for a save just written: the last frame's
+%% playfield (256x192, no border) encoded as a PNG next to the `.z80`. The UI
+%% captures this, not ezx_saves, which stays free of wx. Best-effort: any
+%% failure (no machine, unreadable frame) silently skips the screenshot.
+write_screenshot(Machine, Z80Path) when Machine =/= undefined ->
+    try
+        PngPath = ezx_saves:png_path(Z80Path),
+        Image = wxImage:new(?SCREEN_WIDTH, ?SCREEN_HEIGHT,
+                            playfield_pixels(ezx_emulator:render_frame(Machine))),
+        _ = wxImage:saveFile(Image, PngPath, ?wxBITMAP_TYPE_PNG),
+        wxImage:destroy(Image),
+        ok
+    catch _:_ -> ok end;
+write_screenshot(_Machine, _Z80Path) ->
+    ok.
+
+%% @doc Crop the border off a 352x288 RGB frame, keeping the 256x192 playfield
+%% (48 border pixels per side).
+playfield_pixels(RGB) ->
+    RowBytes = ?SCREEN_WIDTH * 3,
+    BorderCols = (?DEFAULT_WIDTH - ?SCREEN_WIDTH) div 2 * 3,
+    BorderRows = (?DEFAULT_HEIGHT - ?SCREEN_HEIGHT) div 2,
+    iolist_to_binary(
+      [binary:part(RGB, (BorderRows + R) * (?DEFAULT_WIDTH * 3) + BorderCols, RowBytes)
+       || R <- lists:seq(0, ?SCREEN_HEIGHT - 1)]).
 
 %% @doc Blit the 352x288 RGB frame onto the panel, honoring crop, scale and
 %% fullscreen mode. Used both for running frames and for the frozen display
@@ -1366,7 +1410,7 @@ close_dialog(Obj, #state{mouse_dialog_refs = {Dialog, _}} = State) when Obj =:= 
 close_dialog(Obj, #state{file_dialog_refs = {Dialog, _}} = State) when Obj =:= Dialog ->
     wxDialog:destroy(Obj),
     State#state{file_dialog_refs = undefined};
-close_dialog(Obj, #state{saves_dialog_refs = {Dialog, _, _, _, _}} = State) when Obj =:= Dialog ->
+close_dialog(Obj, #state{saves_dialog_refs = {Dialog, _, _, _, _, _}} = State) when Obj =:= Dialog ->
     wxDialog:destroy(Obj),
     State#state{saves_dialog_refs = undefined, saves_entries = []};
 close_dialog(_Obj, State) ->

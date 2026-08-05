@@ -3,20 +3,24 @@
 -include_lib("wx/include/wx.hrl").
 -include("menu_ids.hrl").
 
--export([open/2, refresh/2, update_buttons/5, selected_entry/2, entry_cells/1]).
+-export([open/2, refresh/2, update_buttons/5, update_preview/2, selected_entry/2, entry_cells/1]).
+
+-define(PREVIEW_W, 192).
+-define(PREVIEW_H, 144).
 
 %% @doc Open the modeless "Load" dialog parented on Frame.
 %% Entries are the ezx_saves:list_history/1 result, newest first, shown in a
-%% two-column list (Name | Timestamp). Returns refs as {Dialog, List,
-%% LoadBtn, DeleteBtn, RenameBtn} so the caller can read the selected entry,
-%% destroy the dialog, and keep the action buttons in sync with the
-%% selection. The ?BTN_LOAD / ?BTN_DELETE / ?BTN_RENAME action buttons (ids
-%% defined in menu_ids.hrl) and the ?wxID_OK Close button are wired by the
-%% caller; Load sits to the right of Close and is the default button (Enter
-%% activates it).
+%% two-column list (Name | Timestamp) with a screenshot preview of the
+%% selected save to its right. Returns refs as {Dialog, List, LoadBtn,
+%% DeleteBtn, RenameBtn, Preview} so the caller can read the selected entry,
+%% refresh the preview, destroy the dialog, and keep the action buttons in
+%% sync with the selection. The ?BTN_LOAD / ?BTN_DELETE / ?BTN_RENAME action
+%% buttons (ids defined in menu_ids.hrl) and the ?wxID_OK Close button are
+%% wired by the caller; Load sits to the right of Close and is the default
+%% button (Enter activates it).
 -spec open(wxFrame:wxFrame(), [{string(), string(), string(), string(), string()}]) ->
     {wxDialog:wxDialog(), wxListCtrl:wxListCtrl(), wxButton:wxButton(),
-     wxButton:wxButton(), wxButton:wxButton()}.
+     wxButton:wxButton(), wxButton:wxButton(), wxStaticBitmap:wxStaticBitmap()}.
 open(Frame, Entries) ->
     Dialog = wxDialog:new(Frame, -1, "Load", [{style, ?wxDEFAULT_DIALOG_STYLE}]),
     MainSizer = wxBoxSizer:new(?wxVERTICAL),
@@ -28,7 +32,12 @@ open(Frame, Entries) ->
     wxListCtrl:insertColumn(List, 1, "Timestamp"),
     wxListCtrl:setColumnWidth(List, 0, 430),
     wxListCtrl:setColumnWidth(List, 1, 150),
-    wxSizer:add(MainSizer, List, [{flag, ?wxEXPAND bor ?wxALL}, {border, 10}]),
+    Row = wxBoxSizer:new(?wxHORIZONTAL),
+    wxSizer:add(Row, List, [{flag, ?wxEXPAND bor ?wxALL}, {border, 10}, {proportion, 1}]),
+    Preview = wxStaticBitmap:new(Dialog, -1, placeholder_bitmap(),
+                                 [{size, {?PREVIEW_W, ?PREVIEW_H}}]),
+    wxSizer:add(Row, Preview, [{flag, ?wxALL bor ?wxALIGN_CENTER}, {border, 10}]),
+    wxSizer:add(MainSizer, Row, [{flag, ?wxEXPAND}]),
 
     BtnRow = wxBoxSizer:new(?wxHORIZONTAL),
     DeleteBtn = wxButton:new(Dialog, ?BTN_DELETE, [{label, "Delete"}]),
@@ -48,7 +57,7 @@ open(Frame, Entries) ->
     wxSizer:add(BtnBottom, LoadBtn, []),
     wxSizer:add(MainSizer, BtnBottom, [{flag, ?wxALL bor ?wxALIGN_RIGHT}, {border, 10}]),
 
-    Refs = {Dialog, List, LoadBtn, DeleteBtn, RenameBtn},
+    Refs = {Dialog, List, LoadBtn, DeleteBtn, RenameBtn, Preview},
     refresh(Refs, Entries),
 
     wxDialog:setSizer(Dialog, MainSizer),
@@ -64,11 +73,11 @@ open(Frame, Entries) ->
     Refs.
 
 %% @doc Repopulate the list from a fresh ezx_saves:list_history/1 result,
-%% select the first entry and sync the action buttons.
+%% select the first entry, sync the action buttons and show its preview.
 -spec refresh({wxDialog:wxDialog(), wxListCtrl:wxListCtrl(), wxButton:wxButton(),
-               wxButton:wxButton(), wxButton:wxButton()},
+               wxButton:wxButton(), wxButton:wxButton(), wxStaticBitmap:wxStaticBitmap()},
               [{string(), string(), string(), string(), string()}]) -> ok.
-refresh({_Dialog, List, LoadBtn, DeleteBtn, RenameBtn}, Entries) ->
+refresh({_Dialog, List, LoadBtn, DeleteBtn, RenameBtn, Preview}, Entries) ->
     wxListCtrl:deleteAllItems(List),
     lists:foldl(fun(Entry, Idx) ->
         {NameCell, TimestampCell} = entry_cells(Entry),
@@ -78,7 +87,9 @@ refresh({_Dialog, List, LoadBtn, DeleteBtn, RenameBtn}, Entries) ->
     end, 0, Entries),
     case Entries of
         [] -> ok;
-        _ -> wxListCtrl:setItemState(List, 0, ?wxLIST_STATE_SELECTED, ?wxLIST_STATE_SELECTED)
+        [First | _] ->
+            wxListCtrl:setItemState(List, 0, ?wxLIST_STATE_SELECTED, ?wxLIST_STATE_SELECTED),
+            update_preview(Preview, First)
     end,
     update_buttons(List, Entries, LoadBtn, DeleteBtn, RenameBtn),
     ok.
@@ -121,8 +132,7 @@ selected_entry(List, Entries) ->
         _ -> undefined
     end.
 
-%% @doc The two list cells for a history entry, derived from the save's
-%% metadata. The fixed quick slot always shows its file base (`Last
+%% @doc The two list cells for a history entry, derived from the save's%% metadata. The fixed quick slot always shows its file base (`Last
 %% Quicksave') in the Name cell — its identity comes from its fixed file
 %% name, whatever its meta says. Any other save shows the human name; the
 %% Timestamp cell always shows the save timestamp. A save without a name in
@@ -140,3 +150,46 @@ entry_cells(Entry = {Base, _Name, Timestamp, _Sna, _Meta}) ->
 entry_cells_regular({Base, "", Timestamp, _Sna, _Meta}) -> {Base, Timestamp};
 entry_cells_regular({_Base, Name, Timestamp, _Sna, _Meta}) when Name =/= Timestamp -> {Name, Timestamp};
 entry_cells_regular({_Base, Name, _Timestamp, _Sna, _Meta}) -> {"", Name}.
+
+%% @doc Show the screenshot of the selected save in the preview pane, scaled
+%% to fit. A save without a screenshot sidecar (old saves) falls back to the
+%% placeholder icon.
+-spec update_preview(wxStaticBitmap:wxStaticBitmap(),
+                     {string(), string(), string(), string(), string()} | undefined) -> ok.
+update_preview(_Preview, undefined) ->
+    ok;
+update_preview(Preview, {_Base, _Name, _Timestamp, SavePath, _MetaPath}) ->
+    Bmp = case filelib:is_regular(ezx_saves:png_path(SavePath)) of
+        true -> load_preview(ezx_saves:png_path(SavePath));
+        false -> error
+    end,
+    case Bmp of
+        {ok, Bitmap} -> wxStaticBitmap:setBitmap(Preview, Bitmap);
+        error -> wxStaticBitmap:setBitmap(Preview, placeholder_bitmap())
+    end,
+    ok.
+
+load_preview(PngPath) ->
+    try
+        Img = wxImage:new(PngPath),
+        Scaled = wxImage:scale(Img, ?PREVIEW_W, ?PREVIEW_H),
+        Bitmap = wxBitmap:new(Scaled),
+        wxImage:destroy(Img),
+        wxImage:destroy(Scaled),
+        {ok, Bitmap}
+    catch _:_ -> error
+    end.
+
+%% @doc The placeholder for a save without a screenshot: the app icon scaled
+%% into the preview box (a blank bitmap if the icon is missing).
+placeholder_bitmap() ->
+    try
+        Img = wxImage:new(filename:join(ezx_ui_lib:priv_dir(), "ezx.png")),
+        Scaled = wxImage:scale(Img, ?PREVIEW_W, ?PREVIEW_H),
+        Bitmap = wxBitmap:new(Scaled),
+        wxImage:destroy(Img),
+        wxImage:destroy(Scaled),
+        Bitmap
+    catch _:_ ->
+        wxBitmap:new({?PREVIEW_W, ?PREVIEW_H})
+    end.

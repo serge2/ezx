@@ -271,7 +271,8 @@ quick_save_and_path_test() ->
     try
         Machine = init_machine(),
         ?assertEqual(none, ezx_saves:quick_path(Root)),
-        ok = ezx_saves:quick_save(Machine, Root, "g.tap"),
+        {ok, WrittenArchive} = ezx_saves:quick_save(Machine, Root, "g.tap"),
+        ?assert(filelib:is_regular(WrittenArchive)),
         %% F9 slot: the fixed "Last Quicksave" pair in the root.
         {ok, Z80Path, MetaPath} = ezx_saves:quick_path(Root),
         ?assertEqual(filename:join(Root, "Last Quicksave.z80"), Z80Path),
@@ -297,6 +298,10 @@ quick_save_and_path_test() ->
         ?assertEqual("g", string:left(ArchiveStamp, 1)),
         ?assertNotEqual(nomatch, string:find(ArchiveStamp, "-quicksave-")),
         ?assert(filelib:is_regular(ArchivePath)),
+        %% The returned archive path is the one listed — the timestamped,
+        %% uniquified name is only known at save time, so a recomputed name
+        %% would not address the file that was written.
+        ?assertEqual(ArchivePath, WrittenArchive),
         ?assertEqual(Root, filename:dirname(Z80Path)),
         ?assertEqual(Root, filename:dirname(ArchivePath))
     after
@@ -326,6 +331,35 @@ history_named_save_test() ->
         ?assert(filelib:is_regular(filename:join(Root, Stamp2 ++ ".z80"))),
         ok = ezx_saves:delete_history(Root, Stamp2),
         ?assertEqual([], ezx_saves:list_history(Root))
+    after
+        file:del_dir_r(Root)
+    end.
+
+png_sidecar_handling_test() ->
+    Root = temp_root(),
+    file:del_dir_r(Root),
+    try
+        Machine = init_machine(),
+        {ok, Path} = ezx_saves:save_history(Machine, Root, "g.tap", "lvl"),
+        Png = ezx_saves:png_path(Path),
+        ?assertEqual(filename:rootname(Path) ++ ".png", Png),
+        %% The UI writes the screenshot sidecar; the bookkeeping functions
+        %% must treat it as part of the save (rename moves it, delete removes
+        %% it), and a save without one still renames/deletes cleanly.
+        ok = file:write_file(Png, <<"png">>),
+        [{Stamp, _, _, _, _}] = ezx_saves:list_history(Root),
+        ok = ezx_saves:rename_history(Root, Stamp, "renamed"),
+        [{Stamp2, "renamed", _, _, _}] = ezx_saves:list_history(Root),
+        ?assert(filelib:is_regular(filename:join(Root, Stamp2 ++ ".png"))),
+        ?assertNot(filelib:is_regular(Png)),
+        ok = ezx_saves:delete_history(Root, Stamp2),
+        ?assertEqual([], ezx_saves:list_history(Root)),
+        ?assertNot(filelib:is_regular(filename:join(Root, Stamp2 ++ ".png"))),
+        {ok, _} = ezx_saves:save_history(Machine, Root, "g.tap", "noimg"),
+        [{Stamp3, _, _, _, _}] = ezx_saves:list_history(Root),
+        ok = ezx_saves:rename_history(Root, Stamp3, "noimg2"),
+        [{Stamp4, "noimg2", _, _, _}] = ezx_saves:list_history(Root),
+        ok = ezx_saves:delete_history(Root, Stamp4)
     after
         file:del_dir_r(Root)
     end.
@@ -402,7 +436,7 @@ list_history_sorts_by_mtime_test() ->
         {ok, _} = ezx_saves:save_history(Machine, Root, "g.tap", "old"),
         timer:sleep(1100),
         {ok, _} = ezx_saves:save_history(Machine, Root, "g.tap", "new"),
-        ok = ezx_saves:quick_save(Machine, Root, "g.tap"),
+        {ok, _} = ezx_saves:quick_save(Machine, Root, "g.tap"),
         [{Quick, _, _, _, _} | Rest] = ezx_saves:list_history(Root),
         ?assertEqual("Last Quicksave", Quick),
         %% Newest first by mtime: "new" precedes "old" (the quicksave archive

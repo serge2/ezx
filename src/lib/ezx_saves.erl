@@ -61,10 +61,12 @@
     is_quick_slot/1,
     quick_save/3,
     quick_path/1,
+    archive_path/2,
     save_history/4,
     list_history/1,
     delete_history/2,
-    rename_history/3
+    rename_history/3,
+    png_path/1
 ]).
 
 -include("z80_records.hrl").
@@ -303,8 +305,11 @@ is_quick_slot(Stamp) ->
 %% no failure case (PC is stored explicitly). The slot keeps the plain machine
 %% meta (its fixed file name is its identity, shown by the manager dialog);
 %% only the archive copy carries the human name `<Program> - Quicksave`.
+%% Returns the path of the archive copy actually written, so the caller can
+%% address its sidecars (e.g. the screenshot) without recomputing the
+%% timestamped, uniquified file name.
 -spec quick_save(#machine_state{}, string(), string()) ->
-    ok | {error, term()}.
+    {ok, string()} | {error, term()}.
 quick_save(Machine, SavesRoot, Source) ->
     SlotMeta = build_meta(Machine, Source),
     ArchiveMeta = SlotMeta#{"name" => quick_name(Source)},
@@ -312,7 +317,10 @@ quick_save(Machine, SavesRoot, Source) ->
         ok ->
             Archive = archive_path(SavesRoot, Source),
             filelib:ensure_dir(filename:join(SavesRoot, "dummy")),
-            write_two(Archive, meta_path(Archive), Machine, ArchiveMeta);
+            case write_two(Archive, meta_path(Archive), Machine, ArchiveMeta) of
+                ok -> {ok, Archive};
+                {error, _} = Err -> Err
+            end;
         Err ->
             Err
     end.
@@ -374,12 +382,13 @@ delete_history(SavesRoot, Stamp) ->
     Z80 = filename:join(SavesRoot, Stamp ++ ".z80"),
     R1 = file:delete(Z80),
     R2 = file:delete(meta_path(Z80)),
-    case {R1, R2} of
-        {ok, ok} -> ok;
-        {ok, {error, enoent}} -> ok;
-        {{error, enoent}, ok} -> ok;
-        {_, {error, R}} -> {error, R};
-        {{error, R}, _} -> {error, R}
+    R3 = file:delete(png_path(Z80)),
+    case {R1, R2, R3} of
+        {ok, ok, _} -> ok;
+        {ok, {error, enoent}, _} -> ok;
+        {{error, enoent}, ok, _} -> ok;
+        {_, {error, R}, _} -> {error, R};
+        {{error, R}, _, _} -> {error, R}
     end.
 
 %% @doc Rename a save: the `.z80`/`.meta` pair is moved to the new
@@ -410,7 +419,12 @@ rename_history(SavesRoot, Stamp, NewName) ->
                         ok ->
                             file:write_file(meta_path(NewZ80),
                                             meta_to_iodata(Meta1)),
-                            file:delete(MetaPath);
+                            file:delete(MetaPath),
+                            _ = case filelib:is_regular(png_path(OldZ80)) of
+                                true -> file:rename(png_path(OldZ80), png_path(NewZ80));
+                                false -> ok
+                            end,
+                            ok;
                         {error, _} = Err -> Err
                     end
             end
@@ -517,6 +531,12 @@ write_two(Z80Path, MetaPath, Machine, Meta) ->
 
 meta_path(Z80Path) ->
     filename:rootname(Z80Path) ++ ".meta".
+
+%% @doc The screenshot sidecar for a save: same base as the `.z80`, with a
+%% `.png` extension. The file is written by the UI at save time (best-effort);
+%% older saves may not have one, so consumers must fall back to a placeholder.
+png_path(Z80Path) ->
+    filename:rootname(Z80Path) ++ ".png".
 
 quick_path_z80(SavesRoot) ->
     filename:join(SavesRoot, ?QUICK_STAMP ++ ?SAVE_EXT).
