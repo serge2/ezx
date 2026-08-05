@@ -38,6 +38,34 @@ parse_48k_sna_with_trailing_garbage_test() ->
     #sna_header{is_128k = false} = ezx_sna:parse(Data),
     ok.
 
+compose_48k_round_trip_test() ->
+    H = #sna_header{
+        i = 16#75, r = 16#86,
+        af = 16#2211, bc = 16#4433, de = 16#6655, hl = 16#8877,
+        ix = 16#4231, iy = 16#6453,
+        af_alt = 16#AA99, bc_alt = 16#CCBB, de_alt = 16#EEDD, hl_alt = 16#2010,
+        sp = 16#A000, iff2 = 16#04, im = 2, border = 5,
+        mem = <<0:49152/unit:8>>,
+        is_128k = false
+    },
+    ?assertEqual(H, ezx_sna:parse(ezx_sna:compose(H))),
+    ok.
+
+compose_128k_round_trip_test() ->
+    Extra = iolist_to_binary([binary:copy(<<B>>, 16384) || B <- [0, 1, 3, 4, 6, 7]]),
+    H = #sna_header{
+        i = 0, r = 0,
+        af = 0, bc = 0, de = 0, hl = 0,
+        ix = 0, iy = 0,
+        af_alt = 0, bc_alt = 0, de_alt = 0, hl_alt = 0,
+        sp = 16#1234, iff2 = 16#04, im = 1, border = 7,
+        mem = <<0:49152/unit:8>>,
+        is_128k = true, pc = 16#5678, p7ffd = 16#11, ay_flag = 1,
+        raw_extra = Extra
+    },
+    ?assertEqual(H, ezx_sna:parse(ezx_sna:compose(H))),
+    ok.
+
 load_128k_sna_verify_banks_test() ->
     Rom = binary:copy(<<0>>, 16384),
     MemMod = ezx_memory_128_banks_tuples,

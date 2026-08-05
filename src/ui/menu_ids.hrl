@@ -6,3 +6,11 @@
 -define(MENU_SETTINGS_SOUND, 7200).
 -define(MENU_SETTINGS_MOUSE, 7201).
 -define(MENU_DEBUG_PERF, 7300).
+-define(MENU_QUICK_SAVE, 7400).
+-define(MENU_QUICK_LOAD, 7401).
+-define(MENU_SAVE_STATE, 7402).
+-define(MENU_MANAGE_SAVES, 7403).
+-define(BTN_LOAD, 8001).  %% Saves-dialog action buttons
+-define(BTN_RENAME, 8003).
+-define(BTN_DELETE, 8004).
+-define(LIST_SAVES, 8005).  %% Saves-dialog list box (double-click loads)

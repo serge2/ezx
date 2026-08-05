@@ -127,7 +127,8 @@ set_mouse_buttons(#machine_state{kempston_mouse = Mouse} = Machine, Buttons) ->
     Machine#machine_state{kempston_mouse = ezx_kempston_mouse:set_buttons(Mouse, Buttons)}.
 
 %% @doc Load a 48K SNA snapshot.
--spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
+-spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
+    Error :: bad_sna_header | unsupported_version | sna_load_failed.
 load_sna(Machine, Data) ->
     try ezx_sna:parse(Data) of
         #sna_header{is_128k = true} ->
@@ -195,7 +196,8 @@ load_sna(Machine, Data) ->
     end.
 
 %% @doc Load a Z80 snapshot (v1/v2/v3).
--spec load_z80(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
+-spec load_z80(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
+    Error :: bad_z80_header | unsupported_version | z80_load_failed.
 load_z80(Machine, Data) ->
     MemModule = Machine#machine_state.memory_module,
     try ezx_z80:parse(Data) of
@@ -246,7 +248,8 @@ load_z80(Machine, Data) ->
     end.
 
 %% @doc Load a TAP file using tape traps.
--spec load_tap(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
+-spec load_tap(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
+    Error :: bad_tap_data.
 load_tap(Machine, Data) ->
     try ezx_tap:parse_blocks(Data) of
         Blocks ->

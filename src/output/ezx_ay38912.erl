@@ -78,7 +78,7 @@
 %%   - 0xFFFD: read data from latched register (read/1)
 %% =============================================================================
 
--export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, frame_start/2]).
+-export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, frame_start/2, regs/1, set_regs/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -231,6 +231,20 @@ mask_read(ay, _Latch) -> 16#FF.
 -spec frame_start(state(), non_neg_integer()) -> state().
 frame_start(#ay_state{} = AY, _TState) ->
     AY.
+
+%% @doc Read all 16 registers as a list of bytes (for snapshot save).
+-spec regs(state()) -> [byte()].
+regs(#ay_state{regs = Regs}) -> tuple_to_list(Regs).
+
+%% @doc Overwrite all 16 registers from a list of 16 bytes (snapshot load).
+%% The latch is reset and the running envelope/noise phases are left as-is;
+%% register changes take effect from the next render step.
+-spec set_regs(state(), [byte()]) -> state().
+set_regs(#ay_state{} = AY, Regs) when is_list(Regs) ->
+    case length(Regs) of
+        16 -> AY#ay_state{regs = list_to_tuple(Regs), latch = 0};
+        _  -> error(bad_regs)
+    end.
 
 %% @doc Render one frame of audio into Samples mono PCM samples per channel
 %% (S16LE, 0..+32767), one per AY channel A/B/C.  FrameLen defines the number

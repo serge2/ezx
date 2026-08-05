@@ -13,8 +13,8 @@ open(Frame, BeeperVol, AyVol, Mode) ->
     open(Frame, BeeperVol, AyVol, Mode, ay).
 
 %% @doc Open the "Sound Settings" dialog, including the sound chip
-%% (AY-3-8912 vs YM2149) selection.
--spec open(wxFrame:wxFrame(), 0..100, 0..100, acb | abc | mono, ay | ym) ->
+%% (AY-3-8912 vs YM2149 vs Off) selection.
+-spec open(wxFrame:wxFrame(), 0..100, 0..100, acb | abc | mono, ay | ym | off) ->
     {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice(), wxChoice:wxChoice()}}.
 open(Frame, BeeperVol, AyVol, Mode, Chip) ->
     Dialog = wxDialog:new(Frame, -1, "Sound Settings", [{style, ?wxDEFAULT_DIALOG_STYLE}]),
@@ -35,7 +35,7 @@ open(Frame, BeeperVol, AyVol, Mode, Chip) ->
     wxChoice:setSelection(ModeChoice, stereo_mode_index(Mode)),
     wxStaticBoxSizer:add(AySizer, ModeChoice, [{flag, ?wxEXPAND bor ?wxLEFT bor ?wxRIGHT bor ?wxBOTTOM}, {border, 5}]),
     wxStaticBoxSizer:add(AySizer, wxStaticText:new(Dialog, -1, "Chip"), [{flag, ?wxALL}, {border, 5}]),
-    ChipChoice = wxChoice:new(Dialog, -1, [{choices, ["AY-3-8912", "YM2149"]}]),
+    ChipChoice = wxChoice:new(Dialog, -1, [{choices, ["AY-3-8912", "YM2149", "Off"]}]),
     wxChoice:setSelection(ChipChoice, chip_index(Chip)),
     wxStaticBoxSizer:add(AySizer, ChipChoice, [{flag, ?wxEXPAND bor ?wxLEFT bor ?wxRIGHT bor ?wxBOTTOM}, {border, 5}]),
     wxSizer:add(MainSizer, AySizer, [{flag, ?wxEXPAND bor ?wxALL}, {border, 10}]),
@@ -74,11 +74,13 @@ stereo_mode_from_index(1) -> abc;
 stereo_mode_from_index(2) -> mono.
 
 %% @doc Choice widget index for a sound chip.
--spec chip_index(ay | ym) -> 0..1.
-chip_index(ay) -> 0;
-chip_index(ym) -> 1.
+-spec chip_index(ay | ym | off) -> 0..2.
+chip_index(ay)  -> 0;
+chip_index(ym)  -> 1;
+chip_index(off) -> 2.
 
-%% @doc Sound chip for a choice widget index (0..1).
--spec chip_from_index(0..1) -> ay | ym.
+%% @doc Sound chip for a choice widget index (0..2).
+-spec chip_from_index(0..2) -> ay | ym | off.
 chip_from_index(0) -> ay;
-chip_from_index(1) -> ym.
+chip_from_index(1) -> ym;
+chip_from_index(2) -> off.

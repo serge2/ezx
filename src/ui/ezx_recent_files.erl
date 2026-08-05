@@ -35,12 +35,17 @@ update(File, RecentFiles) ->
 
 build_menu(RecentFiles) ->
     FileMenu = wxMenu:new(),
-    wxMenu:append(FileMenu, ?wxID_OPEN, "Load...\tCtrl+O", [{help, "Load a .sna, .z80 or .tap file"}]),
+    wxMenu:append(FileMenu, ?wxID_OPEN, "Open...\tCtrl+O", [{help, "Load a .sna, .z80 or .tap file"}]),
+    wxMenu:append(FileMenu, ?MENU_QUICK_SAVE, "Quick Save\tF5", [{help, "Save the current state to the quick slot"}]),
+    wxMenu:append(FileMenu, ?MENU_QUICK_LOAD, "Quick Load\tF9", [{help, "Load the quick-slot save"}]),
+    wxMenu:appendSeparator(FileMenu),
+    wxMenu:append(FileMenu, ?MENU_SAVE_STATE, "Save\tF2", [{help, "Save the current state under a name"}]),
+    wxMenu:append(FileMenu, ?MENU_MANAGE_SAVES, "Load\tF3", [{help, "Load, delete or rename saved states"}]),
     case RecentFiles of
         [] -> ok;
         _ ->
             wxMenu:appendSeparator(FileMenu),
-            LabelItem = wxMenu:append(FileMenu, ?MENU_RECENT_LABEL, "Recent:"),
+            LabelItem = wxMenu:append(FileMenu, ?MENU_RECENT_LABEL, "Recently Opened:"),
             wxMenuItem:enable(LabelItem, [{enable, false}]),
             lists:foreach(fun({Idx, Path}) ->
                 Name = filename:basename(Path),

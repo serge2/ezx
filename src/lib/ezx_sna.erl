@@ -1,4 +1,10 @@
-%% @doc ZX Spectrum SNA file format parser.
+%% @doc ZX Spectrum SNA snapshot format: parser and composer.
+%%
+%% This module is pure format: it only knows the on-disk SNA layout and the
+%% #sna_header{} record. parse/1 decodes a binary into the record and
+%% compose/1 encodes the record back into a binary; compose(parse(B)) =:= B
+%% for well-formed snapshots. Nothing here touches the machine state — the
+%% bridge between a #machine_state{} and the record lives in ezx_saves.
 %%
 %% SNA (Snapshot) format captures the full state of a 48K Spectrum.
 %% Total file size: 27 bytes header + 49152 bytes (48K RAM starting at 0x4000).
@@ -42,7 +48,7 @@
 
 -include("sna.hrl").
 
--export([parse/1]).
+-export([parse/1, compose/1]).
 
 -type sna_header() :: #sna_header{}.
 -export_type([sna_header/0]).
@@ -86,3 +92,32 @@ parse_extended(Header, <<PCL:8, PCH:8, P7FFD:8, AYFlag:8, Extra/binary>>)
     Header#sna_header{is_128k = true, pc = PC, p7ffd = P7FFD, ay_flag = AYFlag, raw_extra = Extra};
 parse_extended(Header, _Rest) ->
     Header.
+
+%% @doc Serialize a #sna_header{} record into a SNA binary. The inverse of
+%% parse/1: compose(parse(B)) =:= B for well-formed snapshots.
+-spec compose(sna_header()) -> binary().
+compose(#sna_header{is_128k = true} = H) ->
+    Base = compose(H#sna_header{is_128k = false}),
+    Ext = <<(H#sna_header.pc):16/little,
+            (H#sna_header.p7ffd):8,
+            (H#sna_header.ay_flag):8,
+            (H#sna_header.raw_extra)/binary>>,
+    <<Base/binary, Ext/binary>>;
+compose(#sna_header{is_128k = false} = H) ->
+    <<(H#sna_header.i):8,
+      (H#sna_header.hl_alt):16/little,
+      (H#sna_header.de_alt):16/little,
+      (H#sna_header.bc_alt):16/little,
+      (H#sna_header.af_alt):16/little,
+      (H#sna_header.hl):16/little,
+      (H#sna_header.de):16/little,
+      (H#sna_header.bc):16/little,
+      (H#sna_header.iy):16/little,
+      (H#sna_header.ix):16/little,
+      (H#sna_header.iff2):8,
+      (H#sna_header.r):8,
+      (H#sna_header.af):16/little,
+      (H#sna_header.sp):16/little,
+      (H#sna_header.im):8,
+      (H#sna_header.border):8,
+      (H#sna_header.mem)/binary>>.

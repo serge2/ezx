@@ -40,6 +40,7 @@
     read_byte/2,
     read_block/3,
     read_video_block/1,
+    read_bank_block/2,
     write_byte/3,
     write_port_7ffd/2,
     get_p7ffd/1,
@@ -134,6 +135,13 @@ read_video_block(#mem128{banks = Banks, p7ffd = P7ffd}) ->
 
 -spec get_p7ffd(state()) -> byte().
 get_p7ffd(#mem128{p7ffd = P7ffd}) -> P7ffd.
+
+%% @doc Read a whole 16KB RAM bank (index 0-7) as a binary. Used by snapshot
+%% save to dump the 128K RAM image.
+-spec read_bank_block(state(), 0..7) -> binary().
+read_bank_block(#mem128{banks = Banks}, Bank) ->
+    iolist_to_binary(tuple_to_list(element(Bank + ?RAM_BASE_IDX + ?BANK_INDEX_OFFSET,
+                                           Banks))).
 
 -spec write_bank_block(state(), non_neg_integer(), binary()) -> state().
 write_bank_block(#mem128{banks = Banks} = State, Bank, Data) ->

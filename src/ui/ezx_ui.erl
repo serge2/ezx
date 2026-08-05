@@ -21,10 +21,15 @@
 -define(MENU_MUTE, 3002).
 -define(MENU_PAUSE, 3003).
 -define(MENUBAR_ACTIONS_INDEX, 4).
+-define(TOAST_MS, 1000).
+-define(TOAST_BG, {30, 30, 30}).
+-define(TOAST_BORDER, {170, 170, 170, 255}).
+-define(TOAST_ICON, {240, 240, 240, 255}).
 
 -record(state, {
     machine   :: #machine_state{} | undefined,
     machine_type = '48k' :: '48k' | '128k',
+    current_file = undefined :: string() | undefined,
     frame     :: wxFrame:wxFrame(),
     panel     :: wxPanel:wxPanel(),
     scale = ?DEFAULT_SCALE :: pos_integer(),
@@ -49,14 +54,18 @@
     beeper_vol = 100 :: 0..100,
     ay_master_vol = 100 :: 0..100,
     ay_stereo_mode = acb :: acb | abc | mono,
-    ay_chip = ay :: ay | ym,
+    ay_chip = ay :: ay | ym | off,
     audio_filter = undefined :: ezx_audio_filter:state() | undefined,
     sound_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice(), wxChoice:wxChoice()}} | undefined,
     mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}} | undefined,
     file_dialog_refs = undefined :: {wxFileDialog:wxFileDialog(), undefined} | undefined,
+    saves_dialog_refs = undefined :: {wxDialog:wxDialog(), wxListBox:wxListBox(),
+                                      wxButton:wxButton(), wxButton:wxButton(), wxButton:wxButton()} | undefined,
+    saves_entries = [] :: [{string(), string(), string(), string()}],
     blank_cursor = undefined :: wxCursor:wxCursor() | undefined,
     cursor_hidden = false :: boolean(),
-    mouse = undefined :: any()
+    mouse = undefined :: any(),
+    toast = undefined :: {reference(), save | load} | undefined
 }).
 
 
@@ -105,7 +114,7 @@ init(_Options) ->
     wxMenu:append(SettingsMenu, ?MENU_SETTINGS_MOUSE, "Mouse...", [{help, "Configure the Kempston mouse"}]),
     wxMenuBar:append(MenuBar, SettingsMenu, "Settings"),
     ActionsMenu = wxMenu:new(),
-    wxMenu:append(ActionsMenu, ?MENU_RESET, "Reset\tF5", [{help, "Reset the emulator"}]),
+    wxMenu:append(ActionsMenu, ?MENU_RESET, "Reset\tF7", [{help, "Reset the emulator"}]),
     wxMenu:appendSeparator(ActionsMenu),
     wxMenu:appendCheckItem(ActionsMenu, ?MENU_MUTE, "Mute\tCtrl+M", [{help, "Toggle audio mute"}]),
     wxMenu:appendCheckItem(ActionsMenu, ?MENU_PAUSE, "Pause\tCtrl+P", [{help, "Pause and resume emulation"}]),
@@ -211,12 +220,33 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+handle_info({clear_toast, Ref}, #state{toast = {Ref, _}} = State) ->
+    {noreply, State#state{toast = undefined}};
+handle_info({clear_toast, _}, State) ->
+    {noreply, State};
+
 handle_info(frame_tick, #state{machine = undefined} = State) ->
     erlang:send_after(50, self(), frame_tick),
     {noreply, State};
 
 handle_info(frame_tick, #state{paused = true, machine = Machine,
                                aplay_port = Port} = State) ->
+    Silence = <<0:(audio_bytes_per_frame(Machine))/unit:8>>,
+    port_command(Port, Silence),
+    RGB = ezx_emulator:render_frame(Machine),
+    draw_frame(State, RGB),
+    Now = erlang:monotonic_time(microsecond),
+    {DelayMs, Pacing} = ezx_audio_pacing:advance(State#state.audio_pacing,
+                                                 byte_size(Silence), Now),
+    schedule_frame(DelayMs),
+    {noreply, State#state{audio_pacing = Pacing}};
+
+%% While the save/load toast is up the emulation is frozen: no run_frame, no
+%% audio, just the last rendered frame with the toast on top. It resumes when
+%% the toast clears (clear_toast message).
+handle_info(frame_tick, #state{machine = Machine,
+                               aplay_port = Port,
+                               toast = {_, _}} = State) ->
     Silence = <<0:(audio_bytes_per_frame(Machine))/unit:8>>,
     port_command(Port, Silence),
     RGB = ezx_emulator:render_frame(Machine),
@@ -311,7 +341,25 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_ESCAPE}}, State) 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F5}}, #state{machine = undefined} = State) ->
     {noreply, State};
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F5}}, State) ->
+    quick_save(State);
+
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F9}}, #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F9}}, State) ->
+    quick_load(State);
+
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F7}}, #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F7}}, State) ->
     do_reset(State);
+
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F2}}, #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F2}}, State) ->
+    save_state(State);
+
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F3}}, State) ->
+    manage_saves(State);
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = $M, controlDown = true}}, State) ->
     NewState = State#state{muted = not State#state.muted},
@@ -441,7 +489,7 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
     case Idx =< length(RecentFiles) of
         true ->
             File = lists:nth(Idx, RecentFiles),
-            case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type,
+            case ezx_ui_lib:load_emulator_file(File, State#state.machine_type,
                                                State#state.ay_chip) of
                 {ok, NewMachine} ->
                     io:format("Loaded: ~s~n", [File]),
@@ -449,6 +497,7 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                     NewRecent = ezx_recent_files:update(File, State#state.recent_files),
                     ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
                     {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
+                                          current_file = File,
                                           mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                                           audio_filter = ezx_audio_filter:new()}};
                 {error, _Code} = Err ->
@@ -486,6 +535,24 @@ handle_info(#wx{id = ?MENU_DEBUG_PERF, event = #wxCommand{type = command_menu_se
     NewState = State#state{perf_report = not State#state.perf_report},
     save_config(NewState),
     {noreply, NewState};
+
+handle_info(#wx{id = ?MENU_QUICK_SAVE, event = #wxCommand{type = command_menu_selected}}, #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{id = ?MENU_QUICK_SAVE, event = #wxCommand{type = command_menu_selected}}, State) ->
+    quick_save(State);
+
+handle_info(#wx{id = ?MENU_QUICK_LOAD, event = #wxCommand{type = command_menu_selected}}, #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{id = ?MENU_QUICK_LOAD, event = #wxCommand{type = command_menu_selected}}, State) ->
+    quick_load(State);
+
+handle_info(#wx{id = ?MENU_SAVE_STATE, event = #wxCommand{type = command_menu_selected}}, #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{id = ?MENU_SAVE_STATE, event = #wxCommand{type = command_menu_selected}}, State) ->
+    save_state(State);
+
+handle_info(#wx{id = ?MENU_MANAGE_SAVES, event = #wxCommand{type = command_menu_selected}}, State) ->
+    manage_saves(State);
 
 handle_info(#wx{id = ?MENU_SETTINGS_MOUSE, event = #wxCommand{type = command_menu_selected}},
             #state{frame = Frame, mouse = Mouse} = State) ->
@@ -586,7 +653,7 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
             #state{file_dialog_refs = {Dialog, _}} = State) ->
     File = wxFileDialog:getPath(Dialog),
     wxFileDialog:destroy(Dialog),
-    case ezx_ui_lib:load_emulator_file(State#state.machine, File, State#state.machine_type,
+    case ezx_ui_lib:load_emulator_file(File, State#state.machine_type,
                                        State#state.ay_chip) of
         {ok, NewMachine} ->
             io:format("Loaded: ~s~n", [File]),
@@ -594,12 +661,62 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
             NewRecent = ezx_recent_files:update(File, State#state.recent_files),
             ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
             {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
+                                   current_file = File,
                                    mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                                    file_dialog_refs = undefined,
                                    audio_filter = ezx_audio_filter:new()}};
         {error, _Code} = Err ->
             show_load_error(State#state.frame, File, Err),
             {noreply, State#state{file_dialog_refs = undefined}}
+    end;
+
+handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
+            #state{saves_dialog_refs = {Dialog, _, _, _, _}} = State) ->
+    wxDialog:destroy(Dialog),
+    {noreply, State#state{saves_dialog_refs = undefined, saves_entries = []}};
+
+handle_info(#wx{id = ?BTN_LOAD, event = #wxCommand{type = command_button_clicked}},
+            #state{saves_dialog_refs = {Dialog, ListBox, _, _, _}, saves_entries = Entries} = State) ->
+    load_selected_save(State, Dialog, ListBox, Entries);
+
+handle_info(#wx{id = ?LIST_SAVES, event = #wxCommand{type = command_listbox_selected}},
+            #state{saves_dialog_refs = {_Dialog, ListBox, LoadBtn, DeleteBtn, RenameBtn},
+                   saves_entries = Entries} = State) ->
+    ezx_saves_dialog:update_buttons(ListBox, Entries, LoadBtn, DeleteBtn, RenameBtn),
+    {noreply, State};
+
+handle_info(#wx{id = ?LIST_SAVES, event = #wxCommand{type = command_listbox_doubleclicked}},
+            #state{saves_dialog_refs = {Dialog, ListBox, _, _, _}, saves_entries = Entries} = State) ->
+    load_selected_save(State, Dialog, ListBox, Entries);
+
+handle_info(#wx{id = ?BTN_DELETE, event = #wxCommand{type = command_button_clicked}},
+            #state{saves_dialog_refs = {_Dialog, ListBox, _, _, _}, saves_entries = Entries} = State) ->
+    case ezx_saves_dialog:selected_entry(ListBox, Entries) of
+        undefined ->
+            {noreply, State};
+        {Stamp, _Name, _SavePath, _MetaPath} ->
+            ezx_saves:delete_history(saves_root(), Stamp),
+            {noreply, refresh_saves_dialog(State)}
+    end;
+
+handle_info(#wx{id = ?BTN_RENAME, event = #wxCommand{type = command_button_clicked}},
+            #state{saves_dialog_refs = {Dialog, ListBox, _, _, _}, saves_entries = Entries} = State) ->
+    case ezx_saves_dialog:selected_entry(ListBox, Entries) of
+        undefined ->
+            {noreply, State};
+        {Stamp, Name, _SavePath, _MetaPath} ->
+            NameDlg = wxTextEntryDialog:new(Dialog, "New name for this save:",
+                                            [{caption, "Rename Save"}, {value, Name}]),
+            case wxDialog:showModal(NameDlg) of
+                ?wxID_OK ->
+                    NewName = wxTextEntryDialog:getValue(NameDlg),
+                    wxTextEntryDialog:destroy(NameDlg),
+                    ezx_saves:rename_history(saves_root(), Stamp, NewName),
+                    {noreply, refresh_saves_dialog(State)};
+                _ ->
+                    wxTextEntryDialog:destroy(NameDlg),
+                    {noreply, State}
+            end
     end;
 
 handle_info(#wx{id = ?wxID_CANCEL, event = #wxCommand{type = command_button_clicked}},
@@ -623,6 +740,7 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                         machine = Machine1,
                         machine_type = NewType,
                         frame_count = 0,
+                        current_file = undefined,
                         mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                         audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine1)),
                         perf_start_us = Now,
@@ -671,13 +789,16 @@ do_reset(State) ->
     recreate_machine(State).
 
 %% @doc Recreate the machine from scratch (used by reset and by the sound
-%% dialog when the chip changes), keeping the UI audio settings.
+%% dialog when the chip changes), keeping the UI audio settings. The loaded
+%% game no longer exists in the fresh machine, so the current game (used for
+%% save names) is cleared.
 recreate_machine(State) ->
     case ezx_ui_lib:init_virtual_machine(State#state.machine_type, State#state.ay_chip) of
         {ok, Machine} ->
             Machine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, Machine),
             Now = erlang:monotonic_time(microsecond),
             {noreply, State#state{machine = Machine1, frame_count = 0,
+                                   current_file = undefined,
                                    mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                                    audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine1)),
                                    perf_start_us = Now,
@@ -698,14 +819,170 @@ recreate_machine(State) ->
 %% dialog is already open.
 -spec handle_open_file(#state{}) -> {noreply, #state{}}.
 handle_open_file(#state{file_dialog_refs = undefined} = State) ->
-    Dialog = wxFileDialog:new(State#state.frame, [{message, "Load snapshot or tape"},
-                                                   {wildCard, "ZX Spectrum files (*.sna,*.z80,*.tap)|*.sna;*.z80;*.tap|SNA files (*.sna)|*.sna|Z80 files (*.z80)|*.z80|TAP files (*.tap)|*.tap"},
-                                                   {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}]),
+    Dialog = wxFileDialog:new(State#state.frame, [
+        {message, "Load snapshot or tape"},
+        {wildCard, "ZX Spectrum files (*.sna,*.z80,*.tap)|*.sna;*.z80;*.tap|SNA files (*.sna)|*.sna|Z80 files (*.z80)|*.z80|TAP files (*.tap)|*.tap"},
+        {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}]),
     wxFileDialog:connect(Dialog, command_button_clicked),
     wxDialog:show(Dialog),
     {noreply, State#state{file_dialog_refs = {Dialog, undefined}}};
 handle_open_file(State) ->
     {noreply, State}.
+
+%% --- Save / load state ---
+
+saves_root() ->
+    filename:join(ezx_ui_lib:app_dir(), "saves").
+
+%% @doc Set the transient save/load toast. The drawing itself is done in
+%% draw_frame/2 while the field is set; a timer message clears it after
+%% ?TOAST_MS. The ref guards against an old timer clearing a newer toast.
+set_toast(State, Icon) ->
+    Ref = make_ref(),
+    erlang:send_after(?TOAST_MS, self(), {clear_toast, Ref}),
+    State#state{toast = {Ref, Icon}}.
+
+%% @doc The source game file that scopes save names; "" when nothing is
+%% loaded (saves are then named "Basic").
+current_source(State) ->
+    case State#state.current_file of
+        undefined -> "";
+        File -> File
+    end.
+
+%% @doc UI sound settings carried into the .meta sidecar under `sound_' keys.
+%% @doc Quick save (F5): overwrite the quick slot and append a history entry.
+quick_save(State) ->
+    case ezx_saves:quick_save(State#state.machine, saves_root(),
+                              current_source(State)) of
+        ok ->
+            io:format("Quick save written~n"),
+            {noreply, set_toast(State, save)};
+        {error, Reason} ->
+            io:format("Quick save failed: ~p~n", [Reason]),
+            {noreply, State}
+    end.
+
+%% @doc Quick load (F9): restore the fixed `Last Quicksave` slot, no matter
+%% which (if any) game is loaded. No-op when there is no quick save yet.
+quick_load(State) ->
+    case ezx_saves:quick_path(saves_root()) of
+        {ok, SnaPath, MetaPath} -> load_save(State, SnaPath, MetaPath);
+        none -> {noreply, State}
+    end.
+
+%% @doc Named save (F2): prompt for a name and append a history entry. The
+%% dialog pre-fills the loaded game's title (or "Basic" when nothing is
+%% loaded) as a suggestion.
+save_state(#state{frame = Frame} = State) ->
+    Suggested = ezx_saves:program_name(current_source(State)),
+    NameDlg = wxTextEntryDialog:new(Frame, "Enter a name for this save:",
+                                    [{caption, "Save State"}, {value, Suggested}]),
+    case wxDialog:showModal(NameDlg) of
+        ?wxID_OK ->
+            Name = wxTextEntryDialog:getValue(NameDlg),
+            wxTextEntryDialog:destroy(NameDlg),
+            do_save_state(State, Name);
+        _ ->
+            wxTextEntryDialog:destroy(NameDlg),
+            {noreply, State}
+    end.
+
+do_save_state(State, Name) ->
+    case ezx_saves:save_history(State#state.machine, saves_root(),
+                                current_source(State), Name) of
+        {ok, Path} ->
+            io:format("Save state: ~s~n", [Path]),
+            {noreply, set_toast(State, save)};
+        {error, Reason} ->
+            io:format("Save state failed: ~p~n", [Reason]),
+            {noreply, State}
+    end.
+
+%% @doc Open the modeless saves-manager dialog. No-op when a manager dialog
+%% is already open.
+manage_saves(#state{saves_dialog_refs = undefined} = State) ->
+    Entries = ezx_saves:list_history(saves_root()),
+    Refs = ezx_saves_dialog:open(State#state.frame, Entries),
+    {noreply, State#state{saves_dialog_refs = Refs, saves_entries = Entries}};
+manage_saves(State) ->
+    {noreply, State}.
+
+%% @doc Reload the manager list after a change (load/delete/rename/save) and
+%% keep the refs so the dialog stays open. The list always reflects the
+%% current game context, which a successful load may have changed.
+refresh_saves_dialog(#state{saves_dialog_refs = Refs} = State) ->
+    Entries = ezx_saves:list_history(saves_root()),
+    ezx_saves_dialog:refresh(Refs, Entries),
+    State#state{saves_entries = Entries}.
+
+%% @doc Load the save selected in the manager list box (used by the Load
+%% button and by a double click on an entry), then close the dialog.
+load_selected_save(State, Dialog, ListBox, Entries) ->
+    case ezx_saves_dialog:selected_entry(ListBox, Entries) of
+        undefined ->
+            {noreply, State};
+        {_Stamp, _Name, SavePath, MetaPath} ->
+            wxDialog:destroy(Dialog),
+            {noreply, State1} = load_save(State, SavePath, MetaPath),
+            {noreply, State1#state{saves_dialog_refs = undefined, saves_entries = []}}
+    end.
+
+%% @doc Restore a save: ezx_saves:load_save/3 loads the snapshot, picks the
+%% machine of the save's own type/chip, and applies the audio side (beeper/AY
+%% regs) from the meta. Here we only reconfigure the UI around the returned
+%% machine and metadata: mouse, pacing and the current game (from the save's
+%% source). UI settings (sound volumes, stereo mode, ...) stay untouched.
+%% Returns {noreply, NewState}; on failure the machine is left untouched.
+load_save(State, SavePath, MetaPath) ->
+    case ezx_saves:load_save(SavePath, MetaPath,
+                             State#state.ay_chip) of
+        {ok, NewMachine0, Meta} ->
+            io:format("Loaded save: ~s~n", [SavePath]),
+            TargetType = meta_atom(Meta, "machine_type", '48k'),
+            Chip = meta_atom(Meta, "ay_chip", State#state.ay_chip),
+            NewMachine = ezx_ui_mouse:apply_to_machine(State#state.mouse, NewMachine0),
+            Now = erlang:monotonic_time(microsecond),
+            NewState = State#state{
+                machine = NewMachine,
+                machine_type = TargetType,
+                ay_chip = Chip,
+                current_file = meta_source(Meta, State#state.current_file),
+                frame_count = 0,
+                mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
+                audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(NewMachine)),
+                perf_start_us = Now,
+                audio_filter = ezx_audio_filter:new()
+            },
+            check_machine_type_menu(NewState),
+            {noreply, set_toast(NewState, load)};
+        {error, _Code} = Err ->
+            show_load_error(State#state.frame, SavePath, Err),
+            {noreply, State}
+    end.
+
+meta_source(undefined, Default) -> Default;
+meta_source(Meta, Default) ->
+    case maps:get("source", Meta, undefined) of
+        undefined -> Default;
+        S -> S
+    end.
+
+meta_atom(Meta, Key, Default) ->
+    case maps:get(Key, Meta, undefined) of
+        undefined -> Default;
+        Str ->
+            try list_to_atom(Str)
+            catch _:_ -> Default
+            end
+    end.
+
+%% @doc Sync the Emulator menu radio with the machine type after a save
+%% restored a different machine.
+check_machine_type_menu(#state{menu_bar = MenuBar, machine_type = MType}) ->
+    EmulatorMenu = wxMenuBar:getMenu(MenuBar, 1),
+    wxMenu:check(EmulatorMenu, ?MENU_MACHINE_BASE + machine_type_offset(MType), true),
+    ok.
 
 reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = State) ->
     wxFrame:showFullScreen(Frame, false),
@@ -835,10 +1112,93 @@ draw_frame(State, RGB) ->
     wxDC:drawBitmap(BufDC, Bmp, {0, 0}),
     wxDC:setUserScale(BufDC, 1.0, 1.0),
     wxDC:setDeviceOrigin(BufDC, 0, 0),
+    draw_toast(State, BufDC, PW, PH),
     wxBufferedDC:destroy(BufDC),
     wxMemoryDC:destroy(BmpDC),
     wxClientDC:destroy(ClientDC),
     wxBitmap:destroy(Bmp).
+
+%% @doc Show the save/load toast icon as a box one third of the panel, centered
+%% (see set_toast/2). Drawn with wxDC primitives into the same double-buffered
+%% pass as the frame, so it never flickers and stays visible in every mode
+%% (crop, scale, fullscreen) without touching the emulated pixels.
+draw_toast(#state{toast = {_, Icon}}, DC, PW, PH) ->
+    W = PW div 3,
+    H = PH div 3,
+    X = (PW - W) div 2,
+    Y = (PH - H) div 2,
+    wxDC:setBrush(DC, wxBrush:new(?TOAST_BG)),
+    wxDC:setPen(DC, wxPen:new(?TOAST_BORDER, [{width, 2}])),
+    wxDC:drawRoundedRectangle(DC, {X, Y, W, H}, max(6, W div 12)),
+    M = W div 6,
+    S = (W - 2 * M) / 48.0,
+    draw_toast_icon(DC, X + M, Y + (H - round(21 * S)) div 2, S, Icon),
+    ok;
+draw_toast(#state{toast = undefined}, _DC, _PW, _PH) ->
+    ok.
+
+%% @doc The toast pictogram composed of a monitor, a floppy and an arrow
+%% between them, drawn with filled shapes scaled by S (base 48x32). Save:
+%% monitor -> floppy (screen on the left, arrow pointing right). Load: floppy
+%% -> monitor (floppy on the left, arrow pointing right).
+draw_toast_icon(DC, X, Y, S, save) ->
+    draw_toast_screen(DC, X, Y, S),
+    draw_toast_floppy(DC, X + 32 * S, Y, S),
+    draw_toast_arrow(DC, X + 19 * S, Y + 7 * S, S),
+    ok;
+draw_toast_icon(DC, X, Y, S, load) ->
+    draw_toast_floppy(DC, X + 1 * S, Y, S),
+    draw_toast_screen(DC, X + 30 * S, Y, S),
+    draw_toast_arrow(DC, X + 18 * S, Y + 7 * S, S),
+    ok.
+
+%% @doc A monitor: bezel with a dark screen, stand and base.
+draw_toast_screen(DC, X, Y, S) ->
+    wxDC:setBrush(DC, wxBrush:new(?TOAST_ICON)),
+    wxDC:setPen(DC, wxPen:new(?TOAST_ICON)),
+    wxDC:drawRoundedRectangle(DC, {round(X + 1 * S), round(Y + 2 * S),
+                                   round(16 * S), round(12 * S)}, round(2 * S)),
+    wxDC:setBrush(DC, wxBrush:new(?TOAST_BG)),
+    wxDC:setPen(DC, wxPen:new(?TOAST_BG)),
+    wxDC:drawRectangle(DC, {round(X + 3 * S), round(Y + 4 * S),
+                            round(12 * S), round(8 * S)}),
+    wxDC:setBrush(DC, wxBrush:new(?TOAST_ICON)),
+    wxDC:setPen(DC, wxPen:new(?TOAST_ICON)),
+    wxDC:drawRectangle(DC, {round(X + 6 * S), round(Y + 14 * S),
+                            round(4 * S), round(3 * S)}),
+    wxDC:drawRectangle(DC, {round(X + 3 * S), round(Y + 17 * S),
+                            round(10 * S), round(2 * S)}),
+    ok.
+
+%% @doc A floppy disk: rounded body, dark label band, right shutter strip.
+draw_toast_floppy(DC, X, Y, S) ->
+    wxDC:setBrush(DC, wxBrush:new(?TOAST_ICON)),
+    wxDC:setPen(DC, wxPen:new(?TOAST_ICON)),
+    wxDC:drawRoundedRectangle(DC, {round(X), round(Y + 3 * S),
+                                   round(15 * S), round(12 * S)}, round(2 * S)),
+    wxDC:setBrush(DC, wxBrush:new(?TOAST_BG)),
+    wxDC:setPen(DC, wxPen:new(?TOAST_BG)),
+    wxDC:drawRectangle(DC, {round(X + 2 * S), round(Y + 4 * S),
+                            round(11 * S), round(3 * S)}),
+    wxDC:setBrush(DC, wxBrush:new(?TOAST_ICON)),
+    wxDC:setPen(DC, wxPen:new(?TOAST_ICON)),
+    wxDC:drawRectangle(DC, {round(X + 12 * S), round(Y + 4 * S),
+                            round(2 * S), round(10 * S)}),
+    wxDC:setBrush(DC, wxBrush:new(?TOAST_BG)),
+    wxDC:setPen(DC, wxPen:new(?TOAST_BG)),
+    wxDC:drawRectangle(DC, {round(X + 10 * S), round(Y + 13 * S),
+                            round(2 * S), round(1 * S)}),
+    ok.
+
+%% @doc A right-pointing arrow: shaft plus a filled head.
+draw_toast_arrow(DC, X, Y, S) ->
+    wxDC:setBrush(DC, wxBrush:new(?TOAST_ICON)),
+    wxDC:setPen(DC, wxPen:new(?TOAST_ICON)),
+    wxDC:drawRectangle(DC, {round(X), round(Y), round(8 * S), round(2 * S)}),
+    wxDC:drawPolygon(DC, [{round(X + 8 * S), round(Y - 2 * S)},
+                          {round(X + 13 * S), round(Y + 1 * S)},
+                          {round(X + 8 * S), round(Y + 4 * S)}]),
+    ok.
 
 
 
@@ -943,10 +1303,11 @@ mix_samples(<<B:16/little-signed, BR/binary>>,
 %% @doc Destroy any dialogs still open (the main window is closing).
 -spec cleanup_dialogs(#state{}) -> ok.
 cleanup_dialogs(#state{sound_dialog_refs = Sound, mouse_dialog_refs = Mouse,
-                       file_dialog_refs = File}) ->
+                       file_dialog_refs = File, saves_dialog_refs = Saves}) ->
     destroy_dialog(Sound),
     destroy_dialog(Mouse),
-    destroy_dialog(File).
+    destroy_dialog(File),
+    destroy_dialog(Saves).
 
 %% @doc Destroy a single open dialog ref ({Dialog, Controls}). `undefined'
 %% means no dialog is open. The file dialog is a wxDialog subclass, so
@@ -968,6 +1329,9 @@ close_dialog(Obj, #state{mouse_dialog_refs = {Dialog, _}} = State) when Obj =:= 
 close_dialog(Obj, #state{file_dialog_refs = {Dialog, _}} = State) when Obj =:= Dialog ->
     wxDialog:destroy(Obj),
     State#state{file_dialog_refs = undefined};
+close_dialog(Obj, #state{saves_dialog_refs = {Dialog, _, _, _, _}} = State) when Obj =:= Dialog ->
+    wxDialog:destroy(Obj),
+    State#state{saves_dialog_refs = undefined, saves_entries = []};
 close_dialog(_Obj, State) ->
     State.
 

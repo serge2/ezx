@@ -74,7 +74,8 @@ init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, {Rom0,
     }.
 
 %% @doc Load a Z80 v1/v2/v3 snapshot into 128K memory.
--spec load_z80(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
+-spec load_z80(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
+    Error :: bad_z80_header | z80_load_failed.
 load_z80(Machine, Data) ->
     try ezx_z80:parse(Data) of
         #z80_header{} = H ->
@@ -139,7 +140,8 @@ load_z80(Machine, Data) ->
 
 %% @doc Load a TAP file. In 128K mode the machine boots into the menu,
 %% so just press Enter (no need to type LOAD "").
--spec load_tap(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
+-spec load_tap(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
+    Error :: bad_tap_data.
 load_tap(Machine, Data) ->
     try ezx_tap:parse_blocks(Data) of
         Blocks ->
@@ -159,7 +161,8 @@ load_tap(Machine, Data) ->
     end.
 
 %% @doc Load a .sna snapshot (48K or 128K extended).
--spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {atom(), binary()}}.
+-spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
+    Error :: bad_sna_header | sna_load_failed.
 load_sna(Machine, Data) ->
     try ezx_sna:parse(Data) of
         #sna_header{} = H ->
