@@ -374,18 +374,23 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F2}}, State) ->
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F3}}, State) ->
     manage_saves(State);
 
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = $M, controlDown = true}}, State) ->
+%% Ctrl-based UI hotkeys require a bare Control (no Alt): on wxGTK the right
+%% Alt (AltGr) is reported as Ctrl+Alt on every key typed while it is held, so
+%% an AltGr-driven SymbolShift+P would otherwise fire Ctrl+P (pause, mute,
+%% quit...) instead of typing the guest symbol. Real Ctrl+letter combos still
+%% match because they arrive without Alt.
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = $M, controlDown = true, altDown = false}}, State) ->
     NewState = State#state{muted = not State#state.muted},
     ActionsMenu = wxMenuBar:getMenu(State#state.menu_bar, ?MENUBAR_ACTIONS_INDEX),
     wxMenu:check(ActionsMenu, ?MENU_MUTE, NewState#state.muted),
     save_config(NewState),
     {noreply, NewState};
 
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = $P, controlDown = true}}, State) ->
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = $P, controlDown = true, altDown = false}}, State) ->
     NewState = toggle_pause(State),
     {noreply, NewState};
 
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = $D, controlDown = true}},
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = $D, controlDown = true, altDown = false}},
             #state{diag_file = DiagFile} = State) ->
     case DiagFile of
         undefined ->
@@ -398,22 +403,22 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = $D, controlDown = true
             {noreply, State#state{diag_file = undefined}}
     end;
 
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = $O, controlDown = true}}, #state{machine = undefined} = State) ->
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = $O, controlDown = true, altDown = false}}, #state{machine = undefined} = State) ->
     {noreply, State};
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = $O, controlDown = true}}, State) ->
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = $O, controlDown = true, altDown = false}}, State) ->
     handle_open_file(State);
 
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = $Q, controlDown = true}}, State) ->
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = $Q, controlDown = true, altDown = false}}, State) ->
     init:stop(),
     {stop, normal, State};
 
 %% Ctrl+F12: dump the whole machine state (term_to_binary) so a stuck/interesting
 %% state can be reproduced headlessly for debugging. The modifier guards against
 %% accidental dumps; files land in the app state dir (like recent files), not /tmp.
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F12, controlDown = true}},
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F12, controlDown = true, altDown = false}},
             #state{machine = undefined} = State) ->
     {noreply, State};
-handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F12, controlDown = true}},
+handle_info(#wx{event = #wxKey{type = key_down, keyCode = ?WXK_F12, controlDown = true, altDown = false}},
             #state{machine = Machine} = State) ->
     DumpDir = filename:join([ezx_ui_lib:app_dir(), "dumps"]),
     filelib:ensure_dir(filename:join(DumpDir, "dummy")),
