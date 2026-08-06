@@ -6,6 +6,7 @@
     init_state/5,
     step/1,
     run/2,
+    run_until_tstates/2,
     request_interrupt/2,
     clear_interrupt_request/1,
     pc/1,
@@ -48,6 +49,18 @@ run(State, 0) ->
     State;
 run(State, N) ->
     run(step(State), N - 1).
+
+%% @doc Execute instructions until the accumulated T-state count reaches
+%% Target, then return the final CPU state (with t_states possibly overshooting
+%% Target, exactly like the old per-instruction machine loop). The loop stays
+%% inside the CPU so the emulator does not rebuild the machine/ext_context
+%% records on every instruction.
+-spec run_until_tstates(#cpu_state{}, non_neg_integer()) -> #cpu_state{}.
+run_until_tstates(#cpu_state{t_states = TStates} = State, Target)
+  when TStates >= Target ->
+    State;
+run_until_tstates(State, Target) ->
+    run_until_tstates(step(State), Target).
 
 %% @doc Queue an interrupt request for the next CPU step.
 -spec request_interrupt(#cpu_state{}, int | nmi) -> #cpu_state{}.

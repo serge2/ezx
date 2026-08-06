@@ -442,32 +442,41 @@ step(Machine) ->
 
 step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
-    Memory0 = Machine#machine_state.memory,
-    Beeper0 = Machine#machine_state.beeper,
-    ExtContext0 = #ext_context{
+    ExtContext0 = make_ext_context(Machine),
+    Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = MachineTStates}),
+    Ticks = Cpu1#cpu_state.t_states - MachineTStates,
+    sync_from_cpu(Machine, Cpu1, MachineTStates + Ticks).
+
+%% Build the device #ext_context{} handed to the CPU for one frame (or one
+%% step for the debugger). Reading the configured module names from the machine
+%% keeps the same row usable for 48K and 128K.
+make_ext_context(#machine_state{memory = Memory0, screen = Screen0,
+                                keyboard = Keyboard0, beeper = Beeper0,
+                                ay = Ay0, kempston_mouse = KM0} = Machine) ->
+    #ext_context{
         memory = Memory0,
-        screen = Machine#machine_state.screen,
-        keyboard = Machine#machine_state.keyboard,
+        screen = Screen0,
+        keyboard = Keyboard0,
         beeper = Beeper0,
-        ay = Machine#machine_state.ay,
-        kempston_mouse = Machine#machine_state.kempston_mouse,
+        ay = Ay0,
+        kempston_mouse = KM0,
         memory_module = Machine#machine_state.memory_module,
         keyboard_module = Machine#machine_state.keyboard_module,
         beeper_module = Machine#machine_state.beeper_module,
         ay_module = Machine#machine_state.ay_module
-    },
-    Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = MachineTStates}),
-    Ticks = Cpu1#cpu_state.t_states - MachineTStates,
-    NewMachineTStates = MachineTStates + Ticks,
-    ExtCtx = Cpu1#cpu_state.ext_context,
-    Memory1 = ExtCtx#ext_context.memory,
-    Beeper1 = ExtCtx#ext_context.beeper,
+    }.
+
+%% Read the live device states back out of the CPU's ext_context into the
+%% machine, syncing t_states (the CPU counter may have advanced or been
+%% rebased to the frame-overrun tail).
+sync_from_cpu(#machine_state{} = Machine, Cpu, MachineTStates) ->
+    ExtCtx = Cpu#cpu_state.ext_context,
     Machine#machine_state{
-        cpu = Cpu1#cpu_state{t_states = NewMachineTStates},
-        memory = Memory1,
-        t_states = NewMachineTStates,
+        cpu = Cpu#cpu_state{t_states = MachineTStates},
+        memory = ExtCtx#ext_context.memory,
+        t_states = MachineTStates,
         screen = ExtCtx#ext_context.screen,
-        beeper = Beeper1,
+        beeper = ExtCtx#ext_context.beeper,
         ay = ExtCtx#ext_context.ay,
         kempston_mouse = ExtCtx#ext_context.kempston_mouse
     }.
@@ -525,6 +534,10 @@ frame_start_devices(#machine_state{ay_module = AyModule, beeper_module = BeeperM
 %% (e.g. interrupts disabled), the request is dropped — a mid-frame EI does
 %% not fire an interrupt that was asserted at the start of the frame, exactly
 %% like the real hardware.
+%% When no TAP loading is in flight the whole frame runs as a CPU-internal
+%% instruction loop (run_frame_execute) so the machine/ext_context records are
+%% not rebuilt per instruction; the LD-BYTES tape trap lives in the machine
+%% step/1, so a TAP load falls back to the per-instruction machine loop.
 execute_frame(#machine_state{t_states = StartT} = Machine) ->
     Model = Machine#machine_state.model,
     FrameLen = Model#machine_model.tstates_per_frame,
@@ -534,6 +547,16 @@ execute_frame(#machine_state{t_states = StartT} = Machine) ->
     Cpu0a = z80_cpu:clear_interrupt_request(Cpu0),
     Machine0a = Machine#machine_state{cpu = Cpu0a},
 
+    case Machine#machine_state.tape_blocks of
+        [] ->
+            execute_frame_cpu_loop(Machine0a, StartT, FrameLen, IntTState, IntPulse);
+        _ ->
+            execute_frame_machine_loop(Machine0a, StartT, FrameLen, IntTState, IntPulse)
+    end.
+
+%% The TAP-loading path: the LD-BYTES trap needs the machine step/1 between
+%% instructions, so it keeps the original per-instruction loop.
+execute_frame_machine_loop(Machine0a, StartT, FrameLen, IntTState, IntPulse) ->
     Machine1 = case StartT < IntTState of
         true ->
             run_until_tstates(Machine0a, IntTState);
@@ -564,6 +587,31 @@ execute_frame(#machine_state{t_states = StartT} = Machine) ->
         cpu = Cpu4,
         t_states = Overshoot
     }.
+
+%% The fast path: inject the live device states into the CPU once, run all
+%% three phases as one CPU-internal loop, and read the devices back once.
+execute_frame_cpu_loop(#machine_state{t_states = StartT} = Machine0a,
+                       StartT, FrameLen, IntTState, IntPulse) ->
+    Cpu0 = Machine0a#machine_state.cpu,
+    ExtContext0 = make_ext_context(Machine0a),
+    Cpu0b = Cpu0#cpu_state{ext_context = ExtContext0, t_states = StartT},
+
+    Cpu1 = case StartT < IntTState of
+        true ->
+            z80_cpu:run_until_tstates(Cpu0b, IntTState);
+        false ->
+            Cpu0b
+    end,
+    Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
+    Cpu2b = z80_cpu:run_until_tstates(Cpu2, IntTState + IntPulse),
+    Cpu2c = z80_cpu:clear_interrupt_request(Cpu2b),
+
+    Phase2End = StartT + FrameLen,
+    Cpu3 = z80_cpu:run_until_tstates(Cpu2c, Phase2End),
+
+    Overshoot = Cpu3#cpu_state.t_states - Phase2End,
+    Cpu4 = Cpu3#cpu_state{t_states = Overshoot},
+    sync_from_cpu(Machine0a, Cpu4, Overshoot).
 
 %% Phase: render the beeper PCM for the frame (Samples S16LE mono samples).
 run_frame_render_beeper(#machine_state{beeper_module = BeeperModule} = Machine) ->
