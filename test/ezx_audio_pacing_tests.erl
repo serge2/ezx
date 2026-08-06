@@ -12,10 +12,13 @@ new_does_not_schedule_first_frame_test() ->
 
 fast_feeding_builds_surplus_test() ->
     P0 = ezx_audio_pacing:new(3528),
-    {0, P1} = ezx_audio_pacing:advance(P0, 3528, 1),    %% frame 1
-    {0, P2} = ezx_audio_pacing:advance(P1, 3528, 2),    %% frame 2
-    {0, P3} = ezx_audio_pacing:advance(P2, 3528, 3),    %% frame 3
-    {20, _P4} = ezx_audio_pacing:advance(P3, 3528, 4).  %% frame 4: surplus > 0
+    {0, P1} = ezx_audio_pacing:advance(P0, 3528, 0),    %% frame 1
+    {0, P2} = ezx_audio_pacing:advance(P1, 3528, 0),    %% frame 2
+    {0, P3} = ezx_audio_pacing:advance(P2, 3528, 0),    %% frame 3
+    {0, P4} = ezx_audio_pacing:advance(P3, 3528, 0),    %% frame 4
+    {0, P5} = ezx_audio_pacing:advance(P4, 3528, 0),    %% frame 5
+    {0, P6} = ezx_audio_pacing:advance(P5, 3528, 0),    %% frame 6
+    {20, _P7} = ezx_audio_pacing:advance(P6, 3528, 0).  %% frame 7: surplus > 0
 
 %% ---- real-time feeding stays at delay 0 ----
 

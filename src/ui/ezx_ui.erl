@@ -180,7 +180,7 @@ init(_Options) ->
     wxWindow:setClientSize(Frame, DefW, DefH),
     wxWindow:setFocus(Panel),
 
-    Cmd = "aplay -t raw -f S16_LE -r 44100 -c 2 --buffer-size=441 -q 2>/dev/null",
+    Cmd = "aplay -t raw -f S16_LE -r 44100 -c 2 --buffer-size=3528 --period-size=441 -q 2>/dev/null",
     AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
 
     Now = erlang:monotonic_time(microsecond),

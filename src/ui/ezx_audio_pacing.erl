@@ -10,7 +10,7 @@
 %% Pure state machine: no ports, no side effects - unit-testable headlessly.
 
 -define(AUDIO_RATE, 176400).  %% bytes/sec: 44100 Hz * 2 channels * 2 bytes
--define(SURPLUS_FRAMES, 3).
+-define(SURPLUS_FRAMES, 6).
 
 -export([new/1, advance/3, bytes/1]).
 -export_type([state/0]).
