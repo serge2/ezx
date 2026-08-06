@@ -31,6 +31,11 @@
 -define(TOAST_BG, {30, 30, 30}).
 -define(TOAST_BORDER, {170, 170, 170, 255}).
 -define(TOAST_ICON, {240, 240, 240, 255}).
+%% Process heap floor for the UI process (which runs the machine and renders
+%% the 352×288 frame in place). Per-frame garbage (screen bitmap, audio PCM)
+%% would otherwise push the process over its heap threshold and land a full GC
+%% inside the ~20 ms frame budget, showing up as spikes in the render phase.
+-define(MIN_HEAP_WORDS, 2000000).
 
 -record(state, {
     machine   :: #machine_state{} | undefined,
@@ -87,6 +92,7 @@ stop() ->
     gen_server:stop(?MODULE).
 
 init(_Options) ->
+    process_flag(min_heap_size, ?MIN_HEAP_WORDS),
     wx:new(),
 
     %% Pre-load config to get crop setting for initial window size
