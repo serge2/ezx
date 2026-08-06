@@ -1,0 +1,6 @@
+# vm.args for the ezx release (ERTS flags applied at boot).
+# Node name enables the bin/ezx start/stop/ping daemon commands; a desktop
+# app runs as a single instance, so the fixed short name is fine.
+-sname ezx
+# Kernel poll gives the emulator steady timer delivery for audio/timing.
++K true

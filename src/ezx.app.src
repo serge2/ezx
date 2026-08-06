@@ -1,11 +1,12 @@
 {application, ezx,
  [
   {description, "ZX Spectrum Z80 emulator prototype"},
-  {vsn, "1"},
-  {registered, []},
+  {vsn, "0.1.0"},
+  {registered, [ezx_sup]},
   {applications, [
                   kernel,
-                  stdlib
+                  stdlib,
+                  wx
                  ]},
   {mod, { ezx_app, []}},
   {env, []}

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ezx
+Comment=ZX Spectrum 48K/128K emulator
+Exec=/opt/ezx/bin/ezx-launch
+Icon=ezx
+Terminal=false
+Categories=Game;Emulator;

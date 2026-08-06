@@ -1,0 +1,31 @@
+#!/bin/sh
+# Desktop launcher for the ezx release.
+#
+# Boots the VM WITHOUT a node name (non-distributed, nonode@nohost), so any
+# number of instances can run side by side and all share the user's data
+# directory (~/.config/ezx for settings, ~/.local/state/ezx for saves).
+# The release root is resolved from this script's own location, so it works
+# both in place and through a symlink (e.g. /usr/local/bin/ezx -> /opt/ezx/bin/ezx-launch).
+set -u
+
+SCRIPT=$(readlink -f "$0")
+ROOT=$(dirname "$(dirname "$SCRIPT")")
+
+ERTS_VSN=$(awk 'NR==1 {print $1}' "$ROOT/releases/start_erl.data")
+REL_VSN=$(awk 'NR==1 {print $2}' "$ROOT/releases/start_erl.data")
+
+ERTS_DIR="$ROOT/erts-$ERTS_VSN"
+BINDIR="$ERTS_DIR/bin"
+
+export ROOTDIR="$ROOT"
+export RELEASE_ROOT_DIR="$ROOT"
+export BINDIR
+export EMU=beam
+export PROGNAME=erl
+export LD_LIBRARY_PATH="$ERTS_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+exec "$BINDIR/erlexec" -noinput +Bd +K true \
+    -boot "$ROOT/releases/$REL_VSN/start" -mode embedded \
+    -boot_var SYSTEM_LIB_DIR "$ROOT/lib" \
+    -config "$ROOT/releases/$REL_VSN/sys.config" \
+    "$@"

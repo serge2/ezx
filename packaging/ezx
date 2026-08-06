@@ -1,0 +1,8 @@
+#!/bin/sh
+# Run ezx in place from the unpacked tarball (no install needed): the release
+# payload (bin/, lib/, releases/, erts-*) lives next to this script. For a
+# system-wide install into /opt, use ./install.sh instead.
+set -u
+
+DIR=$(dirname "$(readlink -f "$0")")
+exec "$DIR/bin/ezx-launch" "$@"

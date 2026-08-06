@@ -9,5 +9,6 @@ AGENTS.md
 src/debug/
 files/
 tmp/
+dist/
 priv/LICENSE
 
