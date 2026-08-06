@@ -3,11 +3,11 @@ ebin/
 logs/
 rebar.lock
 config/*.pem
-config/sys.config
 erl_crash.dump
 rebar3.crashdump
 AGENTS.md
 src/debug/
 files/
-
+tmp/
+priv/LICENSE
 
