@@ -35,7 +35,7 @@
 %% the 352×288 frame in place). Per-frame garbage (screen bitmap, audio PCM)
 %% would otherwise push the process over its heap threshold and land a full GC
 %% inside the ~20 ms frame budget, showing up as spikes in the render phase.
--define(MIN_HEAP_WORDS, 2000000).
+-define(MIN_HEAP_WORDS, 250000).
 
 -record(state, {
     machine   :: #machine_state{} | undefined,

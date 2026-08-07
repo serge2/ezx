@@ -19,9 +19,7 @@ deb: $(DEB)
 
 tgz: $(TGZ)
 
-$(RELDIR): release
-
-$(DEB): $(RELDIR) packaging/ezx.desktop packaging/control.in packaging/postinst packaging/postrm priv/ezx.png
+$(DEB): release packaging/ezx.desktop packaging/control.in packaging/postinst packaging/postrm priv/ezx.png
 	rm -rf $(DEBDIR)
 	mkdir -p $(DEBDIR)/DEBIAN \
 	         $(DEBDIR)/opt/ezx \
@@ -38,7 +36,7 @@ $(DEB): $(RELDIR) packaging/ezx.desktop packaging/control.in packaging/postinst 
 	chmod 755 $(DEBDIR)/DEBIAN/postinst $(DEBDIR)/DEBIAN/postrm
 	dpkg-deb --build --root-owner-group $(DEBDIR) $(DEB)
 
-$(TGZ): $(RELDIR) packaging/ezx packaging/ezx.desktop packaging/install.sh packaging/uninstall.sh priv/ezx.png
+$(TGZ): release packaging/ezx packaging/ezx.desktop packaging/install.sh packaging/uninstall.sh priv/ezx.png
 	rm -rf $(TGZDIR)
 	mkdir -p $(TGZDIR)
 	cp -a $(RELDIR)/. $(TGZDIR)/
