@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,6 +12,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      vsn: ${{ steps.vsn.outputs.vsn }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,14 +22,24 @@ jobs:
           otp-version: '27'
           rebar3-version: '3.27.0'
 
+      - name: Compute version
+        id: vsn
+        run: |
+          VSN=""
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then VSN="${GITHUB_REF_NAME#v}"; fi
+          if [ -z "$VSN" ]; then VSN=$(sed -n 's/.*{ezx, "\([^"]*\)"}.*/\1/p' rebar.config | head -1); fi
+          echo "vsn=$VSN" >> "$GITHUB_OUTPUT"
+          echo "Building v$VSN"
+
       - name: Build release and packages
         run: |
-          make deb tgz VSN=${GITHUB_REF_NAME#v}
-          sha256sum "dist/ezx-${GITHUB_REF_NAME#v}-linux-x86_64.tar.gz" > "dist/ezx-${GITHUB_REF_NAME#v}-linux-x86_64.tar.gz.sha256"
+          make deb tgz VSN=${{ steps.vsn.outputs.vsn }}
+          sha256sum "dist/ezx-${{ steps.vsn.outputs.vsn }}-linux-x86_64.tar.gz" > "dist/ezx-${{ steps.vsn.outputs.vsn }}-linux-x86_64.tar.gz.sha256"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.vsn.outputs.vsn }}
           files: |
             dist/ezx-*.tar.gz
             dist/ezx-*.tar.gz.sha256
@@ -50,23 +63,48 @@ jobs:
       - name: Bundle sox for Windows audio
         shell: powershell
         run: |
+          $ErrorActionPreference = 'Stop'
           $priv = Get-ChildItem "_build/prod/rel/ezx/lib/ezx-*/priv" | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $priv) { throw "priv dir not found in the release" }
           $bin = Join-Path $priv "bin"
           New-Item -ItemType Directory -Force $bin | Out-Null
-          Invoke-WebRequest -Uri "https://sourceforge.net/projects/sox/files/sox/14.4.2/sox-14.4.2-win32.zip/download" -OutFile "$env:TEMP\sox.zip"
-          Expand-Archive "$env:TEMP\sox.zip" -DestinationPath "$env:TEMP\sox"
-          Copy-Item "$env:TEMP\sox\sox-14.4.2\*" -Destination $bin -Recurse
+          $zip = Join-Path $env:TEMP "sox.zip"
+          $urls = @(
+            "https://downloads.sourceforge.net/sox/sox-14.4.2-win32.zip",
+            "https://sourceforge.net/projects/sox/files/sox/14.4.2/sox-14.4.2-win32.zip/download"
+          )
+          foreach ($u in $urls) {
+            try {
+              Invoke-WebRequest -Uri $u -OutFile $zip -UseBasicParsing -TimeoutSec 90
+              $hdr = [System.IO.File]::ReadAllBytes($zip)[0..1]
+              if ([System.Text.Encoding]::ASCII.GetString($hdr) -eq "PK") {
+                Write-Host "sox downloaded from $u"
+                break
+              }
+              Write-Host "download from $u was not a zip, trying next"
+            } catch {
+              Write-Host "download from $u failed: $($_.Exception.Message)"
+            }
+          }
+          if (-not (Test-Path $zip) -or (Get-Item $zip).Length -eq 0) { throw "could not download sox from any source" }
+          $dest = Join-Path $env:TEMP "sox"
+          if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+          Expand-Archive $zip -DestinationPath $dest
+          $src = (Get-ChildItem $dest -Recurse -Filter sox.exe | Select-Object -First 1).DirectoryName
+          if (-not $src) { throw "sox.exe not found in the downloaded archive" }
+          Copy-Item "$src\*" -Destination $bin -Recurse
           Remove-Item "$bin\*.pdf"
+          Write-Host "sox bundled into $bin"
 
       - name: Package Windows zip
         shell: powershell
         run: |
-          $vsn = $env:GITHUB_REF_NAME.TrimStart('v')
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path _build/prod/rel/ezx -DestinationPath "dist/ezx-$vsn-windows-x86_64.zip"
+          Compress-Archive -Path _build/prod/rel/ezx -DestinationPath "dist/ezx-${{ needs.release.outputs.vsn }}-windows-x86_64.zip"
 
       - name: Upload Windows zip
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/ezx-*-windows-x86_64.zip
+          tag_name: v${{ needs.release.outputs.vsn }}
+          files: dist/ezx-${{ needs.release.outputs.vsn }}-windows-x86_64.zip
           fail_on_unmatched_files: true
