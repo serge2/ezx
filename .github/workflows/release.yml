@@ -71,6 +71,17 @@ jobs:
           Copy-Item "packaging/sox-win32/*" -Destination $bin -Recurse
           Write-Host "sox bundled into $bin"
 
+      - name: Strip debug symbols from the release
+        shell: powershell
+        run: |
+          $pdb = Get-ChildItem "_build/prod/rel/ezx" -Recurse -Filter *.pdb
+          if ($pdb) {
+            $pdb | Remove-Item -Force
+            Write-Host "removed $($pdb.Count) .pdb files"
+          } else {
+            Write-Host "no .pdb files found"
+          }
+
       - name: Package Windows zip
         shell: powershell
         run: |
