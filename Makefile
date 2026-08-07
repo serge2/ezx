@@ -14,6 +14,12 @@ all: deb tgz
 
 release:
 	rebar3 as prod release
+	@echo "Stripping debug symbols from bundled ERTS binaries"
+	@for f in $(RELDIR)/erts-*/bin/*; do \
+	    if file "$$f" 2>/dev/null | grep -q 'ELF'; then \
+	        strip --strip-debug "$$f"; \
+	    fi; \
+	done
 
 deb: $(DEB)
 
