@@ -32,3 +32,30 @@ jobs:
             dist/ezx-*.tar.gz.sha256
             dist/ezx_*.deb
           fail_on_unmatched_files: true
+
+  windows:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27'
+          rebar3-version: '3.27.0'
+
+      - name: Build release
+        run: rebar3 as prod release
+
+      - name: Package Windows zip
+        shell: powershell
+        run: |
+          $vsn = $env:GITHUB_REF_NAME.TrimStart('v')
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path _build/prod/rel/ezx -DestinationPath "dist/ezx-$vsn-windows-x86_64.zip"
+
+      - name: Upload Windows zip
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ezx-*-windows-x86_64.zip
+          fail_on_unmatched_files: true

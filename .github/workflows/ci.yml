@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: ['master']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27'
+          rebar3-version: '3.27.0'
+
+      - name: Compile
+        run: rebar3 compile
+
+      - name: Test
+        run: rebar3 eunit
+
+      - name: Build release
+        run: rebar3 as prod release

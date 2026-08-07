@@ -186,8 +186,7 @@ init(_Options) ->
     wxWindow:setClientSize(Frame, DefW, DefH),
     wxWindow:setFocus(Panel),
 
-    Cmd = "aplay -t raw -f S16_LE -r 44100 -c 2 --buffer-size=3528 --period-size=441 -q 2>/dev/null",
-    AplayPort = open_port({spawn, Cmd}, [binary, stream, exit_status]),
+    AplayPort = open_audio_port(),
 
     Now = erlang:monotonic_time(microsecond),
     BeeperVol = maps:get(beeper_vol, Cfg0, 100),
@@ -259,7 +258,7 @@ handle_info(frame_tick, #state{machine = undefined} = State) ->
 handle_info(frame_tick, #state{paused = true, machine = Machine,
                                aplay_port = Port} = State) ->
     Silence = <<0:(audio_bytes_per_frame(Machine))/unit:8>>,
-    port_command(Port, Silence),
+    port_send(Port, Silence),
     RGB = ezx_emulator:render_frame(Machine),
     draw_frame(State, RGB),
     Now = erlang:monotonic_time(microsecond),
@@ -275,7 +274,7 @@ handle_info(frame_tick, #state{machine = Machine,
                                aplay_port = Port,
                                toast = {_, _}} = State) ->
     Silence = <<0:(audio_bytes_per_frame(Machine))/unit:8>>,
-    port_command(Port, Silence),
+    port_send(Port, Silence),
     RGB = ezx_emulator:render_frame(Machine),
     draw_frame(State, RGB),
     Now = erlang:monotonic_time(microsecond),
@@ -305,7 +304,7 @@ handle_info(frame_tick, #state{machine = Machine0,
             false -> PCM;
             true  -> <<0:(byte_size(PCM))/unit:8>>
         end,
-        port_command(Port, AudioData),
+        port_send(Port, AudioData),
         Now = erlang:monotonic_time(microsecond),
         {DelayMs, Pacing} = ezx_audio_pacing:advance(State#state.audio_pacing,
                                                      byte_size(PCM), Now),
@@ -411,8 +410,9 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = $D, controlDown = true
             #state{diag_file = DiagFile} = State) ->
     case DiagFile of
         undefined ->
-            {ok, Fd} = file:open("/tmp/pcm_dump.raw", [raw, binary, write]),
-            io:format("DIAG: recording PCM to /tmp/pcm_dump.raw~n"),
+            DumpPath = filename:join(ezx_ui_lib:app_dir(), "pcm_dump.raw"),
+            {ok, Fd} = file:open(DumpPath, [raw, binary, write]),
+            io:format("DIAG: recording PCM to ~s~n", [DumpPath]),
             {noreply, State#state{diag_file = Fd}};
         _ ->
             file:close(DiagFile),
@@ -826,6 +826,38 @@ schedule_frame(Ms) -> erlang:send_after(Ms, self(), frame_tick).
 %% Audio: one frame is Samples * 2 channels * 2 bytes (stereo S16LE), where
 %% Samples comes from the machine model (see ezx_emulator:samples_per_frame/1).
 audio_bytes_per_frame(Machine) -> ezx_emulator:samples_per_frame(Machine) * 4.
+
+%% @doc Open the raw-PCM player port. On Unix aplay (ALSA) is used; on Windows
+%% sox or ffplay when either is on PATH (both play signed 16-bit stereo raw
+%% from stdin). Returns `undefined' when no player is available — the frame
+%% pipeline still produces PCM, it is just dropped instead of played.
+open_audio_port() ->
+    case audio_command() of
+        none -> undefined;
+        Cmd -> open_port({spawn, Cmd}, [binary, stream, exit_status])
+    end.
+
+%% @doc Shell command that plays raw stereo S16LE PCM from stdin, or `none'
+%% when no suitable player is installed.
+audio_command() ->
+    case erlang:system_info(os_type) of
+        {win32, _} ->
+            case os:find_executable("sox") of
+                false ->
+                    case os:find_executable("ffplay") of
+                        false -> none;
+                        _ -> "ffplay -f s16le -ar 44100 -ac 2 -nodisp -autoexit -i pipe:0"
+                    end;
+                _ ->
+                    "sox -q -t raw -r 44100 -c 2 -e signed -b 16 - -d"
+            end;
+        {unix, _} ->
+            "aplay -t raw -f S16_LE -r 44100 -c 2 --buffer-size=3528 --period-size=441 -q 2>/dev/null"
+    end.
+
+%% @doc Hand PCM to the audio port, or drop it when there is no player.
+port_send(undefined, _Data) -> ok;
+port_send(Port, Data) -> port_command(Port, Data).
 
 toggle_pause(State) ->
     Paused = not State#state.paused,

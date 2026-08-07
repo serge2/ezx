@@ -480,4 +480,8 @@ fill(Byte) -> binary:copy(<<Byte>>, 16384).
 
 temp_root() ->
     Unique = erlang:unique_integer([positive]),
-    filename:join("/tmp", "ezx_saves_tests_" ++ integer_to_list(Unique)).
+    Base = case os:type() of
+        {win32, _} -> os:getenv("TEMP");
+        _ -> "/tmp"
+    end,
+    filename:join(Base, "ezx_saves_tests_" ++ integer_to_list(Unique)).
