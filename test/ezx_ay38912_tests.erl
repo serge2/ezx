@@ -199,6 +199,98 @@ chip_detect_latch_upper_nibble_test_() ->
         ?assertEqual(16#40, M:read(AY3))
      end || M <- ?MODULES].
 
+%% ---- silent fast path (ezx_ay38912_seg only) ----
+%%
+%% A frame whose three volume registers (R8/R9/R10) stay at fixed-volume 0
+%% is silent: every sample is level 0 (-4096) no matter how the tone/noise/
+%% envelope generators run.  The segmented module renders such frames through
+%% a fast path that skips the per-sample loop (one shared silence binary +
+%% one bulk generator advance); ezx_ay38912 always renders, so it acts as a
+%% cross-check on the PCM contract and the generator phase.
+
+%% A freshly created chip (or a game that never touches the AY ports) with
+%% generator registers configured but all volumes 0: constant -4096 on all
+%% three channels, identical output from both modules.
+silent_frame_is_constant_silence_test_() ->
+    [fun() ->
+        AY = gen_setup(M, ay, 0, 0, 0),
+        AY1 = M:frame_start(AY, 0),
+        {ChA, ChB, ChC, _} = M:render_channels(AY1, 882, 882),
+        ?assertEqual([pcm(0)], lists:usort([V || <<V:16/little-signed>> <= ChA])),
+        ?assertEqual([pcm(0)], lists:usort([V || <<V:16/little-signed>> <= ChB])),
+        ?assertEqual([pcm(0)], lists:usort([V || <<V:16/little-signed>> <= ChC]))
+     end || M <- ?MODULES] ++
+    [fun() ->
+        %% The YM2149 with all volumes 0 is silent too.
+        AY = gen_setup(M, ym, 0, 0, 0),
+        AY1 = M:frame_start(AY, 0),
+        {ChA, _ChB, _ChC, _} = M:render_channels(AY1, 882, 882),
+        ?assertEqual([pcm(0)], lists:usort([V || <<V:16/little-signed>> <= ChA]))
+     end || M <- ?MODULES].
+
+%% The fast path must actually be selected for silent frames and rejected
+%% when ANY register is written mid-frame (a mid-frame change would make the
+%% bulk generator advance differ from the per-sample one, e.g. an envelope
+%% shape write resets the generator at its sample position).
+silent_fast_path_selection_test_() ->
+    M = ezx_ay38912_seg,
+    fun() ->
+        AY0 = gen_setup(M, ay, 0, 0, 0),
+        AY1 = M:frame_start(AY0, 0),
+        ?assert(M:silent_frame(AY1, [])),
+        AY2 = M:write(M:latch(AY1, 8), 5, 100),
+        ?assertNot(M:silent_frame(AY1, [{100, 8, 5}])),
+        %% envelope-mode volume (bit 4) makes the channel audible too
+        ?assertNot(M:silent_frame(AY1, [{100, 9, 16#10}])),
+        %% even a non-audible register (mixer) blocks the fast path
+        ?assertNot(M:silent_frame(AY1, [{100, 7, 0}]))
+    end.
+
+%% A volume written to a nonzero value mid-frame takes the audio path:
+%% silence up to the write, sound after it.
+nonzero_volume_mid_frame_takes_audio_path_test_() ->
+    M = ezx_ay38912_seg,
+    fun() ->
+        AY0 = gen_setup(M, ay, 0, 0, 0),
+        AY1 = M:frame_start(AY0, 0),
+        AY2 = M:write(M:latch(AY1, 8), 15, 441),
+        {ChA, _ChB, _ChC, _} = M:render_channels(AY2, 882, 882),
+        Samples = [V || <<V:16/little-signed>> <= ChA],
+        ?assert(lists:all(fun(X) -> X =:= pcm(0) end, lists:sublist(Samples, 441))),
+        ?assert(lists:any(fun(X) -> X =/= pcm(0) end, lists:nthtail(441, Samples)))
+    end.
+
+%% The fast path advances the generators by FrameLen in one step instead of
+%% per-sample.  A silent frame followed by an audible frame must land on the
+%% exact same generator phase as the always-naive simplified module: play
+%% both frames through each module and compare the combined PCM.
+silent_fast_path_keeps_generator_phase_test_() ->
+    fun() ->
+        SegOut = silent_then_audible(ezx_ay38912_seg),
+        SimpOut = silent_then_audible(ezx_ay38912),
+        ?assertEqual(SimpOut, SegOut)
+    end.
+
+silent_then_audible(M) ->
+    AY0 = gen_setup(M, ay, 0, 0, 0),
+    {S1, M1} = render_frame(M, AY0),
+    AY1 = lists:foldl(fun({R, V}, A) -> M:write(M:latch(A, R), V, 0) end,
+                      M1, [{8, 15}]),
+    {S2, _M2} = render_frame(M, AY1),
+    S1 ++ S2.
+
+render_frame(M, AY) ->
+    AY1 = M:frame_start(AY, 0),
+    {ChA, _, _, M2} = M:render_channels(AY1, 882, 882),
+    {[V || <<V:16/little-signed>> <= ChA], M2}.
+
+%% Configure the tone/noise/envelope generators and set the three volumes.
+gen_setup(M, Chip, VolA, VolB, VolC) ->
+    Gen = [{0, 0}, {1, 0}, {6, 1}, {11, 14}, {12, 0}, {13, 16#08}, {7, 0}],
+    lists:foldl(fun({R, V}, A) ->
+        M:write(M:latch(A, R), V, 0)
+    end, M:new(Chip), Gen ++ [{8, VolA}, {9, VolB}, {10, VolC}]).
+
 %% Run one render (882 T-states) and apply the per-module assertions.
 run_each(M, Writes, Assert) ->
     fun() ->

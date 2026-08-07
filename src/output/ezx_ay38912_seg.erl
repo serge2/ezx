@@ -95,7 +95,7 @@
 %%      sample position.
 %% =============================================================================
 
--export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, frame_start/2, regs/1, set_regs/2]).
+-export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, frame_start/2, regs/1, set_regs/2, silent_frame/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -288,11 +288,58 @@ set_regs(#ay_state_seg{} = AY, Regs) when is_list(Regs) ->
 %% the correct sample position.  Without events falls back to the naive
 %% equal-step renderer (identical to the simplified implementation).
 %% Returns {ChA, ChB, ChC, NewState}.
+%%
+%% A frame with no register writes at all and all three volume registers
+%% (R8/R9/R10) at fixed-volume 0 is silent: every sample is level 0 (-4096)
+%% no matter what the tone/noise/envelope generators do.  Such frames take a
+%% fast path that skips the per-sample loop entirely — the PCM is one shared
+%% silence binary and the generators are still advanced in a single bulk step
+%% by FrameLen (exactly the advance the per-sample loop would accumulate,
+%% since nothing changes mid-frame).  Games that never touch the AY ports (all
+%% 48K titles) thus render their AY as silence in ~0 time.
 -spec render_channels(state(), non_neg_integer(), pos_integer()) -> {binary(), binary(), binary(), state()}.
-render_channels(#ay_state_seg{frame_events = []} = AY, FrameLen, Samples) ->
-    render_channels_naive(AY, FrameLen, Samples);
-render_channels(#ay_state_seg{frame_offset = FO, frame_regs = FRegs, frame_events = Events} = AY, FrameLen, Samples) ->
+render_channels(#ay_state_seg{frame_offset = FO} = AY, FrameLen, Samples) ->
+    Events = AY#ay_state_seg.frame_events,
     RelEvents = [{ET - FO, RI, V} || {ET, RI, V} <- Events, ET >= FO, ET < FO + FrameLen],
+    case silent_frame(AY, RelEvents) of
+        true -> render_silent(AY, FrameLen, Samples);
+        false -> render_channels_audio(AY, FrameLen, Samples, RelEvents)
+    end.
+
+%% A frame is silent iff nothing was written to the AY during it (no frame
+%% events) and all three volume registers are fixed-volume 0: every sample
+%% is then level 0 (-4096) whatever the tone/noise/envelope generators do.
+%% Requiring an empty event list keeps the fast path's single bulk generator
+%% advance bit-for-bit equal to the per-sample accumulation — with any
+%% mid-frame register change the advance would differ (e.g. an envelope
+%% shape write resets the generator at its sample position).
+-spec silent_frame(state(), [{non_neg_integer(), 0..15, byte()}]) -> boolean().
+silent_frame(#ay_state_seg{frame_regs = FRegs}, Events) ->
+    Events =:= [] andalso volumes_silent(FRegs).
+
+volumes_silent(FRegs) ->
+    element(9, FRegs) =:= 0 andalso
+        element(10, FRegs) =:= 0 andalso
+        element(11, FRegs) =:= 0.
+
+%% Fast path: all three channels stay at level 0, so the PCM is a shared
+%% silence binary (level 0 = -4096, exactly what the full renderer emits).
+%% The generators are advanced in one bulk step by the whole FrameLen so a
+%% later unmute resumes with correct tone/noise/envelope phases (equivalent
+%% to the per-sample accumulation while no register changes mid-frame).
+render_silent(#ay_state_seg{frame_regs = FRegs} = AY, FrameLen, Samples) ->
+    Silence = binary:copy(<<(-4096):16/little-signed>>, Samples),
+    RenderAY = AY#ay_state_seg{regs = FRegs},
+    {_OA, _OB, _OC, AY2} = render_step(RenderAY, FrameLen),
+    AY3 = AY2#ay_state_seg{
+        regs = AY#ay_state_seg.regs,
+        frame_events = []
+    },
+    {Silence, Silence, Silence, AY3}.
+
+render_channels_audio(#ay_state_seg{frame_events = []} = AY, FrameLen, Samples, _RelEvents) ->
+    render_channels_naive(AY, FrameLen, Samples);
+render_channels_audio(#ay_state_seg{frame_regs = FRegs} = AY, FrameLen, Samples, RelEvents) ->
     Step = FrameLen div Samples,
     Emap = build_event_map(lists:reverse(RelEvents), Step),
     RenderAY = AY#ay_state_seg{regs = FRegs},
