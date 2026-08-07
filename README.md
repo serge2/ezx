@@ -147,5 +147,7 @@ for details.
 The Windows release bundles the `sox` sound tool (GPL/LGPL; its license is
 shipped as `priv/bin/LICENSE.GPL.txt`). It is a separate program ezx talks to
 over a pipe, not linked into the emulator. sox is by the SoX project
-(https://sox.sourceforge.net/); its source code is available there, and the
-bundled Windows build comes from the official sox-14.4.2-win32 distribution.
+(https://sox.sourceforge.net/); its source code is available there. The
+Windows binaries are vendored in `packaging/sox-win32/` and come from the
+official sox-14.4.2-win32 distribution, so the release build does not depend
+on an external download.

@@ -68,32 +68,7 @@ jobs:
           if (-not $priv) { throw "priv dir not found in the release" }
           $bin = Join-Path $priv "bin"
           New-Item -ItemType Directory -Force $bin | Out-Null
-          $zip = Join-Path $env:TEMP "sox.zip"
-          $urls = @(
-            "https://downloads.sourceforge.net/sox/sox-14.4.2-win32.zip",
-            "https://sourceforge.net/projects/sox/files/sox/14.4.2/sox-14.4.2-win32.zip/download"
-          )
-          foreach ($u in $urls) {
-            try {
-              Invoke-WebRequest -Uri $u -OutFile $zip -UseBasicParsing -TimeoutSec 90
-              $hdr = [System.IO.File]::ReadAllBytes($zip)[0..1]
-              if ([System.Text.Encoding]::ASCII.GetString($hdr) -eq "PK") {
-                Write-Host "sox downloaded from $u"
-                break
-              }
-              Write-Host "download from $u was not a zip, trying next"
-            } catch {
-              Write-Host "download from $u failed: $($_.Exception.Message)"
-            }
-          }
-          if (-not (Test-Path $zip) -or (Get-Item $zip).Length -eq 0) { throw "could not download sox from any source" }
-          $dest = Join-Path $env:TEMP "sox"
-          if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-          Expand-Archive $zip -DestinationPath $dest
-          $src = (Get-ChildItem $dest -Recurse -Filter sox.exe | Select-Object -First 1).DirectoryName
-          if (-not $src) { throw "sox.exe not found in the downloaded archive" }
-          Copy-Item "$src\*" -Destination $bin -Recurse
-          Remove-Item "$bin\*.pdf"
+          Copy-Item "packaging/sox-win32/*" -Destination $bin -Recurse
           Write-Host "sox bundled into $bin"
 
       - name: Package Windows zip
