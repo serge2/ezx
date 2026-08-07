@@ -70,13 +70,15 @@ Audio output requires the ALSA `aplay` command-line tool (from the
 `alsa-utils` package on most distributions); it is spawned as the sound sink
 when the UI starts. If `aplay` is not installed, the emulator still runs but
 produces no sound. Install it with e.g. `sudo apt install alsa-utils`
-(Debian/Ubuntu) or `sudo dnf install alsa-utils` (Fedora).
+(Debian/Ubuntu) or `sudo dnf install alsa-utils` (Fedora). On Windows the sink
+is `sox` or `ffplay` instead — see the Windows notes below.
 
 ## Download / Install
 
-Pre-built Linux x86_64 releases are published on GitHub, as both a Debian
-package and a self-contained tarball. Neither needs Erlang/OTP on the target
-machine — the runtime is bundled.
+Pre-built Linux x86_64 and Windows x86_64 releases are published on GitHub:
+a Debian package and a self-contained tarball for Linux, and a zip archive for
+Windows. None of them needs Erlang/OTP on the target machine — the runtime is
+bundled.
 
 **Debian/Ubuntu — .deb package:** download `ezx_<version>_amd64.deb` from the
 [Releases][] page and install it:
@@ -99,10 +101,25 @@ sudo ./install.sh      # -> /opt/ezx + menu entry + /usr/local/bin/ezx
 sudo ./uninstall.sh    # to remove
 ```
 
-Both artifacts are produced from a tagged release by `make` (see the
-`Makefile`); the `.deb` and tarball contain identical payloads.
+**Windows — zip:** download `ezx-<version>-windows-x86_64.zip`, unpack it and
+run `bin\ezx.cmd` (or `bin\ezx.ps1` from PowerShell). The bundled runtime
+includes the wx library and a copy of the `sox` sound tool, so nothing else
+needs to be installed to run.
 
-What the target machine does need:
+Windows requirements:
+
+- Sound: works out of the box — the release bundles `sox` (GPL, its license
+  is shipped alongside in `priv/bin/LICENSE.GPL.txt`) and plays through the
+  default audio device. If that copy is removed, ezx falls back to a `sox` or
+  `ffplay` (FFmpeg) found on `PATH`; without any of them it still runs, just
+  silently.
+- No Erlang/OTP installation is required — the release carries its own ERTS.
+
+The `.deb` and the tarball are produced from a tagged release by `make` (see
+the `Makefile`) and contain identical payloads; the Windows zip is assembled
+by the release workflow on GitHub Actions.
+
+What the Linux target machine does need:
 
 - GTK3 / wx libraries (the wx wrapper that ships with OTP links against
   GTK3): on Debian/Ubuntu install `libwxgtk3.2-1`, on Fedora `wxGTK3`.
@@ -126,3 +143,9 @@ Amstrad has kindly given written permission for these ROMs
 to be redistributed freely for use with emulators.
 See https://worldofspectrum.net/app/themes/wosc-classic/static/legacy/amstrad-roms.txt
 for details.
+
+The Windows release bundles the `sox` sound tool (GPL/LGPL; its license is
+shipped as `priv/bin/LICENSE.GPL.txt`). It is a separate program ezx talks to
+over a pipe, not linked into the emulator. sox is by the SoX project
+(https://sox.sourceforge.net/); its source code is available there, and the
+bundled Windows build comes from the official sox-14.4.2-win32 distribution.

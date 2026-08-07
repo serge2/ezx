@@ -828,9 +828,10 @@ schedule_frame(Ms) -> erlang:send_after(Ms, self(), frame_tick).
 audio_bytes_per_frame(Machine) -> ezx_emulator:samples_per_frame(Machine) * 4.
 
 %% @doc Open the raw-PCM player port. On Unix aplay (ALSA) is used; on Windows
-%% sox or ffplay when either is on PATH (both play signed 16-bit stereo raw
-%% from stdin). Returns `undefined' when no player is available — the frame
-%% pipeline still produces PCM, it is just dropped instead of played.
+%% the sox.exe bundled into the app's priv dir (the Windows release ships one),
+%% otherwise sox or ffplay from PATH (all play signed 16-bit stereo raw from
+%% stdin). Returns `undefined' when no player is available — the frame pipeline
+%% still produces PCM, it is just dropped instead of played.
 open_audio_port() ->
     case audio_command() of
         none -> undefined;
@@ -842,18 +843,36 @@ open_audio_port() ->
 audio_command() ->
     case erlang:system_info(os_type) of
         {win32, _} ->
-            case os:find_executable("sox") of
-                false ->
-                    case os:find_executable("ffplay") of
-                        false -> none;
-                        _ -> "ffplay -f s16le -ar 44100 -ac 2 -nodisp -autoexit -i pipe:0"
-                    end;
-                _ ->
-                    "sox -q -t raw -r 44100 -c 2 -e signed -b 16 - -d"
+            case bundled_sox() of
+                {ok, Path} ->
+                    quote_path(Path) ++ " -q -t raw -r 44100 -c 2 -e signed -b 16 - -d";
+                none ->
+                    case os:find_executable("sox") of
+                        false ->
+                            case os:find_executable("ffplay") of
+                                false -> none;
+                                _ -> "ffplay -f s16le -ar 44100 -ac 2 -nodisp -autoexit -i pipe:0"
+                            end;
+                        _ ->
+                            "sox -q -t raw -r 44100 -c 2 -e signed -b 16 - -d"
+                    end
             end;
         {unix, _} ->
             "aplay -t raw -f S16_LE -r 44100 -c 2 --buffer-size=3528 --period-size=441 -q 2>/dev/null"
     end.
+
+%% @doc The sox.exe bundled into the app's priv dir (priv/bin/sox.exe), if the
+%% Windows release ships one.
+bundled_sox() ->
+    Path = filename:join([ezx_ui_lib:priv_dir(), "bin", "sox.exe"]),
+    case filelib:is_regular(Path) of
+        true -> {ok, Path};
+        false -> none
+    end.
+
+%% @doc Quote a path for open_port({spawn, Cmd}): the release may live in a
+%% directory with spaces.
+quote_path(Path) -> "\"" ++ Path ++ "\"".
 
 %% @doc Hand PCM to the audio port, or drop it when there is no player.
 port_send(undefined, _Data) -> ok;

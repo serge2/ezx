@@ -47,6 +47,17 @@ jobs:
       - name: Build release
         run: rebar3 as prod release
 
+      - name: Bundle sox for Windows audio
+        shell: powershell
+        run: |
+          $priv = Get-ChildItem "_build/prod/rel/ezx/lib/ezx-*/priv" | Select-Object -First 1 -ExpandProperty FullName
+          $bin = Join-Path $priv "bin"
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          Invoke-WebRequest -Uri "https://sourceforge.net/projects/sox/files/sox/14.4.2/sox-14.4.2-win32.zip/download" -OutFile "$env:TEMP\sox.zip"
+          Expand-Archive "$env:TEMP\sox.zip" -DestinationPath "$env:TEMP\sox"
+          Copy-Item "$env:TEMP\sox\sox-14.4.2\*" -Destination $bin -Recurse
+          Remove-Item "$bin\*.pdf"
+
       - name: Package Windows zip
         shell: powershell
         run: |
