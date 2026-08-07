@@ -31,6 +31,10 @@
 -define(TOAST_BG, {30, 30, 30}).
 -define(TOAST_BORDER, {170, 170, 170, 255}).
 -define(TOAST_ICON, {240, 240, 240, 255}).
+%% Audio filter cutoffs (alpha coefficients for ezx_audio_filter). The filter
+%% module is generic; these are the UI's settings for its two uses.
+-define(BEEPER_LPF_ALPHA, 0.090).  %% ~700 Hz low-pass (speaker/RC-circuit inertia)
+-define(BEEPER_HPF_ALPHA, 0.9887). %% ~80 Hz high-pass (DC / overshoot blocking)
 %% Process heap floor for the UI process (which runs the machine and renders
 %% the 352×288 frame in place). Per-frame garbage (screen bitmap, audio PCM)
 %% would otherwise push the process over its heap threshold and land a full GC
@@ -67,6 +71,8 @@
     ay_stereo_mode = acb :: acb | abc | mono,
     ay_chip = ay :: ay | ym | off,
     audio_filter = undefined :: ezx_audio_filter:state() | undefined,
+    mix_dc_l = undefined :: ezx_audio_filter:state() | undefined,
+    mix_dc_r = undefined :: ezx_audio_filter:state() | undefined,
     sound_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice(), wxChoice:wxChoice()}} | undefined,
     mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}} | undefined,
     file_dialog_refs = undefined :: {wxFileDialog:wxFileDialog(), undefined} | undefined,
@@ -203,7 +209,9 @@ init(_Options) ->
         ay_master_vol = AyVol,
         ay_stereo_mode = Mode,
         ay_chip = AyChip,
-        audio_filter = ezx_audio_filter:new(),
+        audio_filter = new_beeper_filter(),
+        mix_dc_l = new_mix_dc_filter(),
+        mix_dc_r = new_mix_dc_filter(),
         aplay_port = AplayPort,
         audio_pacing = undefined,
         perf_start_us = Now,
@@ -286,7 +294,8 @@ handle_info(frame_tick, #state{machine = Machine0,
         {BeeperRawPcm, Machine3a} = ezx_emulator:render_beeper(Machine2),
         {BeeperPcm, AudioFilter1} = ezx_audio_filter:filter(BeeperRawPcm, State#state.audio_filter),
         {ChA, ChB, ChC, Machine3} = ezx_emulator:render_ay_channels(Machine3a),
-        PCM = mix_ay_stereo(BeeperPcm, ChA, ChB, ChC, State),
+        PCM0 = mix_ay_stereo(BeeperPcm, ChA, ChB, ChC, State),
+        {PCM, MixDcL1, MixDcR1} = dc_block_stereo(PCM0, State#state.mix_dc_l, State#state.mix_dc_r),
         case State#state.diag_file of
             undefined -> ok;
             Fd -> file:write(Fd, PCM)
@@ -329,7 +338,9 @@ handle_info(frame_tick, #state{machine = Machine0,
         {noreply, State#state{machine = MachineN, frame_count = FC,
                               audio_pacing = Pacing,
                               perf_start_us = PerfStartN,
-                              audio_filter = AudioFilter1}}
+                              audio_filter = AudioFilter1,
+                              mix_dc_l = MixDcL1,
+                              mix_dc_r = MixDcR1}}
     catch
         C:E:ST ->
             io:format("Frame error: ~p:~p~n~p~n", [C, E, ST]),
@@ -523,7 +534,9 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                     {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
                                           current_file = File,
                                           mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                                          audio_filter = ezx_audio_filter:new()}};
+                                          audio_filter = new_beeper_filter(),
+                                          mix_dc_l = new_mix_dc_filter(),
+                                          mix_dc_r = new_mix_dc_filter()}};
                 {error, _Code} = Err ->
                     show_load_error(State#state.frame, File, Err),
                     case Err of
@@ -693,7 +706,9 @@ handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}
                                    file_dialog_dir = filename:dirname(File),
                                    mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                                    file_dialog_refs = undefined,
-                                   audio_filter = ezx_audio_filter:new()}};
+                                   audio_filter = new_beeper_filter(),
+                                   mix_dc_l = new_mix_dc_filter(),
+                                   mix_dc_r = new_mix_dc_filter()}};
         {error, _Code} = Err ->
             show_load_error(State#state.frame, File, Err),
             {noreply, State#state{file_dialog_refs = undefined}}
@@ -775,7 +790,9 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                         mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                         audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine1)),
                         perf_start_us = Now,
-                        audio_filter = ezx_audio_filter:new()
+                        audio_filter = new_beeper_filter(),
+                        mix_dc_l = new_mix_dc_filter(),
+                        mix_dc_r = new_mix_dc_filter()
                     },
                     save_config(NewState),
                     {noreply, NewState};
@@ -833,7 +850,9 @@ recreate_machine(State) ->
                                    mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                                    audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine1)),
                                    perf_start_us = Now,
-                                   audio_filter = ezx_audio_filter:new()}};
+                                   audio_filter = new_beeper_filter(),
+                                   mix_dc_l = new_mix_dc_filter(),
+                                   mix_dc_r = new_mix_dc_filter()}};
         {error, {_Code, Detail}} ->
             Frame = State#state.frame,
             Dialog = wxMessageDialog:new(Frame, binary_to_list(Detail),
@@ -1004,7 +1023,9 @@ load_save(State, SavePath, MetaPath) ->
                 mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                 audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(NewMachine)),
                 perf_start_us = Now,
-                audio_filter = ezx_audio_filter:new()
+                audio_filter = new_beeper_filter(),
+                mix_dc_l = new_mix_dc_filter(),
+                mix_dc_r = new_mix_dc_filter()
             },
             check_machine_type_menu(NewState),
             {noreply, set_toast(NewState, load)};
@@ -1365,6 +1386,35 @@ show_load_error(Frame, File, {error, {Code, Detail}}) ->
                                                   {style, ?wxOK bor ?wxICON_ERROR}]),
     wxDialog:showModal(Dialog),
     wxMessageDialog:destroy(Dialog).
+
+%% --- Audio filters ---
+
+%% Beeper filter state: full speaker model (LPF + HPF).
+new_beeper_filter() ->
+    ezx_audio_filter:new(#{lpf => ?BEEPER_LPF_ALPHA, hpf => ?BEEPER_HPF_ALPHA}).
+
+%% Mix DC blocker state: HPF only, one state per output channel.
+new_mix_dc_filter() ->
+    ezx_audio_filter:new(#{hpf => ?BEEPER_HPF_ALPHA}).
+
+%% @doc AC-couple the stereo mix, one filter call per channel (the filter
+%% itself is mono and channel-agnostic).
+dc_block_stereo(PCM, StL, StR) ->
+    {LB, RB} = deinterleave_stereo(PCM),
+    {LB1, StL1} = ezx_audio_filter:filter(LB, StL),
+    {RB1, StR1} = ezx_audio_filter:filter(RB, StR),
+    {interleave_stereo(LB1, RB1), StL1, StR1}.
+
+deinterleave_stereo(PCM) ->
+    Ls = [L || <<L:16/signed-little, _:16/signed-little>> <= PCM],
+    Rs = [R || <<_:16/signed-little, R:16/signed-little>> <= PCM],
+    {list_to_binary([<<L:16/signed-little>> || L <- Ls]),
+     list_to_binary([<<R:16/signed-little>> || R <- Rs])}.
+
+interleave_stereo(LBin, RBin) ->
+    Ls = [L || <<L:16/signed-little>> <= LBin],
+    Rs = [R || <<R:16/signed-little>> <= RBin],
+    list_to_binary([<<L:16/signed-little, R:16/signed-little>> || {L, R} <- lists:zip(Ls, Rs)]).
 
 %% @doc Mix mono beeper + 3 mono AY channels into stereo S16LE.
 %% Panning and volume derived from stereo mode and master/global volumes.
