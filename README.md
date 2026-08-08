@@ -102,12 +102,17 @@ sudo ./uninstall.sh    # to remove
 ```
 
 **Windows — zip:** download `ezx-<version>-windows-x86_64.zip`, unpack it and
-run `bin\ezx.cmd console` (or `bin\ezx.ps1 console` from PowerShell) — the
-emulator window opens in the foreground. Use `console`, not `start`: on
-Windows `start` means "run as an erlsrv Windows service" and fails unless the
-service was installed first with `install`. The bundled runtime includes the
-wx library and a copy of the `sox` sound tool, so nothing else needs to be
+run the emulator like an application — double-click `bin\ezx-launch.vbs` (or
+run `bin\ezx-launch.cmd`). Like the Linux `ezx-launch`, this boots the bundled
+VM directly into the app (`nonode@nohost`, embedded mode), so it needs no
+cookie, no console and no release-management CLI. The bundled runtime includes
+the wx library and a copy of the `sox` sound tool, so nothing else needs to be
 installed to run.
+
+`bin\ezx.cmd console` also works and shows the VM's console output, which is
+useful when debugging a startup problem. Avoid `bin\ezx.cmd start`: on
+Windows `start` means "run as an erlsrv Windows service" and fails unless the
+service was installed first with `install` — a GUI app does not run that way.
 
 Windows requirements:
 
