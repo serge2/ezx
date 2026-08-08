@@ -76,9 +76,9 @@ is `sox` or `ffplay` instead — see the Windows notes below.
 ## Download / Install
 
 Pre-built Linux x86_64 and Windows x86_64 releases are published on GitHub:
-a Debian package and a self-contained tarball for Linux, and a zip archive for
-Windows. None of them needs Erlang/OTP on the target machine — the runtime is
-bundled.
+a Debian package and a self-contained tarball for Linux, and for Windows both
+an installer (`ezx-setup-<version>.exe`) and a portable zip. None of them
+needs Erlang/OTP on the target machine — the runtime is bundled.
 
 **Debian/Ubuntu — .deb package:** download `ezx_<version>_amd64.deb` from the
 [Releases][] page and install it:
@@ -101,18 +101,35 @@ sudo ./install.sh      # -> /opt/ezx + menu entry + /usr/local/bin/ezx
 sudo ./uninstall.sh    # to remove
 ```
 
-**Windows — zip:** download `ezx-<version>-windows-x86_64.zip`, unpack it and
-run the emulator like an application — double-click `bin\ezx-launch.vbs` (or
-run `bin\ezx-launch.cmd`). Like the Linux `ezx-launch`, this boots the bundled
-VM directly into the app (`nonode@nohost`, embedded mode), so it needs no
-cookie, no console and no release-management CLI. The bundled runtime includes
-the wx library and a copy of the `sox` sound tool, so nothing else needs to be
-installed to run.
+**Windows — installer (recommended):** download `ezx-setup-<version>.exe`
+from the [Releases][] page and run it. It installs into your user folder
+(`%LOCALAPPDATA%\Programs\ezx`), adds "ezx" to the Start menu and the desktop
+(launching `bin\ezx-launch.vbs` with the app icon), and registers itself in
+"Settings → Apps". No administrator rights are needed and the emulator starts
+straight from the installer's last page. Remove it via "Settings → Apps" or
+`Uninstall.exe` in the install folder — your settings and saves are kept
+(they live in `%LOCALAPPDATA%\ezx` and are never touched).
+
+**Windows — portable zip:** download `ezx-<version>-windows-x86_64.zip`,
+unpack it and run the emulator like an application — double-click
+`bin\ezx-launch.vbs` (or run `bin\ezx-launch.cmd`). Like the Linux
+`ezx-launch`, this boots the bundled VM directly into the app
+(`nonode@nohost`, embedded mode), so it needs no cookie, no console and no
+release-management CLI. To add a Start menu entry manually, run
+`bin\install-startmenu.ps1` (remove with `bin\uninstall-startmenu.ps1`).
 
 `bin\ezx.cmd console` also works and shows the VM's console output, which is
 useful when debugging a startup problem. Avoid `bin\ezx.cmd start`: on
 Windows `start` means "run as an erlsrv Windows service" and fails unless the
 service was installed first with `install` — a GUI app does not run that way.
+
+Optional Start menu shortcut: run `bin\install-startmenu.ps1` to add an
+"ezx" entry (with the app icon) to the current user's Start menu; run
+`bin\uninstall-startmenu.ps1` to remove it. Both touch only the current
+user's `%APPDATA%\Microsoft\Windows\Start Menu` and need no administrator
+rights. From cmd, prefix with
+`powershell -ExecutionPolicy Bypass -File` (ExecutionPolicy only affects
+how the script is launched, nothing in the emulator).
 
 Windows requirements:
 
@@ -124,8 +141,9 @@ Windows requirements:
 - No Erlang/OTP installation is required — the release carries its own ERTS.
 
 The `.deb` and the tarball are produced from a tagged release by `make` (see
-the `Makefile`) and contain identical payloads; the Windows zip is assembled
-by the release workflow on GitHub Actions.
+the `Makefile`) and contain identical payloads; the Windows zip and the NSIS
+installer (`ezx-setup-<version>.exe`, script in `packaging/ezx.nsi`) are
+assembled by the release workflow on GitHub Actions.
 
 What the Linux target machine does need:
 

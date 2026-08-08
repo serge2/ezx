@@ -88,9 +88,27 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path _build/prod/rel/ezx -DestinationPath "dist/ezx-${{ needs.release.outputs.vsn }}-windows-x86_64.zip"
 
-      - name: Upload Windows zip
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Build NSIS installer
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            $cmd = Get-Command makensis -ErrorAction SilentlyContinue
+            if ($cmd) { $makensis = $cmd.Source } else { throw "makensis not found" }
+          }
+          & $makensis "-DVERSION=${{ needs.release.outputs.vsn }}" "-DRELDIR=$env:GITHUB_WORKSPACE\_build\prod\rel\ezx" "-DOUTFILE=$env:GITHUB_WORKSPACE\dist\ezx-setup-${{ needs.release.outputs.vsn }}.exe" packaging/ezx.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
+          Write-Host "built $env:GITHUB_WORKSPACE\dist\ezx-setup-${{ needs.release.outputs.vsn }}.exe"
+
+      - name: Upload Windows zip and installer
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.release.outputs.vsn }}
-          files: dist/ezx-${{ needs.release.outputs.vsn }}-windows-x86_64.zip
+          files: |
+            dist/ezx-${{ needs.release.outputs.vsn }}-windows-x86_64.zip
+            dist/ezx-setup-${{ needs.release.outputs.vsn }}.exe
           fail_on_unmatched_files: true
