@@ -2,5 +2,8 @@
 # Node name enables the bin/ezx start/stop/ping daemon commands; a desktop
 # app runs as a single instance, so the fixed short name is fine.
 -sname ezx
+# Fixed cookie so the extended start scripts (bin/ezx on Unix, bin\ezx.cmd on
+# Windows) work without a ~/.erlang.cookie; single-instance desktop app.
+-setcookie ezx_spectrum_emulator
 # Kernel poll gives the emulator steady timer delivery for audio/timing.
 +K true

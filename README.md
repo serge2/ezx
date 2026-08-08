@@ -102,9 +102,12 @@ sudo ./uninstall.sh    # to remove
 ```
 
 **Windows — zip:** download `ezx-<version>-windows-x86_64.zip`, unpack it and
-run `bin\ezx.cmd` (or `bin\ezx.ps1` from PowerShell). The bundled runtime
-includes the wx library and a copy of the `sox` sound tool, so nothing else
-needs to be installed to run.
+run `bin\ezx.cmd console` (or `bin\ezx.ps1 console` from PowerShell) — the
+emulator window opens in the foreground. Use `console`, not `start`: on
+Windows `start` means "run as an erlsrv Windows service" and fails unless the
+service was installed first with `install`. The bundled runtime includes the
+wx library and a copy of the `sox` sound tool, so nothing else needs to be
+installed to run.
 
 Windows requirements:
 
