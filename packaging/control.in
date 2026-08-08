@@ -4,8 +4,8 @@ Architecture: @ARCH@
 Maintainer: Sergii Polkovnikov <serge.polkovnikov@gmail.com>
 Section: games
 Priority: optional
-Depends: libwxgtk3.2-1 | libwxgtk3.0-gtk3-0v5
+Depends: libwxgtk3.2-1 | libwxgtk3.0-gtk3-0v5, alsa-utils
 Description: ZX Spectrum 48K/128K emulator
  A ZX Spectrum 48K/128K emulator written in Erlang. Ships a
- self-contained OTP runtime; only the wxWidgets GTK3 runtime is
- required from the system.
+ self-contained OTP runtime; only the wxWidgets GTK3 runtime and the
+ ALSA utils (aplay) are required from the system.
