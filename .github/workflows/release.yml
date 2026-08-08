@@ -71,7 +71,7 @@ jobs:
           Copy-Item "packaging/sox-win32/*" -Destination $bin -Recurse
           Write-Host "sox bundled into $bin"
 
-      - name: Strip debug symbols from the release
+      - name: Strip debug symbols and CI paths from the release
         shell: powershell
         run: |
           $pdb = Get-ChildItem "_build/prod/rel/ezx" -Recurse -Filter *.pdb
@@ -80,6 +80,13 @@ jobs:
             Write-Host "removed $($pdb.Count) .pdb files"
           } else {
             Write-Host "no .pdb files found"
+          }
+          $ini = Get-ChildItem "_build/prod/rel/ezx/erts-*/bin/erl.ini" -ErrorAction SilentlyContinue
+          if ($ini) {
+            $ini | Remove-Item -Force
+            Write-Host "removed $($ini.FullName) (embeds the CI OTP install path; erl.exe reads it and cannot find erlexec.dll on user machines)"
+          } else {
+            Write-Host "no erl.ini found"
           }
 
       - name: Package Windows zip
