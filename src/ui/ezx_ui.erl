@@ -75,7 +75,6 @@
     mix_dc_r = undefined :: ezx_audio_filter:state() | undefined,
     sound_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice(), wxChoice:wxChoice()}} | undefined,
     mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}} | undefined,
-    file_dialog_refs = undefined :: {wxFileDialog:wxFileDialog(), undefined} | undefined,
     file_dialog_dir = undefined :: string() | undefined,
     saves_dialog_refs = undefined :: {wxDialog:wxDialog(), wxListCtrl:wxListCtrl(),
                                       wxButton:wxButton(), wxButton:wxButton(), wxButton:wxButton(),
@@ -98,6 +97,7 @@ stop() ->
     gen_server:stop(?MODULE).
 
 init(_Options) ->
+    process_flag(trap_exit, true),
     process_flag(min_heap_size, ?MIN_HEAP_WORDS),
     wx:new(),
 
@@ -166,7 +166,7 @@ init(_Options) ->
     wxMenu:check(DebugMenu, ?MENU_DEBUG_PERF, PerfReport),
     wxFrame:connect(Frame, command_menu_selected),
 
-    Panel = wxPanel:new(Frame),
+    Panel = wxPanel:new(Frame, [{style, ?wxWANTS_CHARS}]),
     wxWindow:setBackgroundStyle(Panel, ?wxBG_STYLE_PAINT),
     wxPanel:connect(Panel, key_down),
     wxPanel:connect(Panel, key_up),
@@ -250,6 +250,22 @@ handle_info({clear_toast, Ref}, #state{toast = {Ref, _}} = State) ->
     {noreply, State#state{toast = undefined}};
 handle_info({clear_toast, _}, State) ->
     {noreply, State};
+
+%% The audio player port (aplay/sox) died: its process exited or the pipe
+%% broke (epipe). Never crash the UI for that — mute audio and keep running.
+handle_info({'EXIT', Port, Reason}, State) when is_port(Port) ->
+    case State#state.aplay_port of
+        Port ->
+            io:format("ezx: audio player port closed (~p) - audio muted~n", [Reason]),
+            {noreply, State#state{aplay_port = undefined}};
+        _ ->
+            {noreply, State}
+    end;
+handle_info({Port, {exit_status, Status}}, #state{aplay_port = Port} = State) ->
+    io:format("ezx: audio player exited with status ~p - audio muted~n", [Status]),
+    {noreply, State#state{aplay_port = undefined}};
+handle_info({'EXIT', Pid, Reason}, State) when is_pid(Pid) ->
+    {stop, Reason, State};
 
 handle_info(frame_tick, #state{machine = undefined} = State) ->
     erlang:send_after(50, self(), frame_tick),
@@ -352,7 +368,7 @@ handle_info(#wx{event = #wxClose{}} = Wx, #state{frame = Frame} = State) ->
         Frame ->
             cleanup_dialogs(State),
             init:stop(),
-            {stop, normal, State};
+            {stop, shutdown, State};
         Obj ->
             {noreply, close_dialog(Obj, State)}
     end;
@@ -427,7 +443,7 @@ handle_info(#wx{event = #wxKey{type = key_down, keyCode = $O, controlDown = true
 
 handle_info(#wx{event = #wxKey{type = key_down, keyCode = $Q, controlDown = true, altDown = false}}, State) ->
     init:stop(),
-    {stop, normal, State};
+    {stop, shutdown, State};
 
 %% Ctrl+F12: dump the whole machine state (term_to_binary) so a stuck/interesting
 %% state can be reproduced headlessly for debugging. The modifier guards against
@@ -513,7 +529,7 @@ handle_info(#wx{id = ?wxID_OPEN, event = #wxCommand{type = command_menu_selected
 
 handle_info(#wx{id = ?wxID_EXIT, event = #wxCommand{type = command_menu_selected}}, State) ->
     init:stop(),    
-    {stop, normal, State};
+    {stop, shutdown, State};
 
 handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
             #state{machine = undefined} = State) when Id >= ?MENU_RECENT_BASE, Id < ?MENU_RECENT_BASE + ?MAX_RECENT ->
@@ -691,30 +707,6 @@ handle_info(#wx{id = ?wxID_CANCEL, event = #wxCommand{type = command_button_clic
     {noreply, State#state{sound_dialog_refs = undefined}};
 
 handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
-            #state{file_dialog_refs = {Dialog, _}} = State) ->
-    File = wxFileDialog:getPath(Dialog),
-    wxFileDialog:destroy(Dialog),
-    case ezx_ui_lib:load_emulator_file(File, State#state.machine_type,
-                                       State#state.ay_chip) of
-        {ok, NewMachine} ->
-            io:format("Loaded: ~s~n", [File]),
-            NewMachine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, NewMachine),
-            NewRecent = ezx_recent_files:update(File, State#state.recent_files),
-            ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
-            {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
-                                   current_file = File,
-                                   file_dialog_dir = filename:dirname(File),
-                                   mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                                   file_dialog_refs = undefined,
-                                   audio_filter = new_beeper_filter(),
-                                   mix_dc_l = new_mix_dc_filter(),
-                                   mix_dc_r = new_mix_dc_filter()}};
-        {error, _Code} = Err ->
-            show_load_error(State#state.frame, File, Err),
-            {noreply, State#state{file_dialog_refs = undefined}}
-    end;
-
-handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
             #state{saves_dialog_refs = {Dialog, _, _, _, _, _}} = State) ->
     wxDialog:destroy(Dialog),
     {noreply, State#state{saves_dialog_refs = undefined, saves_entries = []}};
@@ -764,11 +756,6 @@ handle_info(#wx{id = ?BTN_RENAME, event = #wxCommand{type = command_button_click
                     {noreply, State}
             end
     end;
-
-handle_info(#wx{id = ?wxID_CANCEL, event = #wxCommand{type = command_button_clicked}},
-            #state{file_dialog_refs = {Dialog, _}} = State) ->
-    wxFileDialog:destroy(Dialog),
-    {noreply, State#state{file_dialog_refs = undefined}};
 
 handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
             #state{machine_type = OldType} = State) when Id >= ?MENU_MACHINE_BASE, Id < ?MENU_MACHINE_BASE + 2 ->
@@ -845,7 +832,7 @@ audio_command() ->
         {win32, _} ->
             case bundled_sox() of
                 {ok, Path} ->
-                    quote_path(Path) ++ " -q -t raw -r 44100 -c 2 -e signed -b 16 - -d";
+                    quote_path(Path) ++ " -q -t raw -r 44100 -c 2 -e signed -b 16 - -t waveaudio default";
                 none ->
                     case os:find_executable("sox") of
                         false ->
@@ -854,7 +841,7 @@ audio_command() ->
                                 _ -> "ffplay -f s16le -ar 44100 -ac 2 -nodisp -autoexit -i pipe:0"
                             end;
                         _ ->
-                            "sox -q -t raw -r 44100 -c 2 -e signed -b 16 - -d"
+                            "sox -q -t raw -r 44100 -c 2 -e signed -b 16 - -t waveaudio default"
                     end
             end;
         {unix, _} ->
@@ -874,9 +861,13 @@ bundled_sox() ->
 %% directory with spaces.
 quote_path(Path) -> "\"" ++ Path ++ "\"".
 
-%% @doc Hand PCM to the audio port, or drop it when there is no player.
+%% @doc Hand PCM to the audio port, or drop it when there is no player. A port
+%% that already exited (badarg race with the {'EXIT', ...} message) is ignored.
 port_send(undefined, _Data) -> ok;
-port_send(Port, Data) -> port_command(Port, Data).
+port_send(Port, Data) ->
+    try port_command(Port, Data)
+    catch error:badarg -> ok
+    end.
 
 toggle_pause(State) ->
     Paused = not State#state.paused,
@@ -916,12 +907,13 @@ recreate_machine(State) ->
             {noreply, State#state{machine = undefined, frame_count = 0}}
     end.
 
-%% @doc Open the modeless load-file dialog (SNA/Z80/TAP). No-op when a file
-%% dialog is already open. It starts in the directory of the last loaded file
-%% (held in memory only, not persisted), or the current directory the first
-%% time.
+%% @doc Open the load-file dialog (SNA/Z80/TAP). Shown modally — native file
+%% dialogs on Windows only support ShowModal (a modeless show creates no
+%% window at all), so the emulation briefly pauses while the dialog is open.
+%% Starts in the directory of the last loaded file (held in memory only, not
+%% persisted), or the current directory the first time.
 -spec handle_open_file(#state{}) -> {noreply, #state{}}.
-handle_open_file(#state{file_dialog_refs = undefined, file_dialog_dir = Dir} = State) ->
+handle_open_file(#state{frame = Frame, file_dialog_dir = Dir} = State) ->
     Options = [{message, "Load snapshot or tape"},
                {wildCard, "ZX Spectrum files (*.sna,*.z80,*.tap)|*.sna;*.z80;*.tap|SNA files (*.sna)|*.sna|Z80 files (*.z80)|*.z80|TAP files (*.tap)|*.tap"},
                {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}],
@@ -929,12 +921,39 @@ handle_open_file(#state{file_dialog_refs = undefined, file_dialog_dir = Dir} = S
                    undefined -> Options;
                    _ -> [{defaultDir, Dir} | Options]
                end,
-    Dialog = wxFileDialog:new(State#state.frame, Options1),
-    wxFileDialog:connect(Dialog, command_button_clicked),
-    wxDialog:show(Dialog),
-    {noreply, State#state{file_dialog_refs = {Dialog, undefined}}};
-handle_open_file(State) ->
-    {noreply, State}.
+    Dialog = wxFileDialog:new(Frame, Options1),
+    case wxDialog:showModal(Dialog) of
+        ?wxID_OK ->
+            File = wxFileDialog:getPath(Dialog),
+            wxFileDialog:destroy(Dialog),
+            load_file_result(File, State);
+        _ ->
+            wxFileDialog:destroy(Dialog),
+            {noreply, State}
+    end.
+
+%% @doc Load a snapshot/tape chosen via the file dialog: build the machine,
+%% thread the mouse config through, update the recent-files menu and reset the
+%% audio filters (stale beeper/DC states must not carry into the new machine).
+-spec load_file_result(string(), #state{}) -> {noreply, #state{}}.
+load_file_result(File, #state{machine_type = MachineType, ay_chip = AyChip} = State) ->
+    case ezx_ui_lib:load_emulator_file(File, MachineType, AyChip) of
+        {ok, NewMachine} ->
+            io:format("Loaded: ~s~n", [File]),
+            NewMachine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, NewMachine),
+            NewRecent = ezx_recent_files:update(File, State#state.recent_files),
+            ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
+            {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
+                                   current_file = File,
+                                   file_dialog_dir = filename:dirname(File),
+                                   mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
+                                   audio_filter = new_beeper_filter(),
+                                   mix_dc_l = new_mix_dc_filter(),
+                                   mix_dc_r = new_mix_dc_filter()}};
+        {error, _Code} = Err ->
+            show_load_error(State#state.frame, File, Err),
+            {noreply, State}
+    end.
 
 %% --- Save / load state ---
 
@@ -1241,7 +1260,6 @@ draw_frame(State, RGB) ->
         {SW, SH} -> {SW, SH};
         undefined -> {PW0, PH0}
     end,
-    BmpDC = wxMemoryDC:new(),
     BufDC = wxBufferedDC:new(ClientDC, {PW, PH}),
     wxDC:setBackground(BufDC, wxBrush:new({0, 0, 0})),
     wxDC:clear(BufDC),
@@ -1278,7 +1296,6 @@ draw_frame(State, RGB) ->
             DDY = max(0, (PH - ?DEFAULT_HEIGHT * Scale) div 2),
             {B, DDX - OffX * Scale, DDY - OffY * Scale, Scale}
     end,
-    wxMemoryDC:selectObject(BmpDC, Bmp),
     wxDC:setDeviceOrigin(BufDC, DX, DY),
     wxDC:setUserScale(BufDC, UseBmpScale, UseBmpScale),
     wxDC:drawBitmap(BufDC, Bmp, {0, 0}),
@@ -1286,7 +1303,6 @@ draw_frame(State, RGB) ->
     wxDC:setDeviceOrigin(BufDC, 0, 0),
     draw_toast(State, BufDC, PW, PH),
     wxBufferedDC:destroy(BufDC),
-    wxMemoryDC:destroy(BmpDC),
     wxClientDC:destroy(ClientDC),
     wxBitmap:destroy(Bmp).
 
@@ -1504,15 +1520,13 @@ mix_samples(<<B:16/little-signed, BR/binary>>,
 %% @doc Destroy any dialogs still open (the main window is closing).
 -spec cleanup_dialogs(#state{}) -> ok.
 cleanup_dialogs(#state{sound_dialog_refs = Sound, mouse_dialog_refs = Mouse,
-                       file_dialog_refs = File, saves_dialog_refs = Saves}) ->
+                       saves_dialog_refs = Saves}) ->
     destroy_dialog(Sound),
     destroy_dialog(Mouse),
-    destroy_dialog(File),
     destroy_dialog(Saves).
 
 %% @doc Destroy a single open dialog ref ({Dialog, Controls}). `undefined'
-%% means no dialog is open. The file dialog is a wxDialog subclass, so
-%% wxDialog:destroy is correct for all three dialog kinds.
+%% means no dialog is open.
 -spec destroy_dialog(undefined | {wxDialog:wxDialog() | wxFileDialog:wxFileDialog(), any()}) -> ok.
 destroy_dialog(undefined) -> ok;
 destroy_dialog({Dialog, _}) -> wxDialog:destroy(Dialog).
@@ -1527,9 +1541,6 @@ close_dialog(Obj, #state{sound_dialog_refs = {Dialog, _}} = State) when Obj =:= 
 close_dialog(Obj, #state{mouse_dialog_refs = {Dialog, _}} = State) when Obj =:= Dialog ->
     wxDialog:destroy(Obj),
     State#state{mouse_dialog_refs = undefined};
-close_dialog(Obj, #state{file_dialog_refs = {Dialog, _}} = State) when Obj =:= Dialog ->
-    wxDialog:destroy(Obj),
-    State#state{file_dialog_refs = undefined};
 close_dialog(Obj, #state{saves_dialog_refs = {Dialog, _, _, _, _, _}} = State) when Obj =:= Dialog ->
     wxDialog:destroy(Obj),
     State#state{saves_dialog_refs = undefined, saves_entries = []};

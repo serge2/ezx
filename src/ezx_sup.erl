@@ -9,7 +9,6 @@
 -export([init/1]).
 
 %% Helper macro for declaring children of supervisor
--define(CHILD(I, Type), {I, {I, start_link, []}, permanent, 5000, Type, [I]}).
 
 %% ===================================================================
 %% API functions
@@ -23,8 +22,13 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
+    %% ezx_ui is transient: a normal close (wxClose / menu exit) must shut
+    %% down silently, while a crash still restarts the UI. permanent would
+    %% print a SUPERVISOR REPORT (child_terminated / restart intensity) on
+    %% every app close.
+    UiChild = {ezx_ui, {ezx_ui, start_link, []}, transient, 5000, worker, [ezx_ui]},
     Children = [
-        ?CHILD(ezx_ui, worker)
+        UiChild
     ],
     {ok, { {one_for_one, 0, 1}, Children} }.
 
