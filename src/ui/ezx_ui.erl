@@ -83,7 +83,8 @@
     blank_cursor = undefined :: wxCursor:wxCursor() | undefined,
     cursor_hidden = false :: boolean(),
     mouse = undefined :: any(),
-    toast = undefined :: {reference(), save | load} | undefined
+    toast = undefined :: {reference(), save | load} | undefined,
+    gdi = undefined :: map() | undefined
 }).
 
 
@@ -216,7 +217,8 @@ init(_Options) ->
         perf_start_us = Now,
         menu_bar = MenuBar,
         recent_files = RecentFiles0,
-        mouse = Mouse
+        mouse = Mouse,
+        gdi = new_gdi()
     },
     case ezx_ui_lib:init_virtual_machine(MachineType, AyChip) of
         {ok, Machine} ->
@@ -801,8 +803,9 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{frame = Frame, aplay_port = Port}) ->
+terminate(_Reason, #state{frame = Frame, aplay_port = Port, gdi = GDI}) ->
     catch port_close(Port),
+    catch destroy_gdi(GDI),
     wxFrame:destroy(Frame),
     ok.
 
@@ -1261,7 +1264,7 @@ draw_frame(State, RGB) ->
         undefined -> {PW0, PH0}
     end,
     BufDC = wxBufferedDC:new(ClientDC, {PW, PH}),
-    wxDC:setBackground(BufDC, wxBrush:new({0, 0, 0})),
+    wxDC:setBackground(BufDC, gdi_brush(State#state.gdi, bg_brush)),
     wxDC:clear(BufDC),
 
     UseExact = State#state.fullscreen andalso State#state.option_crop_border andalso State#state.option_integer_scaling,
@@ -1310,17 +1313,17 @@ draw_frame(State, RGB) ->
 %% (see set_toast/2). Drawn with wxDC primitives into the same double-buffered
 %% pass as the frame, so it never flickers and stays visible in every mode
 %% (crop, scale, fullscreen) without touching the emulated pixels.
-draw_toast(#state{toast = {_, Icon}}, DC, PW, PH) ->
+draw_toast(#state{toast = {_, Icon}, gdi = GDI}, DC, PW, PH) ->
     W = PW div 3,
     H = PH div 3,
     X = (PW - W) div 2,
     Y = (PH - H) div 2,
-    wxDC:setBrush(DC, wxBrush:new(?TOAST_BG)),
-    wxDC:setPen(DC, wxPen:new(?TOAST_BORDER, [{width, 2}])),
+    wxDC:setBrush(DC, gdi_brush(GDI, toast_bg_brush)),
+    wxDC:setPen(DC, gdi_pen(GDI, toast_border_pen)),
     wxDC:drawRoundedRectangle(DC, {X, Y, W, H}, max(6, W div 12)),
     M = W div 6,
     S = (W - 2 * M) / 48.0,
-    draw_toast_icon(DC, X + M, Y + (H - round(21 * S)) div 2, S, Icon),
+    draw_toast_icon(DC, X + M, Y + (H - round(21 * S)) div 2, S, Icon, GDI),
     ok;
 draw_toast(#state{toast = undefined}, _DC, _PW, _PH) ->
     ok.
@@ -1329,29 +1332,33 @@ draw_toast(#state{toast = undefined}, _DC, _PW, _PH) ->
 %% between them, drawn with filled shapes scaled by S (base 48x32). Save:
 %% monitor -> floppy (screen on the left, arrow pointing right). Load: floppy
 %% -> monitor (floppy on the left, arrow pointing right).
-draw_toast_icon(DC, X, Y, S, save) ->
-    draw_toast_screen(DC, X, Y, S),
-    draw_toast_floppy(DC, X + 32 * S, Y, S),
-    draw_toast_arrow(DC, X + 19 * S, Y + 7 * S, S),
+draw_toast_icon(DC, X, Y, S, save, GDI) ->
+    draw_toast_screen(DC, X, Y, S, GDI),
+    draw_toast_floppy(DC, X + 32 * S, Y, S, GDI),
+    draw_toast_arrow(DC, X + 19 * S, Y + 7 * S, S, GDI),
     ok;
-draw_toast_icon(DC, X, Y, S, load) ->
-    draw_toast_floppy(DC, X + 1 * S, Y, S),
-    draw_toast_screen(DC, X + 30 * S, Y, S),
-    draw_toast_arrow(DC, X + 18 * S, Y + 7 * S, S),
+draw_toast_icon(DC, X, Y, S, load, GDI) ->
+    draw_toast_floppy(DC, X + 1 * S, Y, S, GDI),
+    draw_toast_screen(DC, X + 30 * S, Y, S, GDI),
+    draw_toast_arrow(DC, X + 18 * S, Y + 7 * S, S, GDI),
     ok.
 
 %% @doc A monitor: bezel with a dark screen, stand and base.
-draw_toast_screen(DC, X, Y, S) ->
-    wxDC:setBrush(DC, wxBrush:new(?TOAST_ICON)),
-    wxDC:setPen(DC, wxPen:new(?TOAST_ICON)),
+draw_toast_screen(DC, X, Y, S, GDI) ->
+    IconBrush = gdi_brush(GDI, toast_icon_brush),
+    IconPen = gdi_pen(GDI, toast_icon_pen),
+    BgBrush = gdi_brush(GDI, toast_bg_brush),
+    BgPen = gdi_pen(GDI, toast_bg_pen),
+    wxDC:setBrush(DC, IconBrush),
+    wxDC:setPen(DC, IconPen),
     wxDC:drawRoundedRectangle(DC, {round(X + 1 * S), round(Y + 2 * S),
                                    round(16 * S), round(12 * S)}, round(2 * S)),
-    wxDC:setBrush(DC, wxBrush:new(?TOAST_BG)),
-    wxDC:setPen(DC, wxPen:new(?TOAST_BG)),
+    wxDC:setBrush(DC, BgBrush),
+    wxDC:setPen(DC, BgPen),
     wxDC:drawRectangle(DC, {round(X + 3 * S), round(Y + 4 * S),
                             round(12 * S), round(8 * S)}),
-    wxDC:setBrush(DC, wxBrush:new(?TOAST_ICON)),
-    wxDC:setPen(DC, wxPen:new(?TOAST_ICON)),
+    wxDC:setBrush(DC, IconBrush),
+    wxDC:setPen(DC, IconPen),
     wxDC:drawRectangle(DC, {round(X + 6 * S), round(Y + 14 * S),
                             round(4 * S), round(3 * S)}),
     wxDC:drawRectangle(DC, {round(X + 3 * S), round(Y + 17 * S),
@@ -1359,33 +1366,66 @@ draw_toast_screen(DC, X, Y, S) ->
     ok.
 
 %% @doc A floppy disk: rounded body, dark label band, right shutter strip.
-draw_toast_floppy(DC, X, Y, S) ->
-    wxDC:setBrush(DC, wxBrush:new(?TOAST_ICON)),
-    wxDC:setPen(DC, wxPen:new(?TOAST_ICON)),
+draw_toast_floppy(DC, X, Y, S, GDI) ->
+    IconBrush = gdi_brush(GDI, toast_icon_brush),
+    IconPen = gdi_pen(GDI, toast_icon_pen),
+    BgBrush = gdi_brush(GDI, toast_bg_brush),
+    BgPen = gdi_pen(GDI, toast_bg_pen),
+    wxDC:setBrush(DC, IconBrush),
+    wxDC:setPen(DC, IconPen),
     wxDC:drawRoundedRectangle(DC, {round(X), round(Y + 3 * S),
                                    round(15 * S), round(12 * S)}, round(2 * S)),
-    wxDC:setBrush(DC, wxBrush:new(?TOAST_BG)),
-    wxDC:setPen(DC, wxPen:new(?TOAST_BG)),
+    wxDC:setBrush(DC, BgBrush),
+    wxDC:setPen(DC, BgPen),
     wxDC:drawRectangle(DC, {round(X + 2 * S), round(Y + 4 * S),
                             round(11 * S), round(3 * S)}),
-    wxDC:setBrush(DC, wxBrush:new(?TOAST_ICON)),
-    wxDC:setPen(DC, wxPen:new(?TOAST_ICON)),
+    wxDC:setBrush(DC, IconBrush),
+    wxDC:setPen(DC, IconPen),
     wxDC:drawRectangle(DC, {round(X + 12 * S), round(Y + 4 * S),
                             round(2 * S), round(10 * S)}),
-    wxDC:setBrush(DC, wxBrush:new(?TOAST_BG)),
-    wxDC:setPen(DC, wxPen:new(?TOAST_BG)),
+    wxDC:setBrush(DC, BgBrush),
+    wxDC:setPen(DC, BgPen),
     wxDC:drawRectangle(DC, {round(X + 10 * S), round(Y + 13 * S),
                             round(2 * S), round(1 * S)}),
     ok.
 
 %% @doc A right-pointing arrow: shaft plus a filled head.
-draw_toast_arrow(DC, X, Y, S) ->
-    wxDC:setBrush(DC, wxBrush:new(?TOAST_ICON)),
-    wxDC:setPen(DC, wxPen:new(?TOAST_ICON)),
+draw_toast_arrow(DC, X, Y, S, GDI) ->
+    IconBrush = gdi_brush(GDI, toast_icon_brush),
+    IconPen = gdi_pen(GDI, toast_icon_pen),
+    wxDC:setBrush(DC, IconBrush),
+    wxDC:setPen(DC, IconPen),
     wxDC:drawRectangle(DC, {round(X), round(Y), round(8 * S), round(2 * S)}),
     wxDC:drawPolygon(DC, [{round(X + 8 * S), round(Y - 2 * S)},
                           {round(X + 13 * S), round(Y + 1 * S)},
                           {round(X + 8 * S), round(Y + 4 * S)}]),
+    ok.
+
+%% @doc Cached GDI objects (brushes/pens) reused across frames. Creating these
+%% per-frame leaks GDI handles (Windows caps a process at ~10 000, ~50/frame
+%% exhausts it in minutes), so every constant-color brush/pen lives here.
+%% Values are {brush, Ref} / {pen, Ref} so destroy_gdi/1 knows the destroy call.
+new_gdi() ->
+    #{bg_brush => {brush, wxBrush:new({0, 0, 0})},
+      toast_bg_brush => {brush, wxBrush:new(?TOAST_BG)},
+      toast_bg_pen => {pen, wxPen:new(?TOAST_BG)},
+      toast_border_pen => {pen, wxPen:new(?TOAST_BORDER, [{width, 2}])},
+      toast_icon_brush => {brush, wxBrush:new(?TOAST_ICON)},
+      toast_icon_pen => {pen, wxPen:new(?TOAST_ICON)}}.
+
+gdi_brush(GDI, Key) -> element(2, maps:get(Key, GDI)).
+
+gdi_pen(GDI, Key) -> element(2, maps:get(Key, GDI)).
+
+destroy_gdi(GDI) when is_map(GDI) ->
+    maps:foreach(
+      fun(_Key, {Kind, Ref}) ->
+              case Kind of
+                  brush -> catch wxBrush:destroy(Ref);
+                  pen -> catch wxPen:destroy(Ref)
+              end
+      end, GDI);
+destroy_gdi(_) ->
     ok.
 
 

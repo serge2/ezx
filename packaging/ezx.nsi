@@ -35,9 +35,12 @@ SetCompressor /SOLID lzma
 !define MUI_ICON "../priv/ezx.ico"
 !define MUI_UNICON "../priv/ezx.ico"
 !define MUI_ABORTWARNING
-!define MUI_FINISHPAGE_RUN "$INSTDIR\bin\ezx-launch.vbs"
+; The finish-page checkbox runs the target via `Exec`, which only spawns real
+; executables — a bare .vbs silently does nothing. Launch wscript.exe with the
+; vbs as its argument, exactly like the desktop/Start menu shortcuts.
+!define MUI_FINISHPAGE_RUN "$WINDIR\System32\wscript.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch ezx now"
-!define MUI_FINISHPAGE_RUN_PARAMETERS ""
+!define MUI_FINISHPAGE_RUN_PARAMETERS '"$INSTDIR\bin\ezx-launch.vbs"'
 
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "ezx ZX Spectrum emulator"
