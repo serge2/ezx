@@ -1,7 +1,7 @@
 {application, ezx,
  [
   {description, "ZX Spectrum Z80 emulator prototype"},
-  {vsn, "1.2.1"},
+  {vsn, "1.2.2"},
   {registered, [ezx_sup]},
   {applications, [
                   kernel,
