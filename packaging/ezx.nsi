@@ -36,11 +36,13 @@ SetCompressor /SOLID lzma
 !define MUI_UNICON "../priv/ezx.ico"
 !define MUI_ABORTWARNING
 ; The finish-page checkbox runs the target via `Exec`, which only spawns real
-; executables — a bare .vbs silently does nothing. Launch wscript.exe with the
-; vbs as its argument, exactly like the desktop/Start menu shortcuts.
-!define MUI_FINISHPAGE_RUN "$WINDIR\System32\wscript.exe"
+; executables — a bare .vbs silently does nothing, and passing parameters
+; through MUI_FINISHPAGE_RUN_PARAMETERS breaks the Exec line's quoting. Use a
+; run function with ExecShell instead, launching wscript.exe with the vbs as
+; its argument exactly like the desktop/Start menu shortcuts.
+!define MUI_FINISHPAGE_RUN ""
 !define MUI_FINISHPAGE_RUN_TEXT "Launch ezx now"
-!define MUI_FINISHPAGE_RUN_PARAMETERS '"$INSTDIR\bin\ezx-launch.vbs"'
+!define MUI_FINISHPAGE_RUN_FUNCTION "LaunchEzx"
 
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "ezx ZX Spectrum emulator"
@@ -56,6 +58,11 @@ VIAddVersionKey "LegalCopyright" "Copyright (C) 2026 Sergii Polkovnikov <serge.p
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
+
+; Called when the "Launch ezx now" checkbox is checked on the finish page.
+Function LaunchEzx
+  ExecShell "open" "$WINDIR\System32\wscript.exe" '"$INSTDIR\bin\ezx-launch.vbs"'
+FunctionEnd
 
 !insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "Russian"
