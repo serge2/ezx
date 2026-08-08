@@ -1,7 +1,8 @@
 ; ezx Windows installer (NSIS 3).
 ;
-; Build from the repo root (after the prod release exists), e.g.:
-;   makensis -DVERSION=1.2.0 -DRELDIR="_build\prod\rel\ezx" packaging/ezx.nsi
+; Build from the repo root (after the prod release exists), e.g. on Windows:
+;   makensis -DVERSION=1.2.0 -DRELDIR="_build\prod\rel\ezx\*" packaging/ezx.nsi
+; (on Unix pass a forward-slash mask: -DRELDIR="_build/prod/rel/ezx/*").
 ;
 ; Installs per-user into %LOCALAPPDATA%\Programs\ezx (no administrator
 ; rights), creates Start menu + desktop shortcuts to bin\ezx-launch.vbs with
@@ -16,7 +17,7 @@
   !define VERSION "0.0.0"
 !endif
 !ifndef RELDIR
-  !error "RELDIR (path to the built release, e.g. _build\prod\rel\ezx) must be passed with -DRELDIR=..."
+  !error "RELDIR (the built release as a file mask, e.g. _build\prod\rel\ezx\*) must be passed with -DRELDIR=..."
 !endif
 !ifndef OUTFILE
   !define OUTFILE "dist/ezx-setup-${VERSION}.exe"
@@ -58,7 +59,7 @@ VIAddVersionKey "LegalCopyright" "Copyright (C) 2026 Sergii Polkovnikov <serge.p
 
 Section "Install" SecInstall
   SetOutPath "$INSTDIR"
-  File /r "${RELDIR}/*"
+  File /r "${RELDIR}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
   CreateDirectory "$SMPROGRAMS\ezx"

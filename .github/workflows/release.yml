@@ -100,7 +100,7 @@ jobs:
             $cmd = Get-Command makensis -ErrorAction SilentlyContinue
             if ($cmd) { $makensis = $cmd.Source } else { throw "makensis not found" }
           }
-          & $makensis "-DVERSION=${{ needs.release.outputs.vsn }}" "-DRELDIR=$env:GITHUB_WORKSPACE\_build\prod\rel\ezx" "-DOUTFILE=$env:GITHUB_WORKSPACE\dist\ezx-setup-${{ needs.release.outputs.vsn }}.exe" packaging/ezx.nsi
+          & $makensis "-DVERSION=${{ needs.release.outputs.vsn }}" "-DRELDIR=$env:GITHUB_WORKSPACE\_build\prod\rel\ezx\*" "-DOUTFILE=$env:GITHUB_WORKSPACE\dist\ezx-setup-${{ needs.release.outputs.vsn }}.exe" packaging/ezx.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
           Write-Host "built $env:GITHUB_WORKSPACE\dist\ezx-setup-${{ needs.release.outputs.vsn }}.exe"
 
