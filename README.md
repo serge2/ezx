@@ -12,6 +12,7 @@ Just for fun and as a proof of concept — exploring how far you can get with a 
 - Optional Kempston mouse.
 - Loads games and snapshots in the common formats: SNA, Z80, TAP.
 - Save your place anytime — quick save and named saves, so you can pick up where you left off.
+- Turbo mode — speed up the CPU to 1x, 2x, 4x, or 8x.
 
 Common shortcuts: `F2` save, `F3` load, `F5` quick save, `F9` quick load,
 `F7` reset, `F11` fullscreen, `Ctrl+O` open, `Ctrl+P` pause, `Ctrl+M` mute.
