@@ -7,6 +7,10 @@
 -define(MENU_SETTINGS_MOUSE, 7201).
 -define(MENU_DEBUG_PERF, 7300).
 -define(MENU_ABOUT, 7500).
+-define(MENU_CPU_X1, 7601).  %% CPU Clock x1 (session-only, not persisted)
+-define(MENU_CPU_X2, 7602).  %% CPU Clock x2
+-define(MENU_CPU_X4, 7604).  %% CPU Clock x4
+-define(MENU_CPU_X8, 7608).  %% CPU Clock x8
 -define(MENU_QUICK_SAVE, 7400).
 -define(MENU_QUICK_LOAD, 7401).
 -define(MENU_SAVE_STATE, 7402).

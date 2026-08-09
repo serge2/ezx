@@ -9,12 +9,19 @@
 -define(TSTATES_PER_LINE, 224).
 
 %% Machine timing model: raster geometry (T-states) + CPU clock.
-%% The frame length in T-states is fixed by the video raster; the CPU clock
-%% determines real frame time (TStatesPerFrame / CpuClock) and thus the number
-%% of audio samples per frame.  The AY prescale is baked into the audio devices
-%% (TStatesPerAyClock constants), not part of the model.
+%% The frame length in T-states and the CPU clock together determine the real
+%% frame time (TStatesPerFrame / CpuClock) and thus the number of audio samples
+%% per frame.  Overclocking (set_cpu_frequency/2) scales the whole raster along
+%% with the clock, so the frame rate, interrupt timing and sample count stay
+%% fixed and only the CPU executes more T-states per real second.
+%% base_cpu_clock is the machine's nominal clock (the CPU clock without an
+%% overclock multiplier): it is the reference the AY is clocked from, so the
+%% sound chip keeps running at base / 2 regardless of the CPU frequency.  The
+%% AY prescale is baked into the audio devices (TStatesPerAyClock constants),
+%% not part of the model.
 -record(machine_model, {
     cpu_clock :: pos_integer(),          %% CPU clock in Hz (e.g. 3500000)
+    base_cpu_clock :: pos_integer(),     %% nominal CPU clock (AY clock reference), unchanged by overclock
     tstates_per_frame :: pos_integer(),  %% video frame length in T-states
     tstates_per_line :: pos_integer(),   %% horizontal scanline length in T-states
     int_tstate :: non_neg_integer(),     %% interrupt raised this many T-states into the frame
@@ -29,6 +36,7 @@
 %% (e.g. interrupts disabled), the request is dropped until the next frame.
 -define(SPECTRUM_48_MODEL, #machine_model{
     cpu_clock = 3500000,
+    base_cpu_clock = 3500000,
     tstates_per_frame = 69888,
     tstates_per_line = 224,
     int_tstate = 32,
@@ -36,6 +44,7 @@
 
 -define(SPECTRUM_128_MODEL, #machine_model{
     cpu_clock = 3546900,
+    base_cpu_clock = 3546900,
     tstates_per_frame = 70908,
     tstates_per_line = 228,
     int_tstate = 32,

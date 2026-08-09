@@ -638,13 +638,19 @@ run_frame_render_screen_artifacts(Machine) ->
     end).
 
 %% Phase: render the AY-3-8912 channel PCMs (ChA, ChB, ChC).
+%% The AY is clocked from the machine's base CPU clock, not the current one:
+%% overclocking the CPU must not speed the chip up (real hardware clocks the
+%% AY from the ULA).  The multiplier cpu_clock / base_cpu_clock scales the
+%% frame's CPU T-states down to base-rate T-states for the AY.
 run_frame_render_ay(#machine_state{ay_module = undefined} = Machine) ->
     {Machine#machine_state{ay_pcm = undefined}, 0};
 run_frame_render_ay(#machine_state{ay_module = AyModule} = Machine) ->
     timed(fun() ->
         AY = Machine#machine_state.ay,
+        Model = Machine#machine_state.model,
         {FrameLen, Samples} = frame_audio_params(Machine),
-        {ChA, ChB, ChC, AY1} = AyModule:render_channels(AY, FrameLen, Samples),
+        Mult = max(1, Model#machine_model.cpu_clock div Model#machine_model.base_cpu_clock),
+        {ChA, ChB, ChC, AY1} = AyModule:render_channels(AY, FrameLen, Samples, Mult),
         Machine#machine_state{ay = AY1, ay_pcm = {ChA, ChB, ChC}}
     end).
 
@@ -697,21 +703,39 @@ reset_perf(Machine) -> Machine#machine_state{perf_stats = #perf_stats{}}.
 
 %% @doc Audio samples produced per frame at the configured sample rate,
 %% derived from the machine model: trunc(FrameLen * SampleRate / CpuClock).
-%% Overclocking the CPU (set_cpu_frequency/2) shortens the real frame time
-%% and thus the sample count.
+%% Overclocking the CPU (set_cpu_frequency/2) scales the raster along with the
+%% clock, so the real frame time and thus this sample count are unchanged.
 -spec samples_per_frame(#machine_state{} | #machine_model{}) -> pos_integer().
 samples_per_frame(#machine_state{model = Model}) ->
     samples_per_frame(Model);
 samples_per_frame(#machine_model{cpu_clock = CpuClock, tstates_per_frame = FrameLen}) ->
     (FrameLen * ?SAMPLE_RATE) div CpuClock.
 
-%% @doc Set an arbitrary CPU clock (overclock). The video raster (frame length
-%% in T-states) is unchanged; the real frame time becomes TStatesPerFrame /
-%% CpuClock, so the game runs faster (or slower) and the per-frame audio
-%% sample count adjusts accordingly.
+%% @doc Set an arbitrary CPU clock (overclock) as a multiplier of the base
+%% clock. CPU-only overclock: the CPU executes more T-states per real second,
+%% while the video raster, frame rate, interrupt timing and the audio sample
+%% count stay fixed — the raster geometry (tstates_per_frame, tstates_per_line,
+%% int_tstate, int_pulse) scales with the multiplier, so the real frame time
+%% TStatesPerFrame / CpuClock is unchanged.  base_cpu_clock is preserved, so
+%% the AY keeps running at the base clock regardless of the CPU frequency.
 -spec set_cpu_frequency(#machine_state{}, pos_integer()) -> #machine_state{}.
 set_cpu_frequency(#machine_state{model = Model} = Machine, Hz) when is_integer(Hz), Hz > 0 ->
-    Machine#machine_state{model = Model#machine_model{cpu_clock = Hz}}.
+    Mult = max(1, Hz div Model#machine_model.base_cpu_clock),
+    Machine#machine_state{model = scale_model(Model, Mult)}.
+
+%% Scale the whole timing model to the given CPU-clock multiplier (>= 1).
+%% Idempotent: the current multiplier is derived from cpu_clock / base_cpu_clock
+%% and undone first, so the base raster is scaled exactly once (switching x2 ->
+%% x1 restores the exact base raster).
+scale_model(#machine_model{cpu_clock = Cur, base_cpu_clock = Base} = Model, Mult) ->
+    CurMult = max(1, Cur div Base),
+    Model#machine_model{
+        cpu_clock = Base * Mult,
+        tstates_per_frame = (Model#machine_model.tstates_per_frame div CurMult) * Mult,
+        tstates_per_line = (Model#machine_model.tstates_per_line div CurMult) * Mult,
+        int_tstate = (Model#machine_model.int_tstate div CurMult) * Mult,
+        int_pulse = (Model#machine_model.int_pulse div CurMult) * Mult
+    }.
 
 %% Frame length + per-frame sample count, used by the audio render phases.
 frame_audio_params(#machine_state{model = Model}) ->

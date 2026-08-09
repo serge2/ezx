@@ -201,6 +201,52 @@ chip_detect_latch_upper_nibble_test_() ->
         ?assertEqual(16#40, M:read(AY3))
      end || M <- ?MODULES].
 
+%% ---- AY clock multiplier: the chip runs at the machine's base clock ----
+%%
+%% render_channels/4 takes an AY clock multiplier Mult: the chip advances
+%% FrameLen / Mult base-rate T-states per frame.  Overclocking the CPU to 2x
+%% passes Mult = 2, so a frame of F CPU T-states advances the generators by
+%% F/2 base-rate T-states — exactly what render_channels/3 does for a
+%% F/2-tall frame at the base clock.  Both must produce identical PCM and
+%% identical generator phase.
+
+ay_clock_scale_halves_generator_advance_test_() ->
+    [fun() ->
+        FrameLen = 20000,
+        Samples = 256,
+        AY0 = setup(M, [{7, 16#3E}, {0, 0}, {1, 0}, {8, 16#0F}]),
+        %% Mult = 2: FrameLen/2 base-rate T-states over the same samples
+        {ChA2, _ChB2, _ChC2, AY2} = M:render_channels(M:frame_start(AY0, 0), FrameLen, Samples, 2),
+        %% identity multiplier over a half-length frame: same AY-domain work
+        {ChA1, _ChB1, _ChC1, AY1} = M:render_channels(M:frame_start(AY0, 0), FrameLen div 2, Samples),
+        ?assertEqual(ChA1, ChA2),
+        ?assertEqual(AY1, AY2)
+     end || M <- ?MODULES].
+
+%% Mid-frame register writes are timestamped in the CPU domain: the multiplier
+%% must be applied to the relative event positions too.  A volume write at CPU
+%% T-state 10000 over a 20000-tall frame at Mult = 2 must land exactly where
+%% the unscaled write at CPU T-state 5000 over a 10000-tall frame does
+%% (sample boundary 128).
+ay_clock_scale_scales_event_positions_test_() ->
+    M = ezx_ay38912_seg,
+    fun() ->
+        AY0 = setup(M, [{7, 16#3E}, {0, 0}, {1, 0}, {8, 16#0F}]),
+        %% scaled: volume killed at CPU 10000, frame 20000, Mult = 2
+        AYa = M:frame_start(AY0, 0),
+        AYb = M:write(M:latch(AYa, 8), 0, 10000),
+        {PCMa, _ChB, _ChC, _} = M:render_channels(AYb, 20000, 256, 2),
+        %% identity: volume killed at CPU 5000, frame 10000
+        AYc = M:frame_start(AY0, 0),
+        AYd = M:write(M:latch(AYc, 8), 0, 5000),
+        {PCMb, _ChB2, _ChC2, _} = M:render_channels(AYd, 10000, 256),
+        ?assertEqual(PCMb, PCMa),
+        %% the write takes effect at sample 128 (0-based): silence after it
+        Samples = [V || <<V:16/little-signed>> <= PCMa],
+        ?assert(lists:any(fun(X) -> X =/= pcm(0) end, lists:sublist(Samples, 128))),
+        ?assertEqual([pcm(0)], lists:usort(lists:nthtail(128, Samples)))
+    end.
+
 %% ---- silent fast path (ezx_ay38912_seg only) ----
 %%
 %% A frame whose three volume registers (R8/R9/R10) stay at fixed-volume 0

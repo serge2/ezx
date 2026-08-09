@@ -70,6 +70,7 @@
     ay_master_vol = 100 :: 0..100,
     ay_stereo_mode = acb :: acb | abc | mono,
     ay_chip = ay :: ay | ym | off,
+    cpu_mult = 1 :: 1 | 2 | 4 | 8,
     audio_filter = undefined :: ezx_audio_filter:state() | undefined,
     mix_dc_l = undefined :: ezx_audio_filter:state() | undefined,
     mix_dc_r = undefined :: ezx_audio_filter:state() | undefined,
@@ -140,6 +141,11 @@ init(_Options) ->
     wxMenu:appendSeparator(ActionsMenu),
     wxMenu:appendCheckItem(ActionsMenu, ?MENU_MUTE, "Mute\tCtrl+M", [{help, "Toggle audio mute"}]),
     wxMenu:appendCheckItem(ActionsMenu, ?MENU_PAUSE, "Pause\tCtrl+P", [{help, "Pause and resume emulation"}]),
+    wxMenu:appendSeparator(ActionsMenu),
+    wxMenu:appendRadioItem(ActionsMenu, ?MENU_CPU_X1, "CPU Clock x1", [{help, "Run the CPU at its nominal clock (session-only)"}]),
+    wxMenu:appendRadioItem(ActionsMenu, ?MENU_CPU_X2, "CPU Clock x2", [{help, "Overclock the CPU 2x (session-only)"}]),
+    wxMenu:appendRadioItem(ActionsMenu, ?MENU_CPU_X4, "CPU Clock x4", [{help, "Overclock the CPU 4x (session-only)"}]),
+    wxMenu:appendRadioItem(ActionsMenu, ?MENU_CPU_X8, "CPU Clock x8", [{help, "Overclock the CPU 8x (session-only)"}]),
     wxMenuBar:append(MenuBar, ActionsMenu, "Actions"),
     DebugMenu = wxMenu:new(),
     wxMenu:appendCheckItem(DebugMenu, ?MENU_DEBUG_PERF, "Performance report",
@@ -164,6 +170,7 @@ init(_Options) ->
     wxMenu:check(ViewMenu, ?MENU_CROP_EXACT, IntScaling),
     wxMenu:check(ViewMenu, ?MENU_SCALE_BASE + (InitScale0 - 1), true),
     wxMenu:check(ActionsMenu, ?MENU_MUTE, Muted),
+    wxMenu:check(ActionsMenu, ?MENU_CPU_X1, true),
     wxMenu:check(DebugMenu, ?MENU_DEBUG_PERF, PerfReport),
     wxFrame:connect(Frame, command_menu_selected),
 
@@ -223,9 +230,10 @@ init(_Options) ->
     case ezx_ui_lib:init_virtual_machine(MachineType, AyChip) of
         {ok, Machine} ->
             Machine1 = ezx_ui_mouse:apply_to_machine(Mouse, Machine),
+            Machine2 = apply_cpu_mult(Machine1, State0),
             erlang:send_after(0, self(), frame_tick),
-            {ok, State0#state{machine = Machine1,
-                              audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine1))}};
+            {ok, State0#state{machine = Machine2,
+                              audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine2))}};
         {error, {Code, Detail}} ->
             Title = "ezx - ROM error",
             Msg = case Code of
@@ -547,9 +555,10 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                 {ok, NewMachine} ->
                     io:format("Loaded: ~s~n", [File]),
                     NewMachine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, NewMachine),
+                    NewMachine2 = apply_cpu_mult(NewMachine1, State),
                     NewRecent = ezx_recent_files:update(File, State#state.recent_files),
                     ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
-                    {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
+                    {noreply, State#state{machine = NewMachine2, recent_files = NewRecent,
                                           current_file = File,
                                           mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
                                           audio_filter = new_beeper_filter(),
@@ -585,6 +594,30 @@ handle_info(#wx{id = ?MENU_MUTE, event = #wxCommand{type = command_menu_selected
 
 handle_info(#wx{id = ?MENU_PAUSE, event = #wxCommand{type = command_menu_selected}}, State) ->
     {noreply, toggle_pause(State)};
+
+handle_info(#wx{id = ?MENU_CPU_X1, event = #wxCommand{type = command_menu_selected}},
+            #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{id = ?MENU_CPU_X1, event = #wxCommand{type = command_menu_selected}}, State) ->
+    {noreply, set_cpu_mult(State, 1, ?MENU_CPU_X1)};
+
+handle_info(#wx{id = ?MENU_CPU_X2, event = #wxCommand{type = command_menu_selected}},
+            #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{id = ?MENU_CPU_X2, event = #wxCommand{type = command_menu_selected}}, State) ->
+    {noreply, set_cpu_mult(State, 2, ?MENU_CPU_X2)};
+
+handle_info(#wx{id = ?MENU_CPU_X4, event = #wxCommand{type = command_menu_selected}},
+            #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{id = ?MENU_CPU_X4, event = #wxCommand{type = command_menu_selected}}, State) ->
+    {noreply, set_cpu_mult(State, 4, ?MENU_CPU_X4)};
+
+handle_info(#wx{id = ?MENU_CPU_X8, event = #wxCommand{type = command_menu_selected}},
+            #state{machine = undefined} = State) ->
+    {noreply, State};
+handle_info(#wx{id = ?MENU_CPU_X8, event = #wxCommand{type = command_menu_selected}}, State) ->
+    {noreply, set_cpu_mult(State, 8, ?MENU_CPU_X8)};
 
 handle_info(#wx{id = ?MENU_DEBUG_PERF, event = #wxCommand{type = command_menu_selected}}, State) ->
     NewState = State#state{perf_report = not State#state.perf_report},
@@ -769,15 +802,16 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                     MenuBar = State#state.menu_bar,
                     Now = erlang:monotonic_time(microsecond),
                     Machine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, Machine),
+                    Machine2 = apply_cpu_mult(Machine1, State),
                     wxMenuBar:enableTop(MenuBar, 0, true),
                     wxMenuBar:enableTop(MenuBar, 3, true),
                     NewState = State#state{
-                        machine = Machine1,
+                        machine = Machine2,
                         machine_type = NewType,
                         frame_count = 0,
                         current_file = undefined,
                         mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                        audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine1)),
+                        audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine2)),
                         perf_start_us = Now,
                         audio_filter = new_beeper_filter(),
                         mix_dc_l = new_mix_dc_filter(),
@@ -816,6 +850,32 @@ schedule_frame(Ms) -> erlang:send_after(Ms, self(), frame_tick).
 %% Audio: one frame is Samples * 2 channels * 2 bytes (stereo S16LE), where
 %% Samples comes from the machine model (see ezx_emulator:samples_per_frame/1).
 audio_bytes_per_frame(Machine) -> ezx_emulator:samples_per_frame(Machine) * 4.
+
+%% @doc Apply the session CPU clock multiplier to a freshly created machine
+%% (built at the base clock): raise the CPU frequency to base * cpu_mult.
+%% Only the CPU speeds up — the frame rate, video and interrupts stay fixed
+%% (see ezx_emulator:set_cpu_frequency/2) — and the per-frame audio sample
+%% count is unchanged, so the audio pacing needs no refresh. The multiplier is
+%% session-only — never written to config — and survives machine recreation
+%% (reset, machine-type switch, file/save load) because it lives in the UI
+%% state and is re-applied at every machine creation site.
+apply_cpu_mult(Machine, #state{cpu_mult = Mult}) ->
+    Model = Machine#machine_state.model,
+    ezx_emulator:set_cpu_frequency(Machine, Model#machine_model.base_cpu_clock * Mult).
+
+%% @doc Apply a session CPU overclock multiplier to the live machine (no
+%% recreation) and check the matching menu item. Only the CPU speeds up — the
+%% frame rate, video and interrupts stay fixed (see
+%% ezx_emulator:set_cpu_frequency/2) — and the per-frame audio sample count is
+%% unchanged, so the audio pacing needs no refresh. The AY keeps running at the
+%% base clock (its reference is base_cpu_clock). Called by the per-item CPU
+%% Clock handlers, each with its concrete multiplier.
+set_cpu_mult(#state{machine = Machine} = State, Mult, MenuId) ->
+    Model = Machine#machine_state.model,
+    NewMachine = ezx_emulator:set_cpu_frequency(Machine, Model#machine_model.base_cpu_clock * Mult),
+    ActionsMenu = wxMenuBar:getMenu(State#state.menu_bar, ?MENUBAR_ACTIONS_INDEX),
+    wxMenu:check(ActionsMenu, MenuId, true),
+    State#state{cpu_mult = Mult, machine = NewMachine}.
 
 %% @doc Open the raw-PCM player port. On Unix aplay (ALSA) is used; on Windows
 %% the sox.exe bundled into the app's priv dir (the Windows release ships one),
@@ -889,11 +949,12 @@ recreate_machine(State) ->
     case ezx_ui_lib:init_virtual_machine(State#state.machine_type, State#state.ay_chip) of
         {ok, Machine} ->
             Machine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, Machine),
+            Machine2 = apply_cpu_mult(Machine1, State),
             Now = erlang:monotonic_time(microsecond),
-            {noreply, State#state{machine = Machine1, frame_count = 0,
+            {noreply, State#state{machine = Machine2, frame_count = 0,
                                    current_file = undefined,
                                    mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                                   audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine1)),
+                                   audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(Machine2)),
                                    perf_start_us = Now,
                                    audio_filter = new_beeper_filter(),
                                    mix_dc_l = new_mix_dc_filter(),
@@ -944,9 +1005,10 @@ load_file_result(File, #state{machine_type = MachineType, ay_chip = AyChip} = St
         {ok, NewMachine} ->
             io:format("Loaded: ~s~n", [File]),
             NewMachine1 = ezx_ui_mouse:apply_to_machine(State#state.mouse, NewMachine),
+            NewMachine2 = apply_cpu_mult(NewMachine1, State),
             NewRecent = ezx_recent_files:update(File, State#state.recent_files),
             ezx_recent_files:rebuild_menu(State#state.menu_bar, NewRecent),
-            {noreply, State#state{machine = NewMachine1, recent_files = NewRecent,
+            {noreply, State#state{machine = NewMachine2, recent_files = NewRecent,
                                    current_file = File,
                                    file_dialog_dir = filename:dirname(File),
                                    mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
@@ -1086,15 +1148,16 @@ load_save(State, SavePath, MetaPath) ->
             TargetType = meta_atom(Meta, "machine_type", '48k'),
             Chip = meta_atom(Meta, "ay_chip", State#state.ay_chip),
             NewMachine = ezx_ui_mouse:apply_to_machine(State#state.mouse, NewMachine0),
+            NewMachine2 = apply_cpu_mult(NewMachine, State),
             Now = erlang:monotonic_time(microsecond),
             NewState = State#state{
-                machine = NewMachine,
+                machine = NewMachine2,
                 machine_type = TargetType,
                 ay_chip = Chip,
                 current_file = meta_source(Meta, State#state.current_file),
                 frame_count = 0,
                 mouse = ezx_ui_mouse:reset_baseline(State#state.mouse),
-                audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(NewMachine)),
+                audio_pacing = ezx_audio_pacing:new(audio_bytes_per_frame(NewMachine2)),
                 perf_start_us = Now,
                 audio_filter = new_beeper_filter(),
                 mix_dc_l = new_mix_dc_filter(),

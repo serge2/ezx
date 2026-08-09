@@ -352,13 +352,15 @@ run_frame_flash_cadence_test() ->
 
 machine_model_48k_defaults_test() ->
     Machine = init_machine(),
-    ?assertEqual(#machine_model{cpu_clock = 3500000, tstates_per_frame = 69888,
+    ?assertEqual(#machine_model{cpu_clock = 3500000, base_cpu_clock = 3500000,
+                                tstates_per_frame = 69888,
                                 tstates_per_line = 224, int_tstate = 32, int_pulse = 32},
                  Machine#machine_state.model).
 
 machine_model_128k_defaults_test() ->
     Machine = init_machine_128(),
-    ?assertEqual(#machine_model{cpu_clock = 3546900, tstates_per_frame = 70908,
+    ?assertEqual(#machine_model{cpu_clock = 3546900, base_cpu_clock = 3546900,
+                                tstates_per_frame = 70908,
                                 tstates_per_line = 228, int_tstate = 32, int_pulse = 36},
                  Machine#machine_state.model).
 
@@ -372,17 +374,32 @@ machine_model_frame_lengths_test() ->
     ?assertEqual(880, ezx_emulator:samples_per_frame(M48)),
     ?assertEqual(881, ezx_emulator:samples_per_frame(M128)).
 
-set_cpu_frequency_keeps_raster_changes_samples_test() ->
+set_cpu_frequency_scales_raster_keeps_frame_rate_test() ->
     Machine = init_machine(),
     BaseSamples = ezx_emulator:samples_per_frame(Machine),
     Machine1 = ezx_emulator:set_cpu_frequency(Machine, 7000000),
     ?assertEqual(3500000, (Machine#machine_state.model)#machine_model.cpu_clock),
     ?assertEqual(7000000, (Machine1#machine_state.model)#machine_model.cpu_clock),
-    ?assertEqual(69888, (Machine1#machine_state.model)#machine_model.tstates_per_frame),
-    OverclockedSamples = ezx_emulator:samples_per_frame(Machine1),
-    ?assertEqual(BaseSamples div 2, OverclockedSamples),
+    %% base_cpu_clock is the AY clock reference and must survive overclocking.
+    ?assertEqual(3500000, (Machine1#machine_state.model)#machine_model.base_cpu_clock),
+    %% CPU-only overclock: the raster scales with the clock (2x here) so the
+    %% real frame time — and thus the frame rate, the interrupt timing and the
+    %% audio sample count — stays fixed.
+    Model1 = Machine1#machine_state.model,
+    ?assertEqual(139776, Model1#machine_model.tstates_per_frame),
+    ?assertEqual(448, Model1#machine_model.tstates_per_line),
+    ?assertEqual(64, Model1#machine_model.int_tstate),
+    ?assertEqual(64, Model1#machine_model.int_pulse),
+    ?assertEqual(BaseSamples, ezx_emulator:samples_per_frame(Machine1)),
     Machine2 = ezx_emulator:run_frame(Machine1),
-    ?assertEqual(OverclockedSamples * 2, byte_size(Machine2#machine_state.beeper_pcm)).
+    ?assertEqual(BaseSamples * 2, byte_size(Machine2#machine_state.beeper_pcm)),
+    %% Switching back to the base clock restores the exact base raster
+    %% (the scale is idempotent: undo x2, apply x1).
+    Machine3 = ezx_emulator:set_cpu_frequency(Machine1, 3500000),
+    ?assertEqual(#machine_model{cpu_clock = 3500000, base_cpu_clock = 3500000,
+                                tstates_per_frame = 69888,
+                                tstates_per_line = 224, int_tstate = 32, int_pulse = 32},
+                 Machine3#machine_state.model).
 
 %% --- Helpers ---
 

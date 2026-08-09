@@ -78,7 +78,7 @@
 %%   - 0xFFFD: read data from latched register (read/1)
 %% =============================================================================
 
--export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, frame_start/2, regs/1, set_regs/2]).
+-export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, render_channels/4, frame_start/2, regs/1, set_regs/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -265,6 +265,16 @@ render_channels(#ay_state{} = AY, FrameLen, Samples) ->
         false ->
             {ChA, ChB, ChC, AY2}
     end.
+
+%% @doc Render one frame with an explicit AY clock multiplier Mult: the chip
+%% advances FrameLen / Mult base-rate T-states per frame (identity when
+%% Mult = 1).  Register writes here apply immediately, so only the frame
+%% length is scaled — the segmented module additionally scales mid-frame
+%% event timestamps.
+-spec render_channels(state(), non_neg_integer(), pos_integer(), pos_integer()) ->
+    {binary(), binary(), binary(), state()}.
+render_channels(#ay_state{} = AY, FrameLen, Samples, Mult) ->
+    render_channels(AY, FrameLen div Mult, Samples).
 
 %% --- internal ---
 

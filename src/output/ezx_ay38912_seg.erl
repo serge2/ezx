@@ -95,7 +95,7 @@
 %%      sample position.
 %% =============================================================================
 
--export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, frame_start/2, regs/1, set_regs/2, silent_frame/2]).
+-export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, render_channels/4, frame_start/2, regs/1, set_regs/2, silent_frame/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -290,12 +290,24 @@ set_regs(#ay_state_seg{} = AY, Regs) when is_list(Regs) ->
 %% since nothing changes mid-frame).  Games that never touch the AY ports (all
 %% 48K titles) thus render their AY as silence in ~0 time.
 -spec render_channels(state(), non_neg_integer(), pos_integer()) -> {binary(), binary(), binary(), state()}.
-render_channels(#ay_state_seg{frame_offset = FO} = AY, FrameLen, Samples) ->
+render_channels(AY, FrameLen, Samples) ->
+    render_channels(AY, FrameLen, Samples, 1).
+
+%% @doc Render one frame with an explicit AY clock multiplier Mult: the chip
+%% advances FrameLen / Mult base-rate T-states per frame, so overclocking the
+%% CPU (Mult = cpu_clock / base_cpu_clock) keeps the chip running at the
+%% machine's base clock.  The frame length and the relative event timestamps
+%% are scaled into the AY domain; Mult = 1 is the identity.
+-spec render_channels(state(), non_neg_integer(), pos_integer(), pos_integer()) ->
+    {binary(), binary(), binary(), state()}.
+render_channels(#ay_state_seg{frame_offset = FO} = AY, FrameLen, Samples, Mult) ->
+    FrameLenAy = FrameLen div Mult,
     Events = AY#ay_state_seg.frame_events,
-    RelEvents = [{ET - FO, RI, V} || {ET, RI, V} <- Events, ET >= FO, ET < FO + FrameLen],
+    RelEvents = [{(ET - FO) div Mult, RI, V}
+                 || {ET, RI, V} <- Events, ET >= FO, ET < FO + FrameLen],
     case silent_frame(AY, RelEvents) of
-        true -> render_silent(AY, FrameLen, Samples);
-        false -> render_channels_audio(AY, FrameLen, Samples, RelEvents)
+        true -> render_silent(AY, FrameLenAy, Samples);
+        false -> render_channels_audio(AY, FrameLenAy, Samples, RelEvents)
     end.
 
 %% A frame is silent iff nothing was written to the AY during it (no frame
