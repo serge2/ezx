@@ -54,11 +54,16 @@ read_seq(Arr, Offset, Remaining, Acc) ->
 -spec read_video_block(state()) -> binary().
 read_video_block(State) -> read_block(State, 16#4000, ?VIDEO_SIZE).
 
-%% @doc Write `Byte' to `Addr'. ROM area writes are ignored.
+%% @doc Write `Byte' to `Addr'. ROM area writes are ignored. Writing a value
+%% that is already in memory returns the state unchanged (no array copy).
 -spec write_byte(state(), non_neg_integer(), byte()) -> state().
 write_byte(Arr, Addr, Byte) ->
     Index = Addr band 16#FFFF,
     case Index < 16#4000 of
         true -> Arr;
-        false -> array:set(Index, Byte band 16#FF, Arr)
+        false ->
+            case array:get(Index, Arr) of
+                Byte -> Arr;
+                _ -> array:set(Index, Byte, Arr)
+            end
     end.

@@ -85,7 +85,8 @@ read_video_block({Pages, _}) ->
     Tail = lists:sublist(tuple_to_list(element(First + ?VIDEO_FULL_PAGES, Pages)), ?VIDEO_TAIL),
     iolist_to_binary([Full, Tail]).
 
-%% @doc Write `Byte' to `Addr'. ROM area writes are ignored.
+%% @doc Write `Byte' to `Addr'. ROM area writes are ignored. Writing a value
+%% that is already in memory returns the state unchanged (no tuple copy).
 -spec write_byte(state(), non_neg_integer(), byte()) -> state().
 write_byte(State, Addr, Byte) ->
     Index = Addr band 16#FFFF,
@@ -96,8 +97,13 @@ write_byte(State, Addr, Byte) ->
             PageIdx = (Index bsr ?PAGE_BITS) + 1,
             Offset = Index band (?PAGE_SIZE - 1),
             PageTuple = element(PageIdx, Pages),
-            NewPage = setelement(Offset + 1, PageTuple, Byte band 16#FF),
-            {setelement(PageIdx, Pages, NewPage), RomMask}
+            case element(Offset + 1, PageTuple) of
+                Byte ->
+                    State;
+                _ ->
+                    NewPage = setelement(Offset + 1, PageTuple, Byte),
+                    {setelement(PageIdx, Pages, NewPage), RomMask}
+            end
     end.
 
 %% --- internal ---

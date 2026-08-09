@@ -86,7 +86,8 @@ read_even(Arr, Offset, Remaining, Acc) ->
 -spec read_video_block(state()) -> binary().
 read_video_block(State) -> read_block(State, 16#4000, ?VIDEO_SIZE).
 
-%% @doc Write `Byte' to `Addr'. ROM area writes are ignored.
+%% @doc Write `Byte' to `Addr'. ROM area writes are ignored. Writing a value
+%% that is already in memory returns the state unchanged (no array copy).
 -spec write_byte(state(), non_neg_integer(), byte()) -> state().
 write_byte(Arr, Addr, Byte) ->
     Index = Addr bsr 1,
@@ -95,8 +96,11 @@ write_byte(Arr, Addr, Byte) ->
         false ->
             Old = array:get(Index, Arr),
             New = case Addr band 1 of
-                0 -> (Old band 16#FF00) bor (Byte band 16#FF);
-                1 -> (Old band 16#00FF) bor ((Byte band 16#FF) bsl 8)
+                0 -> (Old band 16#FF00) bor Byte;
+                1 -> (Old band 16#00FF) bor (Byte bsl 8)
             end,
-            array:set(Index, New, Arr)
+            case New =:= Old of
+                true -> Arr;
+                false -> array:set(Index, New, Arr)
+            end
     end.

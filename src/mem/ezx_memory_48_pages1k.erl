@@ -72,7 +72,8 @@ read_block_pages(Pages, Offset, Remaining, Acc) ->
 -spec read_video_block(state()) -> binary().
 read_video_block(State) -> read_block(State, 16#4000, ?VIDEO_SIZE).
 
-%% @doc Write `Byte' to `Addr'. ROM area writes are ignored.
+%% @doc Write `Byte' to `Addr'. ROM area writes are ignored. Writing a value
+%% that is already in memory returns the state unchanged (no binary rebuild).
 -spec write_byte(state(), non_neg_integer(), byte()) -> state().
 write_byte(State, Addr, Byte) ->
     Index = Addr band 16#FFFF,
@@ -83,7 +84,12 @@ write_byte(State, Addr, Byte) ->
             PageIdx = (Index bsr ?PAGE_BITS) + 1,
             Offset = Index band (?PAGE_SIZE - 1),
             Bin = element(PageIdx, Pages),
-            <<Prefix:Offset/binary, _Old:8/integer, Suffix/binary>> = Bin,
-            NewBin = <<Prefix/binary, (Byte band 16#FF):8/integer, Suffix/binary>>,
-            {setelement(PageIdx, Pages, NewBin), RomMask}
+            <<Prefix:Offset/binary, Old:8/integer, Suffix/binary>> = Bin,
+            case Old =:= Byte of
+                true ->
+                    State;
+                false ->
+                    NewBin = <<Prefix/binary, Byte:8/integer, Suffix/binary>>,
+                    {setelement(PageIdx, Pages, NewBin), RomMask}
+            end
     end.

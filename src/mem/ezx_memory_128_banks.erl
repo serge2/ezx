@@ -112,10 +112,15 @@ write_byte(#mem128{routing = Routing, banks = Banks} = State, Addr, Byte) ->
     Bank = element(BankSlot, Banks),
     PageIdx = ((Addr bsr ?PAGE_BITS) band (?BANK_PAGES - 1)) + 1,
     Off = Addr band (?PAGE_SIZE - 1),
-    <<Prefix:Off/binary, _:8, Suffix/binary>> = element(PageIdx, Bank),
-    NewPage = <<Prefix/binary, Byte:8, Suffix/binary>>,
-    State#mem128{banks = setelement(BankSlot, Banks,
-                                    setelement(PageIdx, Bank, NewPage))}.
+    <<Prefix:Off/binary, Old:8, Suffix/binary>> = element(PageIdx, Bank),
+    case Old =:= Byte of
+        true ->
+            State;
+        false ->
+            NewPage = <<Prefix/binary, Byte:8, Suffix/binary>>,
+            State#mem128{banks = setelement(BankSlot, Banks,
+                                            setelement(PageIdx, Bank, NewPage))}
+    end.
 
 -spec write_port_7ffd(state(), byte()) -> state().
 write_port_7ffd(#mem128{} = State, Value) ->

@@ -115,7 +115,8 @@ extract_qwords(Arr, Offset, Remaining, Acc) ->
 -spec read_video_block(state()) -> binary().
 read_video_block(State) -> read_block(State, 16#4000, ?VIDEO_SIZE).
 
-%% @doc Write `Byte' to `Addr'. ROM area writes are ignored.
+%% @doc Write `Byte' to `Addr'. ROM area writes are ignored. Writing a value
+%% that is already in memory returns the state unchanged (no array copy).
 -spec write_byte(state(), non_neg_integer(), byte()) -> state().
 write_byte(Arr, Addr, Byte) ->
     case Addr < 16#4000 of
@@ -125,6 +126,9 @@ write_byte(Arr, Addr, Byte) ->
             Shift = (Addr band 7) * 8,
             Old = array:get(Index, Arr),
             Mask = 16#FF bsl Shift,
-            New = (Old band (bnot Mask)) bor ((Byte band 16#FF) bsl Shift),
-            array:set(Index, New, Arr)
+            New = (Old band (bnot Mask)) bor (Byte bsl Shift),
+            case New =:= Old of
+                true -> Arr;
+                false -> array:set(Index, New, Arr)
+            end
     end.
