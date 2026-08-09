@@ -202,29 +202,21 @@ chip(#ay_state_seg{chip = Chip}) -> Chip.
 
 %% @doc Write data to the currently latched register.
 %% Records the write as a frame event with the given T-state for later
-%% segmented rendering.  Immediate side-effects: writing noise period
-%% resets the LFSR; writing envelope shape resets the envelope generator.
+%% segmented rendering.  Side-effects of the write (writing noise period
+%% resets the LFSR; writing envelope shape resets the envelope generator)
+%% are applied by the render pass at the write's sample position — doing
+%% them here would reset the carried counters for the samples BEFORE the
+%% write, since the render inherits them from this live state.
 -spec write(state(), byte(), non_neg_integer()) -> state().
 write(#ay_state_seg{active = false} = AY, _Value, _TState) ->
     AY;
-write(#ay_state_seg{chip = Chip, regs = Regs, frame_events = Events} = AY, Value, TState) ->
+write(#ay_state_seg{regs = Regs, frame_events = Events} = AY, Value, TState) ->
     Latch = AY#ay_state_seg.latch,
     NRegs = setelement(Latch + 1, Regs, Value band 16#FF),
-    AY1 = AY#ay_state_seg{
+    AY#ay_state_seg{
         regs = NRegs,
         frame_events = [{TState, Latch, Value band 16#FF} | Events]
-    },
-    case Latch of
-        ?REG_NOISE_PERIOD -> AY1#ay_state_seg{noise_lfsr = 16#10000};
-        ?REG_ENV_SHAPE    ->
-            AY1#ay_state_seg{
-                env_counter = 0,
-                env_pos  = case (Value band 16#04) of 0 -> env_max(Chip); _ -> 0 end,
-                env_dir  = case (Value band 16#04) of 0 -> down; _ -> up end,
-                env_hold = false
-            };
-        _ -> AY1
-    end.
+    }.
 
 %% @doc Read the currently latched register value.
 %% Unused bits in a register read back as 0 on the AY-3-8912: only the

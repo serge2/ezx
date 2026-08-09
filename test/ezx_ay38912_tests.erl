@@ -20,16 +20,18 @@
 setup(M, Writes) ->
     setup(M, ay, Writes).
 
+%% Writes happen inside the frame (after frame_start), matching the emulator:
+%% frame_start drops events recorded before it, so a register write only
+%% reaches the render through the frame-event log.
 setup(M, Chip, Writes) ->
     lists:foldl(fun({Reg, Val}, AY) ->
         M:write(M:latch(AY, Reg), Val, 0)
-    end, M:new(Chip), Writes).
+    end, M:frame_start(M:new(Chip), 0), Writes).
 
 %% Render one frame of TStates T-states into one sample per T-state;
 %% return channel A samples as a list.
 render_ch_a(M, AY, TStates) ->
-    AY1 = M:frame_start(AY, 0),
-    {ChA, _, _, _} = M:render_channels(AY1, TStates, TStates),
+    {ChA, _, _, _} = M:render_channels(AY, TStates, TStates),
     [V || <<V:16/little-signed>> <= ChA].
 
 %% Expected PCM for a 4-bit level, mirroring the modules' exponential AY DAC
