@@ -11,14 +11,14 @@
 %% Machine timing model: raster geometry (T-states) + CPU clock.
 %% The frame length in T-states is fixed by the video raster; the CPU clock
 %% determines real frame time (TStatesPerFrame / CpuClock) and thus the number
-%% of audio samples per frame.  The AY runs at CpuClock / AyPrescale.
+%% of audio samples per frame.  The AY prescale is baked into the audio devices
+%% (TStatesPerAyClock constants), not part of the model.
 -record(machine_model, {
     cpu_clock :: pos_integer(),          %% CPU clock in Hz (e.g. 3500000)
     tstates_per_frame :: pos_integer(),  %% video frame length in T-states
     tstates_per_line :: pos_integer(),   %% horizontal scanline length in T-states
     int_tstate :: non_neg_integer(),     %% interrupt raised this many T-states into the frame
     int_pulse :: pos_integer(),          %% INT pulse length in T-states (how long the INT line stays low)
-    ay_prescale :: pos_integer(),        %% AY clock = CPU clock / ay_prescale
     ay_chip = ay :: ay | ym              %% sound chip: AY-3-8912 ('ay') or YM2149 ('ym')
 }).
 
@@ -32,16 +32,14 @@
     tstates_per_frame = 69888,
     tstates_per_line = 224,
     int_tstate = 32,
-    int_pulse = 32,
-    ay_prescale = 2}).
+    int_pulse = 32}).
 
 -define(SPECTRUM_128_MODEL, #machine_model{
     cpu_clock = 3546900,
     tstates_per_frame = 70908,
     tstates_per_line = 228,
     int_tstate = 32,
-    int_pulse = 36,
-    ay_prescale = 2}).
+    int_pulse = 36}).
 
 %% Per-frame timing accumulators collected by run_frame/1 so the UI can report
 %% where time actually goes. cpu = keyboard + frame_start + execution,

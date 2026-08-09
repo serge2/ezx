@@ -353,15 +353,13 @@ run_frame_flash_cadence_test() ->
 machine_model_48k_defaults_test() ->
     Machine = init_machine(),
     ?assertEqual(#machine_model{cpu_clock = 3500000, tstates_per_frame = 69888,
-                                tstates_per_line = 224, int_tstate = 32, int_pulse = 32,
-                                ay_prescale = 2},
+                                tstates_per_line = 224, int_tstate = 32, int_pulse = 32},
                  Machine#machine_state.model).
 
 machine_model_128k_defaults_test() ->
     Machine = init_machine_128(),
     ?assertEqual(#machine_model{cpu_clock = 3546900, tstates_per_frame = 70908,
-                                tstates_per_line = 228, int_tstate = 32, int_pulse = 36,
-                                ay_prescale = 2},
+                                tstates_per_line = 228, int_tstate = 32, int_pulse = 36},
                  Machine#machine_state.model).
 
 machine_model_frame_lengths_test() ->
