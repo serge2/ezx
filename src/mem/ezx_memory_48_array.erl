@@ -36,18 +36,18 @@ read_block(Arr, Addr, Size) ->
     Index = Addr band 16#FFFF,
     First = min(Size, 16#10000 - Index),
     Second = Size - First,
-    Part1 = read_seq(Arr, Index, First, <<>>),
+    Part1 = list_to_binary(read_seq(Arr, Index, First, [])),
     case Second of
         0 -> Part1;
         _ ->
-            Part2 = read_seq(Arr, 0, Second, <<>>),
+            Part2 = list_to_binary(read_seq(Arr, 0, Second, [])),
             <<Part1/binary, Part2/binary>>
     end.
 
-read_seq(_Arr, _Offset, 0, Acc) -> Acc;
+read_seq(_Arr, _Offset, 0, Acc) -> lists:reverse(Acc);
 read_seq(Arr, Offset, Remaining, Acc) ->
     read_seq(Arr, Offset + 1, Remaining - 1,
-             <<Acc/binary, (array:get(Offset, Arr)):8>>).
+             [array:get(Offset, Arr) | Acc]).
 
 %% @doc Read the ULA display buffer (first ?VIDEO_SIZE bytes at 0x4000).
 %% The size is fixed, so no size argument is needed.
