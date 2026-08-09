@@ -255,7 +255,7 @@ run_frame_border_stripes_test() ->
     %% --- Verify rendered pixel colors ---
     Mem = M3#machine_state.memory,
     VB = ezx_memory_48_pages512_tuples:read_video_block(Mem),
-    RGB = ezx_screen:render_screen(VB, M3#machine_state.flash_on, Changes, CB),
+    RGB = ezx_screen:render_screen(VB, M3#machine_state.flash_on, Changes, CB, ?TSTATES_PER_LINE),
 
     Palette = {
         {0, 0, 0}, {0, 0, 215}, {215, 0, 0}, {215, 0, 215},

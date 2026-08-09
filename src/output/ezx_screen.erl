@@ -24,7 +24,7 @@
 %% and color, so render_frame/1 does not need to touch the device directly.
 
 -export([new/0, new/1, border_set/3, border_get/1, flash_on/1, frame_start/2, frame_render/2]).
--export([init_helper_tables/0, render_screen/4, render_screen/5]).
+-export([init_helper_tables/0, render_screen/5]).
 
 -on_load(init_helper_tables/0).
 
@@ -107,7 +107,6 @@ frame_render(#screen{border_color = Color, frame_offset = FO, border_changes = C
 %% produces the 352×288 bitmap. Measured ~3.6x faster than the old per-char
 %% construction on a real boot frame and roughly halves the GC traffic.
 
--define(TSTATES_PER_LINE, 224).
 -define(FULL_Y_OFFSET, 16).
 -define(FULL_WIDTH, 352).
 -define(FULL_HEIGHT, 288).
@@ -138,12 +137,6 @@ init_helper_tables() ->
     %% renderer never reads them, so only the runtime tables are stored.
     persistent_term:put(?TABLES_KEY, {Lookup, Border48, Border352}),
     ok.
-
-%% @doc Render a frame to a flat RGB binary using the 48K line timing
-%% (224 T-states per scanline). Kept for backward compatibility.
--spec render_screen(binary(), boolean(), list(), non_neg_integer()) -> binary().
-render_screen(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder) ->
-    render_screen(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder, ?TSTATES_PER_LINE).
 
 %% @doc Render a frame to a flat RGB binary. TStatesPerLine is the horizontal
 %% scanline length in T-states (224 for the 48K raster, 228 for the 128K).

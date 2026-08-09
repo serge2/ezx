@@ -133,7 +133,7 @@ bench_full_timed(MemMod, M, DeadlineUs, CpuAcc, VidAcc) ->
             CB = M1#machine_state.screen_color,
             Mem = M1#machine_state.memory,
             Videobuffer = MemModule:read_video_block(Mem),
-            ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB),
+            ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB, ?TSTATES_PER_LINE),
             T2 = erlang:monotonic_time(microsecond),
 
             bench_full_timed(MemMod, M1, DeadlineUs,

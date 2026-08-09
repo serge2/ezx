@@ -3,6 +3,11 @@
 %% Audio output sample rate (Hz) shared by the machine and the audio devices.
 -define(SAMPLE_RATE, 44100).
 
+%% Horizontal scanline length in T-states for the 48K raster (the 128K model
+%% carries 228 in tstates_per_line). Used by the render-only callers that have
+%% no machine model at hand (benchmarks, debug tools, tests).
+-define(TSTATES_PER_LINE, 224).
+
 %% Machine timing model: raster geometry (T-states) + CPU clock.
 %% The frame length in T-states is fixed by the video raster; the CPU clock
 %% determines real frame time (TStatesPerFrame / CpuClock) and thus the number
