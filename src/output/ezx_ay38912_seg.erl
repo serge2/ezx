@@ -86,14 +86,10 @@
 %% Tone, noise, and mixer behaviour are identical on both chips.
 %%
 %% Usage (physical overrun frame model):
-%%   1. Call frame_start/2 at the beginning of each video frame with the
-%%      machine's T-state counter.  It only records the counter for
-%%      reference: the previous render already carried this frame's baseline
-%%      over.
-%%   2. During emulation call write/3 with the absolute T-state counter of
+%%   1. During emulation call write/3 with the absolute T-state counter of
 %%      the write.  The write lands in the frame-event log AND updates the
 %%      live register state immediately.
-%%   3. At frame end call render_channels/3 with the frame length in
+%%   2. At frame end call render_channels/3 with the frame length in
 %%      T-states and the desired sample count.  The frame spans the nominal
 %%      boundary interval (counter 0..FrameLen); events with counter <
 %%      FrameLen are applied at their sample position, events with counter
@@ -104,7 +100,7 @@
 %%      frame renders from.  Nothing is ever dropped.
 %% =============================================================================
 
--export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, render_channels/4, frame_start/2, regs/1, set_regs/2, silent_frame/2]).
+-export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, render_channels/4, regs/1, set_regs/2, silent_frame/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -149,7 +145,6 @@
     env_pos :: byte(),
     env_dir :: up | down,
     env_hold :: boolean(),
-    frame_offset :: non_neg_integer(),
     %% Register state at the nominal frame boundary (the baseline the
     %% current frame renders from); set by the previous frame's render.
     frame_regs :: tuple(),
@@ -189,7 +184,6 @@ new(Chip) when Chip =:= ay; Chip =:= ym ->
         env_pos = 0,
         env_dir = down,
         env_hold = false,
-        frame_offset = 0,
         frame_regs = InitRegs,
         frame_events = []
     }.
@@ -260,16 +254,6 @@ mask_read(ay, ?REG_AMPLITUDE_C)   -> 16#1F;
 mask_read(ay, ?REG_ENV_SHAPE)     -> 16#0F;
 mask_read(ay, _Latch) -> 16#FF.
 
-%% @doc Mark the start of a new frame at the given T-state counter.
-%% A no-op apart from recording the counter: the previous frame's
-%% render_channels/4 already carried the baseline over (frame_regs = the
-%% register state at the nominal boundary, frame_events = the tail events
-%% rebased into this frame's counter domain), so nothing is snapshotted or
-%% cleared here.
--spec frame_start(state(), non_neg_integer()) -> state().
-frame_start(#ay_state_seg{} = AY, TState) ->
-    AY#ay_state_seg{frame_offset = TState}.
-
 %% @doc Read all 16 registers as a list of bytes (for snapshot save).
 -spec regs(state()) -> [byte()].
 regs(#ay_state_seg{regs = Regs}) -> tuple_to_list(Regs).
@@ -278,7 +262,7 @@ regs(#ay_state_seg{regs = Regs}) -> tuple_to_list(Regs).
 %% The latch is reset and the running envelope/noise phases are left as-is;
 %% the pending frame-event log is dropped (register changes take effect from
 %% the next render step).  frame_regs is set to the loaded state as well,
-%% since frame_start/2 no longer snapshots it.
+%% since there is no frame-start snapshot.
 -spec set_regs(state(), [byte()]) -> state().
 set_regs(#ay_state_seg{} = AY, Regs) when is_list(Regs) ->
     case length(Regs) of

@@ -60,7 +60,7 @@
     int_pulse = 36}).
 
 %% Per-frame timing accumulators collected by run_frame/1 so the UI can report
-%% where time actually goes. cpu = keyboard + frame_start + execution,
+%% where time actually goes. cpu = keyboard + execution,
 %% beeper = beeper PCM render, screen = ULA border/flash artifacts,
 %% ay = AY channel render, render = screen bitmap (when render_screen is true).
 -record(perf_stats, {

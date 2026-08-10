@@ -78,7 +78,7 @@
 %%   - 0xFFFD: read data from latched register (read/1)
 %% =============================================================================
 
--export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, render_channels/4, frame_start/2, regs/1, set_regs/2]).
+-export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, render_channels/4, regs/1, set_regs/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -226,11 +226,6 @@ mask_read(ay, ?REG_AMPLITUDE_B)   -> 16#1F;
 mask_read(ay, ?REG_AMPLITUDE_C)   -> 16#1F;
 mask_read(ay, ?REG_ENV_SHAPE)     -> 16#0F;
 mask_read(ay, _Latch) -> 16#FF.
-
-%% @doc Mark the start of a new frame at the given T-state counter.
--spec frame_start(state(), non_neg_integer()) -> state().
-frame_start(#ay_state{} = AY, _TState) ->
-    AY.
 
 %% @doc Read all 16 registers as a list of bytes (for snapshot save).
 -spec regs(state()) -> [byte()].

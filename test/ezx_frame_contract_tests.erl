@@ -47,8 +47,7 @@ beeper_tail_carries_level_change_test_() ->
         %% Frame 2: the carried tail starts the frame at the boundary level 1
         %% and applies the overrun change at its (rebased) position, then a
         %% new mid-frame change takes effect as usual.
-        B4 = ezx_beeper2:frame_start(B3, 0),
-        B5 = ezx_beeper2:set_level(B4, 1, 200),
+        B5 = ezx_beeper2:set_level(B3, 1, 200),
         {PCM2, _} = ezx_beeper2:frame_render(B5, FrameLen, Samples),
         S2 = [V || <<V:16/signed-little>> <= PCM2],
         ?assertEqual(?LEVEL1, hd(S2)),
@@ -77,8 +76,7 @@ screen_tail_carries_border_change_test_() ->
         %% Frame 2: the carried tail change appears at the start of the local
         %% timeline and the base color is the boundary color carried from
         %% frame 1 (the color after frame 1's window = 2).
-        S4 = ezx_screen:frame_start(S3, 0),
-        S5 = ezx_screen:border_set(S4, 700, 4),
+        S5 = ezx_screen:border_set(S3, 700, 4),
         {Local2, Base2, _Flash2, S6} = ezx_screen:frame_render(S5, FrameLen),
         ?assertEqual([{20, 5}, {700, 4}], Local2),
         ?assertEqual(2, Base2),
@@ -107,8 +105,7 @@ ay_tail_carries_register_write_test_() ->
         %% Frame 2: the carried mute lands at its rebased sample position —
         %% audible at the start (tone still sounding from the boundary
         %% state), then constant silence from sample 50 on.
-        AY4 = M:frame_start(AY3, 0),
-        {ChA2, _, _, _} = M:render_channels(AY4, FrameLen, Samples),
+        {ChA2, _, _, _} = M:render_channels(AY3, FrameLen, Samples),
         S2 = [V || <<V:16/little-signed>> <= ChA2],
         ?assert(lists:any(fun(X) -> X =/= ?LEVEL0 end, lists:sublist(S2, 50))),
         ?assertEqual([?LEVEL0], lists:usort(lists:nthtail(50, S2)))

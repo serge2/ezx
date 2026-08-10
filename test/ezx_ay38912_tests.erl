@@ -20,13 +20,13 @@
 setup(M, Writes) ->
     setup(M, ay, Writes).
 
-%% Writes happen inside the frame (after frame_start), matching the emulator:
-%% each write lands in the frame-event log with its T-state and is applied at
-%% the correct sample position by the render.
+%% Writes happen inside the frame, matching the emulator: each write lands in
+%% the frame-event log with its T-state and is applied at the correct sample
+%% position by the render.
 setup(M, Chip, Writes) ->
     lists:foldl(fun({Reg, Val}, AY) ->
         M:write(M:latch(AY, Reg), Val, 0)
-    end, M:frame_start(M:new(Chip), 0), Writes).
+    end, M:new(Chip), Writes).
 
 %% Render one frame of TStates T-states into one sample per T-state;
 %% return channel A samples as a list.
@@ -216,9 +216,9 @@ ay_clock_scale_halves_generator_advance_test_() ->
         Samples = 256,
         AY0 = setup(M, [{7, 16#3E}, {0, 0}, {1, 0}, {8, 16#0F}]),
         %% Mult = 2: FrameLen/2 base-rate T-states over the same samples
-        {ChA2, _ChB2, _ChC2, AY2} = M:render_channels(M:frame_start(AY0, 0), FrameLen, Samples, 2),
+        {ChA2, _ChB2, _ChC2, AY2} = M:render_channels(AY0, FrameLen, Samples, 2),
         %% identity multiplier over a half-length frame: same AY-domain work
-        {ChA1, _ChB1, _ChC1, AY1} = M:render_channels(M:frame_start(AY0, 0), FrameLen div 2, Samples),
+        {ChA1, _ChB1, _ChC1, AY1} = M:render_channels(AY0, FrameLen div 2, Samples),
         ?assertEqual(ChA1, ChA2),
         ?assertEqual(AY1, AY2)
      end || M <- ?MODULES].
@@ -233,12 +233,10 @@ ay_clock_scale_scales_event_positions_test_() ->
     fun() ->
         AY0 = setup(M, [{7, 16#3E}, {0, 0}, {1, 0}, {8, 16#0F}]),
         %% scaled: volume killed at CPU 10000, frame 20000, Mult = 2
-        AYa = M:frame_start(AY0, 0),
-        AYb = M:write(M:latch(AYa, 8), 0, 10000),
+        AYb = M:write(M:latch(AY0, 8), 0, 10000),
         {PCMa, _ChB, _ChC, _} = M:render_channels(AYb, 20000, 256, 2),
         %% identity: volume killed at CPU 5000, frame 10000
-        AYc = M:frame_start(AY0, 0),
-        AYd = M:write(M:latch(AYc, 8), 0, 5000),
+        AYd = M:write(M:latch(AY0, 8), 0, 5000),
         {PCMb, _ChB2, _ChC2, _} = M:render_channels(AYd, 10000, 256),
         ?assertEqual(PCMb, PCMa),
         %% the write takes effect at sample 128 (0-based): silence after it
@@ -262,8 +260,7 @@ ay_clock_scale_scales_event_positions_test_() ->
 silent_frame_is_constant_silence_test_() ->
     [fun() ->
         AY = gen_setup(M, ay, 0, 0, 0),
-        AY1 = M:frame_start(AY, 0),
-        {ChA, ChB, ChC, _} = M:render_channels(AY1, 882, 882),
+        {ChA, ChB, ChC, _} = M:render_channels(AY, 882, 882),
         ?assertEqual([pcm(0)], lists:usort([V || <<V:16/little-signed>> <= ChA])),
         ?assertEqual([pcm(0)], lists:usort([V || <<V:16/little-signed>> <= ChB])),
         ?assertEqual([pcm(0)], lists:usort([V || <<V:16/little-signed>> <= ChC]))
@@ -271,8 +268,7 @@ silent_frame_is_constant_silence_test_() ->
     [fun() ->
         %% The YM2149 with all volumes 0 is silent too.
         AY = gen_setup(M, ym, 0, 0, 0),
-        AY1 = M:frame_start(AY, 0),
-        {ChA, _ChB, _ChC, _} = M:render_channels(AY1, 882, 882),
+        {ChA, _ChB, _ChC, _} = M:render_channels(AY, 882, 882),
         ?assertEqual([pcm(0)], lists:usort([V || <<V:16/little-signed>> <= ChA]))
      end || M <- ?MODULES].
 
@@ -284,14 +280,13 @@ silent_fast_path_selection_test_() ->
     M = ezx_ay38912_seg,
     fun() ->
         AY0 = gen_setup(M, ay, 0, 0, 0),
-        AY1 = M:frame_start(AY0, 0),
-        ?assert(M:silent_frame(AY1, [])),
-        AY2 = M:write(M:latch(AY1, 8), 5, 100),
-        ?assertNot(M:silent_frame(AY1, [{100, 8, 5}])),
+        ?assert(M:silent_frame(AY0, [])),
+        AY2 = M:write(M:latch(AY0, 8), 5, 100),
+        ?assertNot(M:silent_frame(AY0, [{100, 8, 5}])),
         %% envelope-mode volume (bit 4) makes the channel audible too
-        ?assertNot(M:silent_frame(AY1, [{100, 9, 16#10}])),
+        ?assertNot(M:silent_frame(AY0, [{100, 9, 16#10}])),
         %% even a non-audible register (mixer) blocks the fast path
-        ?assertNot(M:silent_frame(AY1, [{100, 7, 0}]))
+        ?assertNot(M:silent_frame(AY0, [{100, 7, 0}]))
     end.
 
 %% A volume written to a nonzero value mid-frame takes the audio path:
@@ -300,8 +295,7 @@ nonzero_volume_mid_frame_takes_audio_path_test_() ->
     M = ezx_ay38912_seg,
     fun() ->
         AY0 = gen_setup(M, ay, 0, 0, 0),
-        AY1 = M:frame_start(AY0, 0),
-        AY2 = M:write(M:latch(AY1, 8), 15, 441),
+        AY2 = M:write(M:latch(AY0, 8), 15, 441),
         {ChA, _ChB, _ChC, _} = M:render_channels(AY2, 882, 882),
         Samples = [V || <<V:16/little-signed>> <= ChA],
         ?assert(lists:all(fun(X) -> X =:= pcm(0) end, lists:sublist(Samples, 441))),
@@ -328,8 +322,7 @@ silent_then_audible(M) ->
     S1 ++ S2.
 
 render_frame(M, AY) ->
-    AY1 = M:frame_start(AY, 0),
-    {ChA, _, _, M2} = M:render_channels(AY1, 882, 882),
+    {ChA, _, _, M2} = M:render_channels(AY, 882, 882),
     {[V || <<V:16/little-signed>> <= ChA], M2}.
 
 %% Configure the tone/noise/envelope generators and set the three volumes.

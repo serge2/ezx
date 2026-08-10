@@ -498,32 +498,12 @@ run_frame(Machine) ->
         perf_stats = add_perf(PS0, CpuUs, BeeperUs, ScreenUs, AyUs, RenderUs)
     }.
 
-%% Phase: input handling, device frame_start, and CPU execution of the frame.
+%% Phase: input handling and CPU execution of the frame.
 run_frame_execute(Machine) ->
     timed(fun() ->
         MachineQ = process_keyboard_queue(Machine),
-        TStates = MachineQ#machine_state.t_states,
-        Machine1 = frame_start_devices(MachineQ, TStates),
-        execute_frame(Machine1)
+        execute_frame(MachineQ)
     end).
-
-%% Frame start: the devices record the machine counter for reference only;
-%% the previous frame_render already carried the frame's baseline over
-%% (rebased tail events + boundary level/color/regs).
-frame_start_devices(#machine_state{ay_module = AyModule, beeper_module = BeeperModule} = Machine, TStates) ->
-    Beeper = Machine#machine_state.beeper,
-    Beeper1 = BeeperModule:frame_start(Beeper, TStates),
-    Screen = Machine#machine_state.screen,
-    Screen1 = ezx_screen:frame_start(Screen, TStates),
-    MachineQ1 = Machine#machine_state{beeper = Beeper1, screen = Screen1},
-    case AyModule of
-        undefined ->
-            MachineQ1;
-        _ ->
-            AY = MachineQ1#machine_state.ay,
-            AY1 = AyModule:frame_start(AY, TStates),
-            MachineQ1#machine_state{ay = AY1}
-    end.
 
 %% CPU execution of one frame. The real ULA asserts /INT once per frame as a
 %% short pulse (int_pulse T-states) that starts just before the frame boundary,

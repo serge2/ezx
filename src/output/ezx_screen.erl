@@ -5,11 +5,9 @@
 %%
 %% Device frame contract (shared with the beeper and AY, physical-overrun
 %% model):
-%%   frame_start(Screen, StartTState) — begin a frame; events recorded below
-%%                                       carry absolute counter stamps
-%%                                       (machine t_states, 0 = nominal frame
-%%                                       boundary)
-%%   border_set(Screen, TState, Color) — record a border color change
+%%   border_set(Screen, TState, Color) — record a border color change with an
+%%                                       absolute counter stamp (machine
+%%                                       t_states, 0 = nominal frame boundary)
 %%   frame_render(Screen, FrameLen)   — produce the sorted local-time border
 %%                                       changes, the base color, and the flash
 %%                                       phase for the screen; advances the
@@ -31,7 +29,7 @@
 %% emulator stores it as the flash_on artifact alongside the border changes
 %% and color, so render_frame/1 does not need to touch the device directly.
 
--export([new/0, new/1, border_set/3, border_get/1, flash_on/1, frame_start/2, frame_render/2]).
+-export([new/0, new/1, border_set/3, border_get/1, flash_on/1, frame_render/2]).
 -export([init_helper_tables/0, render_screen/5]).
 
 -on_load(init_helper_tables/0).
@@ -43,7 +41,6 @@
 -record(screen, {
     border_color = 0    :: 0..7,
     init_color = 0      :: 0..7,
-    frame_offset = 0    :: non_neg_integer(),
     border_changes = [] :: [{non_neg_integer(), 0..7}],
     flash_phase = 0     :: 0..31
 }).
@@ -76,16 +73,6 @@ border_get(#screen{border_color = Color}) -> Color.
 %% @doc Flash phase flag: attributes with bit 7 set are inverted while true.
 -spec flash_on(state()) -> boolean().
 flash_on(#screen{flash_phase = Phase}) -> Phase div 16 =:= 1.
-
-%% @doc Mark the start of a new frame.  In the physical-overrun model the
-%% previous frame_render/2 already carried the tail border changes over
-%% (rebased into this frame's counter domain) and set init_color to the color
-%% at the nominal boundary, so there is nothing to reset: this frame simply
-%% keeps recording border changes with absolute counter stamps.  StartTState
-%% is recorded for reference only.
--spec frame_start(state(), non_neg_integer()) -> state().
-frame_start(#screen{} = S, StartTState) ->
-    S#screen{frame_offset = StartTState}.
 
 %% @doc Produce the screen output for one frame (exactly FrameLen T-states):
 %% the sorted local-time border changes (changes with counter < FrameLen,

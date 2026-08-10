@@ -6,11 +6,10 @@
 %% Produces raw duty-cycle-integrated samples.
 %%
 %% Frame contract (shared with the other devices, physical-overrun model):
-%%   frame_start(Beeper, StartTState)   — begin a frame; events recorded
-%%                                        below carry absolute counter stamps
-%%                                        (machine t_states, 0 = nominal frame
+%%   set_level(Beeper, Level, TState)   — record a level change with an
+%%                                        absolute counter stamp (machine
+%%                                        t_states, 0 = nominal frame
 %%                                        boundary)
-%%   set_level(Beeper, Level, TState)   — record a level change
 %%   frame_render(Beeper, FrameLen, Samples) — render exactly FrameLen
 %%                                        T-states into Samples mono S16LE
 %%                                        samples; events with counter < FrameLen
@@ -30,12 +29,11 @@
 %% Fixed-point scaling: 1 T-state = Samples units, so one sample period is
 %% exactly FrameLen units (the number of samples to emit is the scale).
 
--export([init/0, init/1, set_level/3, level/1, frame_start/2, frame_render/3, silence_frame/1]).
+-export([init/0, init/1, set_level/3, level/1, frame_render/3, silence_frame/1]).
 
 -record(beeper, {
     level = 0          :: 0 | 1,
     init_level = 0     :: 0 | 1,
-    frame_offset = 0   :: non_neg_integer(),
     changes = []       :: [{non_neg_integer(), 0 | 1}]
 }).
 
@@ -47,9 +45,8 @@ init() ->
     #beeper{}.
 
 %% @doc Init with a known level (used after frame_render to carry the
-%% live level across frames, and by snapshot load). frame_start/2 keeps
-%% init_level; frame_render/3 advances it to the level at the nominal
-%% frame boundary.
+%% live level across frames, and by snapshot load). frame_render/3 advances
+%% init_level to the level at the nominal frame boundary.
 -spec init(0 | 1) -> state().
 init(Level) ->
     #beeper{level = Level, init_level = Level}.
@@ -63,16 +60,6 @@ set_level(#beeper{changes = Changes} = B, NewLevel, TState) ->
 
 -spec level(state()) -> 0 | 1.
 level(#beeper{level = L}) -> L.
-
-%% @doc Mark the start of a new frame. In the physical-overrun model the
-%% previous frame_render/3 already carried the tail events over (rebased into
-%% this frame's counter domain) and set init_level to the level at the nominal
-%% boundary, so there is nothing to reset: this frame simply keeps recording
-%% level changes with absolute counter stamps. StartTState is recorded for
-%% reference only.
--spec frame_start(state(), non_neg_integer()) -> state().
-frame_start(#beeper{} = B, StartTState) ->
-    B#beeper{frame_offset = StartTState}.
 
 %% @doc Render one frame of audio: exactly FrameLen T-states (e.g. 69888 for
 %% a 48K frame) into Samples mono S16LE samples.  Samples is derived by the
