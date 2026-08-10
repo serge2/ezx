@@ -128,8 +128,10 @@ write_byte(#mem128{routing = Routing, banks = Banks} = State, Addr, Byte) ->
     end.
 
 -spec write_port_7ffd(state(), byte()) -> state().
-write_port_7ffd(#mem128{} = State, Value) ->
-    NewP7 = Value band 16#FF,
+write_port_7ffd(#mem128{p7ffd = P7ffd} = State, _Value) when (P7ffd band 16#20) =:= 16#20 ->
+    State;  %% Bit 5 set: port locked, ignore writes.
+write_port_7ffd(#mem128{} = State, Value)->
+    NewP7 = Value band 16#3F,
     State#mem128{routing = build_routing(NewP7), p7ffd = NewP7}.
 
 %% @doc Read the ULA display buffer (first ?VIDEO_SIZE bytes of the bank
@@ -170,12 +172,15 @@ build_routing(P7ffd) ->
     {rom_select(P7ffd) + ?BANK_INDEX_OFFSET,
      5 + ?RAM_BASE_IDX + ?BANK_INDEX_OFFSET,
      2 + ?RAM_BASE_IDX + ?BANK_INDEX_OFFSET,
-     (P7ffd band 7) + ?RAM_BASE_IDX + ?BANK_INDEX_OFFSET}.
+     (P7ffd band 7) + ?RAM_BASE_IDX + ?BANK_INDEX_OFFSET}. % Bits 0-2: slot 3 bank select (0-7).
 
 %% element position in banks() of the RAM bank used for the ULA display.
 screen_slot(P7ffd) -> screen_bank(P7ffd) + ?RAM_BASE_IDX + ?BANK_INDEX_OFFSET.
 
+%% element position in banks() of the RAM bank selected by p7FFD bit 3.
 screen_bank(P7ffd) -> case (P7ffd bsr 3) band 1 of 0 -> 5; 1 -> 7 end.
+
+%% element position in banks() of the ROM bank selected by p7FFD bit 4.
 rom_select(P7ffd)  -> case (P7ffd bsr 4) band 1 of 0 -> 0; 1 -> 1 end.
 
 make_bank(Bin) -> list_to_tuple([byte_tuple(P) || P <- split_512(Bin)]).

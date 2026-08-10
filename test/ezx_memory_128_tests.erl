@@ -127,3 +127,45 @@ aliased_bank_paged_out(Mod, Slot, Bank, P7Val) ->
     S4 = Mod:write_port_7ffd(S3, P7Val),
     ?assertEqual(Bank + 16#30, Mod:read_byte(S4, 16#C000)).
 
+%% Real 128K paging latch semantics: bit 5 (0x20) locks the port. The write
+%% that sets it still takes effect, but every later write to 0x7FFD is ignored
+%% until the machine is recreated (new/2 starts unlocked).
+p7ffd_lock_test_() ->
+    [{lists:flatten(io_lib:format("~p", [Mod])),
+      fun() -> p7ffd_lock(Mod) end}
+     || Mod <- ?MODULES].
+
+p7ffd_lock(Mod) ->
+    Rom = <<0:16384/unit:8>>,
+    S0 = Mod:new(Rom, Rom),
+
+    %% A write that sets bit 5 applies (bank 7 at slot 3) and locks at once.
+    S1 = Mod:write_port_7ffd(S0, 16#07 bor 16#20),
+    ?assertEqual(16#27, Mod:get_p7ffd(S1)),
+    S1b = Mod:write_byte(S1, 16#C000, 16#AA),
+    ?assertEqual(16#AA, Mod:read_byte(S1b, 16#C000)),
+    ?assertEqual(16#AA, binary:at(Mod:read_bank_block(S1b, 7), 0)),
+
+    %% Later writes are ignored: the bank must not move, and 0xAA must stay
+    %% visible through slot 3 (bank 0 would read 0x00).
+    S2 = Mod:write_port_7ffd(S1b, 16#00),
+    ?assertEqual(16#27, Mod:get_p7ffd(S2)),
+    ?assertEqual(16#AA, Mod:read_byte(S2, 16#C000)),
+    S3 = Mod:write_port_7ffd(S2, 16#05),
+    ?assertEqual(16#27, Mod:get_p7ffd(S3)),
+    ?assertEqual(16#AA, Mod:read_byte(S3, 16#C000)).
+
+%% Only bits 0-5 are wired to the paging latch; writes with bits 6-7 set are
+%% masked off and must not leak into the stored p7FFD value.
+p7ffd_upper_bits_masked_test_() ->
+    [{lists:flatten(io_lib:format("~p", [Mod])),
+      fun() -> p7ffd_upper_bits_masked(Mod) end}
+     || Mod <- ?MODULES].
+
+p7ffd_upper_bits_masked(Mod) ->
+    Rom = <<0:16384/unit:8>>,
+    S0 = Mod:new(Rom, Rom),
+    ?assertEqual(16#3F, Mod:get_p7ffd(Mod:write_port_7ffd(S0, 16#FF))),
+    ?assertEqual(16#00, Mod:get_p7ffd(Mod:write_port_7ffd(S0, 16#40))),
+    ?assertEqual(16#20, Mod:get_p7ffd(Mod:write_port_7ffd(S0, 16#E0))).
+
