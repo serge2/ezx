@@ -17,6 +17,9 @@ Just for fun and as a proof of concept — exploring how far you can get with a 
 Common shortcuts: `F2` save, `F3` load, `F5` quick save, `F9` quick load,
 `F7` reset, `F11` fullscreen, `Ctrl+O` open, `Ctrl+P` pause, `Ctrl+M` mute.
 
+## Screenshots
+![Screen1](./screenshots/scr1.png) ![Screen2](./screenshots/scr2.png)
+
 ## Build
 
 Requires Erlang/OTP 25+ and rebar3.
