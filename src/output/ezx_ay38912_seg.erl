@@ -85,14 +85,23 @@
 %%     ignores the upper nibble entirely.
 %% Tone, noise, and mixer behaviour are identical on both chips.
 %%
-%% Usage:
-%%   1. Call frame_start/2 at the beginning of each video frame (snapshots
-%%      current register state for the render pass).
-%%   2. During emulation call write/3 with the absolute T-state count.
+%% Usage (physical overrun frame model):
+%%   1. Call frame_start/2 at the beginning of each video frame with the
+%%      machine's T-state counter.  It only records the counter for
+%%      reference: the previous render already carried this frame's baseline
+%%      over.
+%%   2. During emulation call write/3 with the absolute T-state counter of
+%%      the write.  The write lands in the frame-event log AND updates the
+%%      live register state immediately.
 %%   3. At frame end call render_channels/3 with the frame length in
-%%      T-states and the desired sample count - it segments the frame at
-%%      sample boundaries, applying logged write events at the correct
-%%      sample position.
+%%      T-states and the desired sample count.  The frame spans the nominal
+%%      boundary interval (counter 0..FrameLen); events with counter <
+%%      FrameLen are applied at their sample position, events with counter
+%%      >= FrameLen belong to the next frame's span and are carried over
+%%      (rebased by -FrameLen) into the returned state.  The returned state
+%%      also carries frame_regs = the register state at the nominal
+%%      boundary (after this frame's window events), the baseline the next
+%%      frame renders from.  Nothing is ever dropped.
 %% =============================================================================
 
 -export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, render_channels/4, frame_start/2, regs/1, set_regs/2, silent_frame/2]).
@@ -141,7 +150,13 @@
     env_dir :: up | down,
     env_hold :: boolean(),
     frame_offset :: non_neg_integer(),
+    %% Register state at the nominal frame boundary (the baseline the
+    %% current frame renders from); set by the previous frame's render.
     frame_regs :: tuple(),
+    %% Register writes for this frame, {AbsTState, Reg, Value}, newest first.
+    %% render_channels/4 partitions them at FrameLen: events with a counter
+    %% below FrameLen belong to the current frame, events at/above it are
+    %% the next frame's tail, carried over rebased by -FrameLen.
     frame_events :: list()
 }).
 
@@ -246,15 +261,14 @@ mask_read(ay, ?REG_ENV_SHAPE)     -> 16#0F;
 mask_read(ay, _Latch) -> 16#FF.
 
 %% @doc Mark the start of a new frame at the given T-state counter.
-%% Snapshots the current register state for the segmented render pass
-%% and clears the accumulated frame-event log.
+%% A no-op apart from recording the counter: the previous frame's
+%% render_channels/4 already carried the baseline over (frame_regs = the
+%% register state at the nominal boundary, frame_events = the tail events
+%% rebased into this frame's counter domain), so nothing is snapshotted or
+%% cleared here.
 -spec frame_start(state(), non_neg_integer()) -> state().
-frame_start(#ay_state_seg{regs = Regs} = AY, TState) ->
-    AY#ay_state_seg{
-        frame_offset = TState,
-        frame_regs = Regs,
-        frame_events = []
-    }.
+frame_start(#ay_state_seg{} = AY, TState) ->
+    AY#ay_state_seg{frame_offset = TState}.
 
 %% @doc Read all 16 registers as a list of bytes (for snapshot save).
 -spec regs(state()) -> [byte()].
@@ -263,11 +277,13 @@ regs(#ay_state_seg{regs = Regs}) -> tuple_to_list(Regs).
 %% @doc Overwrite all 16 registers from a list of 16 bytes (snapshot load).
 %% The latch is reset and the running envelope/noise phases are left as-is;
 %% the pending frame-event log is dropped (register changes take effect from
-%% the next render step).
+%% the next render step).  frame_regs is set to the loaded state as well,
+%% since frame_start/2 no longer snapshots it.
 -spec set_regs(state(), [byte()]) -> state().
 set_regs(#ay_state_seg{} = AY, Regs) when is_list(Regs) ->
     case length(Regs) of
-        16 -> AY#ay_state_seg{regs = list_to_tuple(Regs), latch = 0, frame_events = []};
+        16 -> T = list_to_tuple(Regs),
+             AY#ay_state_seg{regs = T, frame_regs = T, latch = 0, frame_events = []};
         _  -> error(bad_regs)
     end.
 
@@ -275,10 +291,15 @@ set_regs(#ay_state_seg{} = AY, Regs) when is_list(Regs) ->
 %% (S16LE, -4096..+4096), one per AY channel A/B/C.  FrameLen defines the
 %% number of emulated Z80 T-states in this frame (e.g. 70908 for a 128K
 %% frame).  Samples is derived by the emulator from the machine model as
-%% trunc(FrameLen * SampleRate / CpuClock).  When frame events are present the
-%% frame is segmented at sample boundaries and register changes are applied at
-%% the correct sample position.  Without events falls back to the naive
-%% equal-step renderer (identical to the simplified implementation).
+%% trunc(FrameLen * SampleRate / CpuClock).  The frame spans the nominal
+%% boundary interval (counter 0..FrameLen): frame events with a counter
+%% below FrameLen are segmented at sample boundaries and applied at the
+%% correct sample position; events at/above FrameLen (the next frame's
+%% tail) are carried over rebased by -FrameLen into the returned state,
+%% never dropped.  Without events falls back to the naive equal-step
+%% renderer (identical to the simplified implementation).  The returned
+%% state carries frame_regs = the register state at the nominal boundary
+%% (after this frame's window events) as the next frame's baseline.
 %% Returns {ChA, ChB, ChC, NewState}.
 %%
 %% A frame with no register writes at all and all three volume registers
@@ -296,23 +317,25 @@ render_channels(AY, FrameLen, Samples) ->
 %% @doc Render one frame with an explicit AY clock multiplier Mult: the chip
 %% advances FrameLen / Mult base-rate T-states per frame, so overclocking the
 %% CPU (Mult = cpu_clock / base_cpu_clock) keeps the chip running at the
-%% machine's base clock.  The frame length and the relative event timestamps
-%% are scaled into the AY domain; Mult = 1 is the identity.
+%% machine's base clock.  The frame length and the event timestamps are
+%% scaled into the AY domain; Mult = 1 is the identity.
 -spec render_channels(state(), non_neg_integer(), pos_integer(), pos_integer()) ->
     {binary(), binary(), binary(), state()}.
-render_channels(#ay_state_seg{frame_offset = FO} = AY, FrameLen, Samples, Mult) ->
+render_channels(#ay_state_seg{} = AY, FrameLen, Samples, Mult) ->
     FrameLenAy = FrameLen div Mult,
     Events = AY#ay_state_seg.frame_events,
-    RelEvents = [{(ET - FO) div Mult, RI, V}
-                 || {ET, RI, V} <- Events, ET >= FO, ET < FO + FrameLen],
-    case silent_frame(AY, RelEvents) of
-        true -> render_silent(AY, FrameLenAy, Samples);
-        false -> render_channels_audio(AY, FrameLenAy, Samples, RelEvents)
+    RelEvents = [{ET div Mult, RI, V} || {ET, RI, V} <- Events, ET < FrameLen],
+    Tail = [{ET - FrameLen, RI, V} || {ET, RI, V} <- Events, ET >= FrameLen],
+    case silent_frame(AY, Events) of
+        true -> render_silent(AY, FrameLenAy, Samples, Tail);
+        false -> render_channels_audio(AY, FrameLenAy, Samples, RelEvents, Tail)
     end.
 
 %% A frame is silent iff nothing was written to the AY during it (no frame
-%% events) and all three volume registers are fixed-volume 0: every sample
-%% is then level 0 (-4096) whatever the tone/noise/envelope generators do.
+%% events at all — the full stored log spans the whole physical window, so
+%% an empty log means neither the current-frame events nor a carried tail)
+%% and all three volume registers are fixed-volume 0: every sample is then
+%% level 0 (-4096) whatever the tone/noise/envelope generators do.
 %% Requiring an empty event list keeps the fast path's single bulk generator
 %% advance bit-for-bit equal to the per-sample accumulation — with any
 %% mid-frame register change the advance would differ (e.g. an envelope
@@ -331,26 +354,33 @@ volumes_silent(FRegs) ->
 %% The generators are advanced in one bulk step by the whole FrameLen so a
 %% later unmute resumes with correct tone/noise/envelope phases (equivalent
 %% to the per-sample accumulation while no register changes mid-frame).
-render_silent(#ay_state_seg{frame_regs = FRegs} = AY, FrameLen, Samples) ->
+%% The returned state keeps frame_regs = the boundary regs (nothing changed
+%% in the window) and carries the (necessarily empty) tail over.
+render_silent(#ay_state_seg{frame_regs = FRegs} = AY, FrameLen, Samples, Tail) ->
     Silence = binary:copy(<<(-4096):16/little-signed>>, Samples),
     RenderAY = AY#ay_state_seg{regs = FRegs},
     {_OA, _OB, _OC, AY2} = render_step(RenderAY, FrameLen),
     AY3 = AY2#ay_state_seg{
         regs = AY#ay_state_seg.regs,
-        frame_events = []
+        frame_regs = FRegs,
+        frame_events = Tail
     },
     {Silence, Silence, Silence, AY3}.
 
-render_channels_audio(#ay_state_seg{frame_events = []} = AY, FrameLen, Samples, _RelEvents) ->
-    render_channels_naive(AY, FrameLen, Samples);
-render_channels_audio(#ay_state_seg{frame_regs = FRegs} = AY, FrameLen, Samples, RelEvents) ->
+render_channels_audio(#ay_state_seg{frame_events = []} = AY, FrameLen, Samples, _RelEvents, Tail) ->
+    render_channels_naive(AY, FrameLen, Samples, Tail);
+render_channels_audio(#ay_state_seg{frame_regs = FRegs} = AY, FrameLen, Samples, RelEvents, Tail) ->
     Step = FrameLen div Samples,
     Emap = build_event_map(lists:reverse(RelEvents), Step),
     RenderAY = AY#ay_state_seg{regs = FRegs},
     {ChA, ChB, ChC, AY2} = render_samples(RenderAY, 0, Samples, Step, Emap, <<>>, <<>>, <<>>),
+    %% The boundary state for the next frame is the register state after the
+    %% last event of this frame's window (AY2.regs); the live regs already
+    %% include the tail writes, exactly like the beeper level / screen color.
     AY3 = AY2#ay_state_seg{
         regs = AY#ay_state_seg.regs,
-        frame_events = []
+        frame_regs = AY2#ay_state_seg.regs,
+        frame_events = Tail
     },
     case FrameLen rem Samples of
         0 -> {ChA, ChB, ChC, AY3};
@@ -416,19 +446,26 @@ apply_events(AY, _I, Emap) ->
     end.
 
 %% @doc Naive fallback renderer used when no frame events were logged
-%% (identical to the simplified ezx_ay38912 implementation).
--spec render_channels_naive(state(), non_neg_integer(), pos_integer()) ->
+%% (identical to the simplified ezx_ay38912 implementation).  Renders from
+%% the live register state and sets the next frame's baseline to it; the
+%% carried tail is empty here.
+-spec render_channels_naive(state(), non_neg_integer(), pos_integer(), list()) ->
     {binary(), binary(), binary(), state()}.
-render_channels_naive(#ay_state_seg{} = AY, FrameLen, Samples) ->
+render_channels_naive(#ay_state_seg{} = AY, FrameLen, Samples, Tail) ->
     Step = FrameLen div Samples,
     Rem = FrameLen rem Samples,
     {ChA, ChB, ChC, AY2} = render_samples_naive(AY, Samples, Step, <<>>, <<>>, <<>>),
+    AY2b = AY2#ay_state_seg{
+        regs = AY#ay_state_seg.regs,
+        frame_regs = AY#ay_state_seg.regs,
+        frame_events = Tail
+    },
     case Rem > 0 of
         true ->
-            {_OutA, _OutB, _OutC, AY3} = render_step(AY2, Rem),
+            {_OutA, _OutB, _OutC, AY3} = render_step(AY2b, Rem),
             {ChA, ChB, ChC, AY3};
         false ->
-            {ChA, ChB, ChC, AY2}
+            {ChA, ChB, ChC, AY2b}
     end.
 
 %% @doc Count down from N samples producing PCM output for each step

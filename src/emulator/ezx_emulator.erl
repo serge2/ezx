@@ -507,7 +507,9 @@ run_frame_execute(Machine) ->
         execute_frame(Machine1)
     end).
 
-%% Rebase the device event timelines to the start of the frame.
+%% Frame start: the devices record the machine counter for reference only;
+%% the previous frame_render already carried the frame's baseline over
+%% (rebased tail events + boundary level/color/regs).
 frame_start_devices(#machine_state{ay_module = AyModule, beeper_module = BeeperModule} = Machine, TStates) ->
     Beeper = Machine#machine_state.beeper,
     Beeper1 = BeeperModule:frame_start(Beeper, TStates),
@@ -523,59 +525,89 @@ frame_start_devices(#machine_state{ay_module = AyModule, beeper_module = BeeperM
             MachineQ1#machine_state{ay = AY1}
     end.
 
-%% CPU execution of one frame. Two-phase execution:
-%%   Phase 1: 0..IntTState-1 T-states — normal execution (no interrupt)
-%%   Phase 2: IntTState..FrameLen-1 T-states — interrupt raised at boundary,
-%%            then normal execution; the frame boundary is ignored
-%%            mid-instruction (variant A), the overrun is carried as the
-%%            new t_states tail.
-%% The ULA asserts INT only for a short pulse (int_pulse T-states) from the
-%% interrupt point; if the CPU has not serviced it by the end of the pulse
-%% (e.g. interrupts disabled), the request is dropped — a mid-frame EI does
-%% not fire an interrupt that was asserted at the start of the frame, exactly
-%% like the real hardware.
+%% CPU execution of one frame. The real ULA asserts /INT once per frame as a
+%% short pulse (int_pulse T-states) that starts just before the frame boundary,
+%% so the CPU services it at the first instruction boundaries of the new frame.
+%% The real Z80 samples /INT only at the end of a complete instruction —
+%% DD/FD prefix fetches are NOT sample points (repeated prefixes inhibit
+%% interrupt handling until the instruction after the sequence completes), so
+%% a prefix chain is one atomic unit for interrupt purposes. With the frame
+%% boundary ignored mid-instruction (variant A), a frame starts at the
+%% instruction boundary that overshot it: the carried tail t_states (StartT)
+%% is exactly that boundary's offset past the frame. The request is therefore
+%% serviced only when that boundary falls inside the pulse, i.e. when
+%% StartT < IntPulse (int_asserted/2); a long instruction straddling the
+%% boundary consumes the whole pulse and suppresses the frame's interrupt,
+%% like the real hardware. When the request IS asserted it stays low for the
+%% frame's pulse, i.e. until the int_pulse-th T-state measured from the nominal
+%% frame boundary. The pulse is anchored at that boundary, so its drop point is
+%% counter IntPulse — never StartT + IntPulse, which would stretch the pulse by
+%% the carried tail. The tail shifts where the frame-start boundary falls, not
+%% the pulse window itself. An unacknowledged request is dropped at the pulse
+%% end, so a mid-frame EI never fires a request from the frame start. The
+%% request is always none when a frame starts: it is asserted only inside the
+%% loops below, and it is either acknowledged (maybe_handle_interrupt clears
+%% it) or dropped at the pulse end, so no explicit reset is needed at the
+%% frame boundary — the sequence per frame is assert, then clear, never
+%% clear-then-assert.
+%% Physical overrun framing: the frame spans the nominal boundary interval
+%% (counter 0..FrameLen), so it closes when the counter reaches FrameLen,
+%% executing FrameLen - StartT new T-states; the overshoot StartT belongs to
+%% the next frame's span. Events recorded past FrameLen are the next frame's
+%% tail, carried over by the device frame_render (rebased by -FrameLen), so
+%% they land at the start of the next frame, where the ULA timeline puts them.
 %% When no TAP loading is in flight the whole frame runs as a CPU-internal
 %% instruction loop (run_frame_execute) so the machine/ext_context records are
 %% not rebuilt per instruction; the LD-BYTES tape trap lives in the machine
 %% step/1, so a TAP load falls back to the per-instruction machine loop.
-execute_frame(#machine_state{t_states = StartT} = Machine) ->
-    Model = Machine#machine_state.model,
-    FrameLen = Model#machine_model.tstates_per_frame,
-    IntTState = Model#machine_model.int_tstate,
-    IntPulse = Model#machine_model.int_pulse,
-    Cpu0 = Machine#machine_state.cpu,
-    Cpu0a = z80_cpu:clear_interrupt_request(Cpu0),
-    Machine0a = Machine#machine_state{cpu = Cpu0a},
-
+%% Whether the frame's INT request should be asserted at the frame start. The
+%% real Z80 samples /INT only at instruction boundaries, and the frame starts
+%% at the instruction boundary that overshot it (variant A), StartT T-states
+%% past the nominal boundary. The request fires only when that boundary falls
+%% within the int_pulse-wide pulse, i.e. StartT < IntPulse; a long instruction
+%% (a DD/FD prefix chain, the only instructions longer than the pulse)
+%% straddling the boundary leaves no sample point inside the pulse and the
+%% frame's interrupt is suppressed, exactly like real hardware.
+int_asserted(StartT, IntPulse) when StartT < IntPulse -> true;
+int_asserted(_StartT, _IntPulse) -> false.
+execute_frame(#machine_state{} = Machine) ->
     case Machine#machine_state.tape_blocks of
         [] ->
-            execute_frame_cpu_loop(Machine0a, StartT, FrameLen, IntTState, IntPulse);
+            execute_frame_cpu_loop(Machine);
         _ ->
-            execute_frame_machine_loop(Machine0a, StartT, FrameLen, IntTState, IntPulse)
+            execute_frame_machine_loop(Machine)
     end.
 
 %% The TAP-loading path: the LD-BYTES trap needs the machine step/1 between
 %% instructions, so it keeps the original per-instruction loop.
-execute_frame_machine_loop(Machine0a, StartT, FrameLen, IntTState, IntPulse) ->
-    Machine1 = case StartT < IntTState of
+execute_frame_machine_loop(Machine0a) ->
+    Model = Machine0a#machine_state.model,
+    StartT = Machine0a#machine_state.t_states,
+    FrameLen = Model#machine_model.tstates_per_frame,
+    IntPulse = Model#machine_model.int_pulse,
+    Machine2b = case int_asserted(StartT, IntPulse) of
         true ->
-            run_until_tstates(Machine0a, IntTState);
+            Cpu1 = Machine0a#machine_state.cpu,
+            Machine2 = Machine0a#machine_state{cpu = z80_cpu:request_interrupt(Cpu1, int)},
+            %% End of the INT pulse: the int_pulse-th T-state of the frame,
+            %% measured from the nominal frame boundary. The pulse is anchored
+            %% at that boundary (counter 0), so an unacknowledged request is
+            %% dropped at counter IntPulse — never at StartT + IntPulse, which
+            %% would stretch the pulse by the carried tail.
+            Machine2a = run_until_tstates(Machine2, IntPulse),
+            Cpu2a = Machine2a#machine_state.cpu,
+            Cpu2b = z80_cpu:clear_interrupt_request(Cpu2a),
+            Machine2a#machine_state{cpu = Cpu2b};
         false ->
             Machine0a
     end,
 
-    Cpu1 = Machine1#machine_state.cpu,
-    Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
-    Machine2 = Machine1#machine_state{cpu = Cpu2},
-
-    %% End of the INT pulse: an unacknowledged request is dropped.
-    PulseEnd = IntTState + IntPulse,
-    Machine2a = run_until_tstates(Machine2, PulseEnd),
-    Cpu2a = Machine2a#machine_state.cpu,
-    Cpu2b = z80_cpu:clear_interrupt_request(Cpu2a),
-    Machine2b = Machine2a#machine_state{cpu = Cpu2b},
-
-    Phase2End = StartT + FrameLen,
+    %% Physical overrun framing: the tail (StartT) belongs to the next frame's
+    %% span, so the frame closes when the counter reaches FrameLen (the machine
+    %% executes FrameLen - StartT new T-states); events recorded past the
+    %% counter are the next frame's tail, carried over by the device
+    %% frame_render (rebased by -FrameLen).
+    Phase2End = FrameLen,
     Machine3 = run_until_tstates(Machine2b, Phase2End),
 
     Overshoot = Machine3#machine_state.t_states - Phase2End,
@@ -588,25 +620,26 @@ execute_frame_machine_loop(Machine0a, StartT, FrameLen, IntTState, IntPulse) ->
         t_states = Overshoot
     }.
 
-%% The fast path: inject the live device states into the CPU once, run all
-%% three phases as one CPU-internal loop, and read the devices back once.
-execute_frame_cpu_loop(#machine_state{t_states = StartT} = Machine0a,
-                       StartT, FrameLen, IntTState, IntPulse) ->
+%% The fast path: inject the live device states into the CPU once, run the
+%% whole frame as one CPU-internal loop, and read the devices back once.
+execute_frame_cpu_loop(#machine_state{t_states = StartT} = Machine0a) ->
+    Model = Machine0a#machine_state.model,
+    FrameLen = Model#machine_model.tstates_per_frame,
+    IntPulse = Model#machine_model.int_pulse,
     Cpu0 = Machine0a#machine_state.cpu,
     ExtContext0 = make_ext_context(Machine0a),
     Cpu0b = Cpu0#cpu_state{ext_context = ExtContext0, t_states = StartT},
 
-    Cpu1 = case StartT < IntTState of
+    Cpu2c = case int_asserted(StartT, IntPulse) of
         true ->
-            z80_cpu:run_until_tstates(Cpu0b, IntTState);
+            Cpu2 = z80_cpu:request_interrupt(Cpu0b, int),
+            Cpu2b = z80_cpu:run_until_tstates(Cpu2, IntPulse),
+            z80_cpu:clear_interrupt_request(Cpu2b);
         false ->
             Cpu0b
     end,
-    Cpu2 = z80_cpu:request_interrupt(Cpu1, int),
-    Cpu2b = z80_cpu:run_until_tstates(Cpu2, IntTState + IntPulse),
-    Cpu2c = z80_cpu:clear_interrupt_request(Cpu2b),
 
-    Phase2End = StartT + FrameLen,
+    Phase2End = FrameLen,
     Cpu3 = z80_cpu:run_until_tstates(Cpu2c, Phase2End),
 
     Overshoot = Cpu3#cpu_state.t_states - Phase2End,
@@ -715,7 +748,7 @@ samples_per_frame(#machine_model{cpu_clock = CpuClock, tstates_per_frame = Frame
 %% clock. CPU-only overclock: the CPU executes more T-states per real second,
 %% while the video raster, frame rate, interrupt timing and the audio sample
 %% count stay fixed — the raster geometry (tstates_per_frame, tstates_per_line,
-%% int_tstate, int_pulse) scales with the multiplier, so the real frame time
+%% int_pulse) scales with the multiplier, so the real frame time
 %% TStatesPerFrame / CpuClock is unchanged.  base_cpu_clock is preserved, so
 %% the AY keeps running at the base clock regardless of the CPU frequency.
 -spec set_cpu_frequency(#machine_state{}, pos_integer()) -> #machine_state{}.
@@ -733,7 +766,6 @@ scale_model(#machine_model{cpu_clock = Cur, base_cpu_clock = Base} = Model, Mult
         cpu_clock = Base * Mult,
         tstates_per_frame = (Model#machine_model.tstates_per_frame div CurMult) * Mult,
         tstates_per_line = (Model#machine_model.tstates_per_line div CurMult) * Mult,
-        int_tstate = (Model#machine_model.int_tstate div CurMult) * Mult,
         int_pulse = (Model#machine_model.int_pulse div CurMult) * Mult
     }.
 

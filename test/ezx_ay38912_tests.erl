@@ -21,8 +21,8 @@ setup(M, Writes) ->
     setup(M, ay, Writes).
 
 %% Writes happen inside the frame (after frame_start), matching the emulator:
-%% frame_start drops events recorded before it, so a register write only
-%% reaches the render through the frame-event log.
+%% each write lands in the frame-event log with its T-state and is applied at
+%% the correct sample position by the render.
 setup(M, Chip, Writes) ->
     lists:foldl(fun({Reg, Val}, AY) ->
         M:write(M:latch(AY, Reg), Val, 0)

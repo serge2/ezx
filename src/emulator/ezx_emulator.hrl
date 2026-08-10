@@ -24,7 +24,6 @@
     base_cpu_clock :: pos_integer(),     %% nominal CPU clock (AY clock reference), unchanged by overclock
     tstates_per_frame :: pos_integer(),  %% video frame length in T-states
     tstates_per_line :: pos_integer(),   %% horizontal scanline length in T-states
-    int_tstate :: non_neg_integer(),     %% interrupt raised this many T-states into the frame
     int_pulse :: pos_integer(),          %% INT pulse length in T-states (how long the INT line stays low)
     ay_chip = ay :: ay | ym              %% sound chip: AY-3-8912 ('ay') or YM2149 ('ym')
 }).
@@ -32,14 +31,25 @@
 %% Real hardware: 48K = 3.5 MHz, 224 T-states/line × 312 lines = 69888/frame
 %% (50.08 Hz). 128K = 3.5469 MHz, 228 × 311 = 70908/frame (50.02 Hz).
 %% The ULA asserts INT low once per frame as a short pulse: 32 T-states on the
-%% 48K, 36 T on the 128K. If the CPU does not acknowledge within the pulse
-%% (e.g. interrupts disabled), the request is dropped until the next frame.
+%% 48K, 36 T on the 128K, starting just before the frame boundary (the CPU
+%% services it at the first instruction boundaries of the new frame; the ISR
+%% entry floats over the first few T-states, since the frame boundary is
+%% usually mid-instruction). ezx anchors the pulse to the frame start: the
+%% request is asserted at the frame start and dropped after int_pulse
+%% T-states, so the ISR runs early in the frame where its port writes stay
+%% inside the frame's event window (the frame contract drops overrun-zone
+%% events). The real Z80 samples /INT only at instruction ends — a DD/FD
+%% prefix chain is one atomic unit (repeated prefixes inhibit interrupt
+%% handling), so a chain straddling the frame boundary suppresses that frame's
+%% interrupt; ezx models this by asserting the request only when the carried
+%% frame-start tail t_states < int_pulse (see int_asserted/2). If the CPU does
+%% not acknowledge within the pulse (e.g. interrupts disabled), the request is
+%% dropped until the next frame, exactly like the real hardware.
 -define(SPECTRUM_48_MODEL, #machine_model{
     cpu_clock = 3500000,
     base_cpu_clock = 3500000,
     tstates_per_frame = 69888,
     tstates_per_line = 224,
-    int_tstate = 32,
     int_pulse = 32}).
 
 -define(SPECTRUM_128_MODEL, #machine_model{
@@ -47,7 +57,6 @@
     base_cpu_clock = 3546900,
     tstates_per_frame = 70908,
     tstates_per_line = 228,
-    int_tstate = 32,
     int_pulse = 36}).
 
 %% Per-frame timing accumulators collected by run_frame/1 so the UI can report

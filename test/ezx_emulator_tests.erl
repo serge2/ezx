@@ -29,9 +29,7 @@ machine_128_frame_runs_with_screen_device_test() ->
     %% 128K init must create the screen device too.
     Machine0 = init_machine_128(),
     Machine1 = ezx_emulator:run_frame(Machine0),
-    ?assertEqual(screen, element(1, Machine1#machine_state.screen)),
-    Model = Machine1#machine_state.model,
-    ?assert(Machine1#machine_state.t_states < Model#machine_model.int_tstate).
+    ?assertEqual(screen, element(1, Machine1#machine_state.screen)).
 
 machine_loads_byte_lists_into_memory_test() ->
     Machine0 = init_machine(),
@@ -93,7 +91,7 @@ run_frame_int_pulse_dropped_when_disabled_test() ->
     %% interrupts are disabled during the whole pulse, the request is dropped
     %% and does not linger for the rest of the frame.
     Machine0 = init_machine(),
-    %% DI, then NOPs long enough to cover the pulse (t in 32..64).
+    %% DI, then NOPs long enough to cover the pulse (t in 0..32).
     Machine1 = load_program(Machine0, 16#4000, [16#F3 | lists:duplicate(40, 16#00)]),
     Machine1b = set_pc(Machine1, 16#4000),
     Machine2 = ezx_emulator:run_frame(Machine1b),
@@ -113,7 +111,7 @@ run_frame_ei_after_pulse_does_not_fire_test() ->
             16#ED, 16#47,          %% LD I, A
             16#ED, 16#5E,          %% IM 2
             16#F3,                 %% DI
-            lists:duplicate(20, 16#00),  %% cover the pulse (t in 32..64)
+            lists:duplicate(20, 16#00),  %% cover the pulse (t in 0..32)
             16#FB,                 %% EI
             16#18, 16#FE],         %% JR $
     Handler = [16#3A, 16#00, 16#43,  %% LD A, (0x4300)
@@ -142,15 +140,81 @@ run_frame_ei_after_pulse_does_not_fire_test() ->
     {Counter4, _} = ezx_emulator:read_byte(Machine4, 16#4300),
     ?assertEqual(2, Counter4).
 
+run_frame_ei_after_pulse_with_tail_does_not_fire_test() ->
+    %% The pulse is anchored at the nominal frame boundary and ends at the
+    %% int_pulse-th T-state of the frame — NOT at StartT + IntPulse. With a
+    %% carried tail StartT = 20 < IntPulse the frame-start boundary (t=20)
+    %% still falls inside the pulse, so the request IS asserted; but the pulse
+    %% window is [0, 32), so an EI whose boundary lands at counter >= 32 must
+    %% not fire the stale request in this frame. (Regression: the drop point
+    %% used to be StartT + IntPulse = 52, so an EI at counter 40 did fire.)
+    %% IFF1 is left 0 via the machine state, not a DI instruction — execute_di
+    %% cancels a pending request outright, so only this setup exercises the
+    %% drop-at-pulse-end logic.
+    Machine0 = init_machine(),
+    %% NOP, NOP, NOP, NOP (boundaries 24/28/32/36), EI (40), NOP, HALT.
+    Machine1 = load_program(Machine0, 16#4000, [16#00, 16#00, 16#00, 16#00, 16#FB, 16#00, 16#76]),
+    Cpu1 = Machine1#machine_state.cpu,
+    Machine2 = Machine1#machine_state{
+        cpu = Cpu1#cpu_state{pc = 16#4000, iff1 = 0, iff2 = 1, t_states = 20},
+        t_states = 20},
+    Machine3 = ezx_emulator:run_frame(Machine2),
+    {F0, M4} = ezx_emulator:read_byte(Machine3, 16#5C78),
+    {F1, M5} = ezx_emulator:read_byte(M4, 16#5C79),
+    {F2, _} = ezx_emulator:read_byte(M5, 16#5C7A),
+    ?assertEqual(0, F0 + (F1 bsl 8) + (F2 bsl 16)).
+
+run_frame_int_skipped_when_tail_ge_pulse_test() ->
+    %% Real hardware: /INT is sampled only at the end of a complete instruction.
+    %% A DD/FD prefix chain (the only instructions longer than the pulse)
+    %% straddling the frame boundary leaves no sample point inside the
+    %% int_pulse-wide pulse window, so that frame's interrupt is suppressed.
+    %% With variant-A framing the frame starts at the boundary that overshot it
+    %% (the carried tail t_states = StartT), so ezx asserts the request only
+    %% when StartT < IntPulse; a tail >= IntPulse means a long instruction ate
+    %% the whole pulse and the interrupt must not fire.
+    Machine0 = init_machine(),
+    Machine1 = load_program(Machine0, 16#4000, [16#FB, 16#00, 16#76]),  %% EI; NOP; HALT
+    Cpu1 = Machine1#machine_state.cpu,
+    Machine2 = Machine1#machine_state{
+        cpu = Cpu1#cpu_state{pc = 16#4000, iff1 = 1, iff2 = 1, t_states = 40},
+        t_states = 40},
+    Machine3 = ezx_emulator:run_frame(Machine2),
+    Cpu2 = Machine3#machine_state.cpu,
+    ?assertEqual(none, Cpu2#cpu_state.pending_interrupt),
+    ?assertEqual(1, Cpu2#cpu_state.iff1),
+    ?assertEqual(16#4003, z80_cpu:pc(Cpu2)).
+
+run_frame_int_fires_when_tail_lt_pulse_test() ->
+    %% Control: with a tail smaller than the pulse the frame's first boundary
+    %% still falls inside the pulse window, so the interrupt fires as usual.
+    %% The ROM's IM1 handler at 0x38 increments the FRAMES counter at 0x5C78
+    %% exactly once per serviced interrupt.
+    Machine0 = init_machine(),
+    Machine1 = load_program(Machine0, 16#4000, [16#FB, 16#00, 16#76]),  %% EI; NOP; HALT
+    Cpu1 = Machine1#machine_state.cpu,
+    Machine2 = Machine1#machine_state{
+        cpu = Cpu1#cpu_state{pc = 16#4000, iff1 = 1, iff2 = 1, t_states = 0},
+        t_states = 0},
+    Machine3 = ezx_emulator:run_frame(Machine2),
+    Cpu2 = Machine3#machine_state.cpu,
+    ?assertEqual(none, Cpu2#cpu_state.pending_interrupt),
+    {F0, M3a} = ezx_emulator:read_byte(Machine3, 16#5C78),
+    {F1, M3b} = ezx_emulator:read_byte(M3a, 16#5C79),
+    {F2, _} = ezx_emulator:read_byte(M3b, 16#5C7A),
+    ?assertEqual(1, F0 + (F1 bsl 8) + (F2 bsl 16)).
+
 run_frame_screen_changes_recorded_test() ->
     Machine0 = init_machine(),
     Machine1 = load_program(Machine0, #{16#4000 => 16#3E, 16#4001 => 16#04, 16#4002 => 16#D3, 16#4003 => 16#FE}),
     Machine1b = set_pc(Machine1, 16#4000),
     Machine2 = ezx_emulator:run_frame(Machine1b),
     %% OUT (0xFE), A records one change to color 4; the artifacts are stored in
-    %% the machine state by run_frame.
+    %% the machine state by run_frame. screen_color is the base color for the
+    %% frame — the color at the nominal frame boundary (black before the OUT,
+    %% which lands at T-state 14), not the live color that ends the frame.
     ?assertEqual([{14, 4}], Machine2#machine_state.screen_changes),
-    ?assertEqual(4, Machine2#machine_state.screen_color),
+    ?assertEqual(0, Machine2#machine_state.screen_color),
     ?assertEqual(4, ezx_screen:border_get(Machine2#machine_state.screen)).
 
 run_frame_multiple_nops_test() ->
@@ -237,18 +301,24 @@ run_frame_border_stripes_test() ->
     M2 = set_pc(M1, 16#8000),
     M3 = ezx_emulator:run_frame(M2),
 
-    %% run_frame stores the border artifacts (sorted local changes + current
+    %% run_frame stores the border artifacts (sorted local changes + base
     %% color + flash flag) in the machine state.
     Changes = M3#machine_state.screen_changes,
     CB = M3#machine_state.screen_color,
     ?assertEqual(16, length(Changes)),
 
-    %% Border changes are rebased onto local frame time.
+    %% Local frame time IS the counter (0 = nominal frame boundary): the frame
+    %% starts at the carried tail StartT (the boot frame's overshoot), so the
+    %% first border change of the frame lands at StartT + the program's own
+    %% timing. A uniform shift by StartT keeps every change inside the same
+    %% raster line (4032 = 18 lines exactly), so the rendered stripes are
+    %% unaffected.
+    StartT = M2#machine_state.t_states,
     FirstT = 3584 + 7,
     Interval = 4032,
     ExpectedColors = [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7],
     lists:foreach(fun({K, {T, Color}}) ->
-        ?assertEqual(FirstT + K * Interval, T),
+        ?assertEqual(StartT + FirstT + K * Interval, T),
         ?assertEqual(lists:nth(K + 1, ExpectedColors), Color)
     end, lists:zip(lists:seq(0, 15), Changes)),
 
@@ -354,14 +424,14 @@ machine_model_48k_defaults_test() ->
     Machine = init_machine(),
     ?assertEqual(#machine_model{cpu_clock = 3500000, base_cpu_clock = 3500000,
                                 tstates_per_frame = 69888,
-                                tstates_per_line = 224, int_tstate = 32, int_pulse = 32},
+                                tstates_per_line = 224, int_pulse = 32},
                  Machine#machine_state.model).
 
 machine_model_128k_defaults_test() ->
     Machine = init_machine_128(),
     ?assertEqual(#machine_model{cpu_clock = 3546900, base_cpu_clock = 3546900,
                                 tstates_per_frame = 70908,
-                                tstates_per_line = 228, int_tstate = 32, int_pulse = 36},
+                                tstates_per_line = 228, int_pulse = 36},
                  Machine#machine_state.model).
 
 machine_model_frame_lengths_test() ->
@@ -388,7 +458,6 @@ set_cpu_frequency_scales_raster_keeps_frame_rate_test() ->
     Model1 = Machine1#machine_state.model,
     ?assertEqual(139776, Model1#machine_model.tstates_per_frame),
     ?assertEqual(448, Model1#machine_model.tstates_per_line),
-    ?assertEqual(64, Model1#machine_model.int_tstate),
     ?assertEqual(64, Model1#machine_model.int_pulse),
     ?assertEqual(BaseSamples, ezx_emulator:samples_per_frame(Machine1)),
     Machine2 = ezx_emulator:run_frame(Machine1),
@@ -398,7 +467,7 @@ set_cpu_frequency_scales_raster_keeps_frame_rate_test() ->
     Machine3 = ezx_emulator:set_cpu_frequency(Machine1, 3500000),
     ?assertEqual(#machine_model{cpu_clock = 3500000, base_cpu_clock = 3500000,
                                 tstates_per_frame = 69888,
-                                tstates_per_line = 224, int_tstate = 32, int_pulse = 32},
+                                tstates_per_line = 224, int_pulse = 32},
                  Machine3#machine_state.model).
 
 %% --- Helpers ---

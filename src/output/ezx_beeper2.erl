@@ -5,17 +5,25 @@
 %% changes. Sample generation happens once per frame in frame_render/3.
 %% Produces raw duty-cycle-integrated samples.
 %%
-%% Frame contract (shared with the other devices):
+%% Frame contract (shared with the other devices, physical-overrun model):
 %%   frame_start(Beeper, StartTState)   — begin a frame; events recorded
-%%                                        below carry absolute TState stamps
+%%                                        below carry absolute counter stamps
+%%                                        (machine t_states, 0 = nominal frame
+%%                                        boundary)
 %%   set_level(Beeper, Level, TState)   — record a level change
 %%   frame_render(Beeper, FrameLen, Samples) — render exactly FrameLen
 %%                                        T-states into Samples mono S16LE
-%%                                        samples; events in the frame-overrun
-%%                                        zone (local TState >= FrameLen) are
-%%                                        dropped from the audio but their
-%%                                        side effect on the live level is
-%%                                        kept for the next frame
+%%                                        samples; events with counter < FrameLen
+%%                                        belong to this frame (local time =
+%%                                        counter), events with counter >=
+%%                                        FrameLen belong to the NEXT frame and
+%%                                        are carried over — rebased by
+%%                                        -FrameLen into the next frame's
+%%                                        counter domain — never dropped. The
+%%                                        carried tail plus #beeper.init_level
+%%                                        (the level at the nominal boundary)
+%%                                        start the next frame exactly where the
+%%                                        ULA timeline puts them.
 
 -define(AMP_ON, 4096).
 
@@ -39,7 +47,9 @@ init() ->
     #beeper{}.
 
 %% @doc Init with a known level (used after frame_render to carry the
-%% live level across frames; frame_start/2 also snapshots it).
+%% live level across frames, and by snapshot load). frame_start/2 keeps
+%% init_level; frame_render/3 advances it to the level at the nominal
+%% frame boundary.
 -spec init(0 | 1) -> state().
 init(Level) ->
     #beeper{level = Level, init_level = Level}.
@@ -54,33 +64,47 @@ set_level(#beeper{changes = Changes} = B, NewLevel, TState) ->
 -spec level(state()) -> 0 | 1.
 level(#beeper{level = L}) -> L.
 
-%% @doc Mark the start of a new frame. Rebases the event timeline to
-%% StartTState: events recorded later carry absolute TState stamps and
-%% frame_render/3 converts them to local frame time by subtracting it.
+%% @doc Mark the start of a new frame. In the physical-overrun model the
+%% previous frame_render/3 already carried the tail events over (rebased into
+%% this frame's counter domain) and set init_level to the level at the nominal
+%% boundary, so there is nothing to reset: this frame simply keeps recording
+%% level changes with absolute counter stamps. StartTState is recorded for
+%% reference only.
 -spec frame_start(state(), non_neg_integer()) -> state().
-frame_start(#beeper{level = Level} = B, StartTState) ->
-    B#beeper{init_level = Level, frame_offset = StartTState, changes = []}.
+frame_start(#beeper{} = B, StartTState) ->
+    B#beeper{frame_offset = StartTState}.
 
 %% @doc Render one frame of audio: exactly FrameLen T-states (e.g. 69888 for
 %% a 48K frame) into Samples mono S16LE samples.  Samples is derived by the
 %% emulator from the machine model as trunc(FrameLen * SampleRate / CpuClock).
-%% Events in the frame-overrun zone (local time >= FrameLen) are dropped
-%% from the audio; the live level (which already reflects them) is carried
-%% into the next frame.
+%% Events with counter < FrameLen belong to this frame (local time = counter)
+%% and are rendered; events with counter >= FrameLen belong to the next frame
+%% and are carried over in the returned state, rebased by -FrameLen into the
+%% next frame's counter domain.  The returned init_level is the level at the
+%% nominal frame boundary (after the last rendered change), which is the level
+%% at local time 0 of the next frame.  The live level — which already reflects
+%% the tail changes — stays in #beeper.level.
 -spec frame_render(state(), non_neg_integer(), pos_integer()) -> {binary(), state()}.
-frame_render(#beeper{level = Level, init_level = InitLevel, frame_offset = FO, changes = Changes},
+frame_render(#beeper{level = Level, init_level = InitLevel, changes = Changes},
              FrameLen, Samples) ->
     Sorted = lists:reverse(Changes),
-    Local = [{ET - FO, L} || {ET, L} <- Sorted, ET >= FO, ET - FO < FrameLen],
+    Local = [{ET, L} || {ET, L} <- Sorted, ET < FrameLen],
+    Tail = [{ET - FrameLen, L} || {ET, L} <- Sorted, ET >= FrameLen],
     SampleList = gen_integrated(Local, 0, InitLevel, 0, Samples, 0, FrameLen, []),
     PCM = list_to_binary([<<S:16/signed-little>> || S <- SampleList]),
-    {PCM, #beeper{level = Level, init_level = Level}}.
+    {PCM, #beeper{level = Level, init_level = level_after(Local, InitLevel), changes = Tail}}.
 
 -spec silence_frame(pos_integer()) -> binary().
 silence_frame(Samples) ->
     <<0:(Samples * 16)/signed-little>>.
 
 %% --- Internal ---
+
+%% The level at the end of the render window (the nominal frame boundary):
+%% the last rendered change's level, or the initial level when nothing
+%% changed in the window.  This is the level at local time 0 of the next frame.
+level_after([], InitLevel) -> InitLevel;
+level_after(Local, _InitLevel) -> element(2, lists:last(Local)).
 
 %% gen_integrated(ChangesSorted, TPos, Level, SampleIdx, Samples, Integral,
 %%                PeriodLen, Acc) -> Samples

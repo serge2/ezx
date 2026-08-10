@@ -3,20 +3,28 @@
 %% ZX Spectrum ULA screen device: border color changes + attribute flash.
 %% Also renders the frame into a flat RGB bitmap (pure, view-optional).
 %%
-%% Device frame contract (shared with the beeper and AY):
+%% Device frame contract (shared with the beeper and AY, physical-overrun
+%% model):
 %%   frame_start(Screen, StartTState) — begin a frame; events recorded below
-%%                                       carry absolute TState stamps
+%%                                       carry absolute counter stamps
+%%                                       (machine t_states, 0 = nominal frame
+%%                                       boundary)
 %%   border_set(Screen, TState, Color) — record a border color change
 %%   frame_render(Screen, FrameLen)   — produce the sorted local-time border
-%%                                       changes, the current color, and the
-%%                                       flash phase for the screen; advances
-%%                                       the flash phase once per frame
+%%                                       changes, the base color, and the flash
+%%                                       phase for the screen; advances the
+%%                                       flash phase once per frame
 %%
-%% Border changes are stored newest-first with absolute TState stamps.
-%% frame_render/2 rebases them onto local frame time (ET - StartTState) and
-%% drops the frame-overrun zone (local TState >= FrameLen); the live color —
-%% which already reflects those dropped changes — is returned as the base
-%% color for lines before the first change.
+%% Border changes are stored newest-first with absolute counter stamps.
+%% frame_render/2 splits them at the nominal frame length: changes with
+%% counter < FrameLen belong to this frame (local time = counter), changes
+%% with counter >= FrameLen belong to the NEXT frame and are carried over in
+%% the returned state — rebased by -FrameLen into the next frame's counter
+%% domain — never dropped.  The base color returned for this frame is the
+%% color at the nominal boundary (#screen.init_color): the color the screen
+%% had before the first change of the frame, exactly where the ULA timeline
+%% puts it.  The live color — which already reflects the carried tail — is
+%% kept in #screen.border_color.
 %%
 %% The flash phase advances at frame close (32-frame cycle); the FlashOn flag
 %% returned by frame_render/2 matches flash_on/1 of the returned device. The
@@ -34,6 +42,7 @@
 
 -record(screen, {
     border_color = 0    :: 0..7,
+    init_color = 0      :: 0..7,
     frame_offset = 0    :: non_neg_integer(),
     border_changes = [] :: [{non_neg_integer(), 0..7}],
     flash_phase = 0     :: 0..31
@@ -47,10 +56,11 @@
 new() ->
     #screen{}.
 
-%% @doc New screen device with a known border color (snapshot load).
+%% @doc New screen device with a known border color (snapshot load).  The
+%% boundary color (used as the base color for the first frame) is that color.
 -spec new(0..7) -> state().
 new(Color) ->
-    #screen{border_color = Color}.
+    #screen{border_color = Color, init_color = Color}.
 
 %% @doc Record a border color change. No-op when the color is unchanged.
 -spec border_set(state(), non_neg_integer(), 0..7) -> state().
@@ -67,25 +77,41 @@ border_get(#screen{border_color = Color}) -> Color.
 -spec flash_on(state()) -> boolean().
 flash_on(#screen{flash_phase = Phase}) -> Phase div 16 =:= 1.
 
-%% @doc Mark the start of a new frame. Rebases the event timeline to
-%% StartTState: frame_render/2 converts events to local frame time by
-%% subtracting it.
+%% @doc Mark the start of a new frame.  In the physical-overrun model the
+%% previous frame_render/2 already carried the tail border changes over
+%% (rebased into this frame's counter domain) and set init_color to the color
+%% at the nominal boundary, so there is nothing to reset: this frame simply
+%% keeps recording border changes with absolute counter stamps.  StartTState
+%% is recorded for reference only.
 -spec frame_start(state(), non_neg_integer()) -> state().
 frame_start(#screen{} = S, StartTState) ->
-    S#screen{frame_offset = StartTState, border_changes = []}.
+    S#screen{frame_offset = StartTState}.
 
 %% @doc Produce the screen output for one frame (exactly FrameLen T-states):
-%% the sorted local-time border changes (frame-overrun zone dropped), the
-%% current color used as the screen's base color, the flash flag, and the
-%% advanced device state (flash phase carried into the next frame).
+%% the sorted local-time border changes (changes with counter < FrameLen,
+%% local time = counter; the frame-overrun changes with counter >= FrameLen
+%% are carried over in the returned state, rebased by -FrameLen), the base
+%% color for the screen (the color at the nominal frame boundary), the flash
+%% flag, and the advanced device state (flash phase carried into the next
+%% frame; init_color advanced to the color at the end of this frame's render
+%% window = the next frame's boundary color).
 -spec frame_render(state(), non_neg_integer()) ->
     {[{non_neg_integer(), 0..7}], 0..7, boolean(), state()}.
-frame_render(#screen{border_color = Color, frame_offset = FO, border_changes = Changes, flash_phase = Phase}, FrameLen) ->
+frame_render(#screen{border_color = Color, init_color = InitColor, border_changes = Changes,
+                     flash_phase = Phase}, FrameLen) ->
     NewPhase = (Phase + 1) rem ?FLASH_CYCLE,
     Sorted = lists:reverse(Changes),
-    Local = [{ET - FO, C} || {ET, C} <- Sorted, ET >= FO, ET - FO < FrameLen],
-    {Local, Color, NewPhase div 16 =:= 1,
-     #screen{border_color = Color, flash_phase = NewPhase}}.
+    Local = [{ET, C} || {ET, C} <- Sorted, ET < FrameLen],
+    Tail = [{ET - FrameLen, C} || {ET, C} <- Sorted, ET >= FrameLen],
+    {Local, InitColor, NewPhase div 16 =:= 1,
+     #screen{border_color = Color, init_color = color_after(Local, InitColor),
+             border_changes = Tail, flash_phase = NewPhase}}.
+
+%% The color at the end of the render window (the nominal frame boundary):
+%% the last rendered change's color, or the initial color when nothing
+%% changed in the window.  This is the boundary color for the next frame.
+color_after([], InitColor) -> InitColor;
+color_after(Local, _InitColor) -> element(2, lists:last(Local)).
 
 %% ============================================================================
 %% Rendering
