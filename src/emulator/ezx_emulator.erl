@@ -524,12 +524,15 @@ run_frame_execute(Machine) ->
 %% counter IntPulse — never StartT + IntPulse, which would stretch the pulse by
 %% the carried tail. The tail shifts where the frame-start boundary falls, not
 %% the pulse window itself. An unacknowledged request is dropped at the pulse
-%% end, so a mid-frame EI never fires a request from the frame start. The
+%% end. An EI masks only the single instruction that follows it (the ei_block
+%% delay in z80_cpu), so an EI mid-frame never suppresses a request asserted at
+%% the next frame boundary. The
 %% request is always none when a frame starts: it is asserted only inside the
-%% loops below, and it is either acknowledged (maybe_handle_interrupt clears
-%% it) or dropped at the pulse end, so no explicit reset is needed at the
-%% frame boundary — the sequence per frame is assert, then clear, never
-%% clear-then-assert.
+%% loops below, and it is either serviced at the frame-start instruction
+%% boundary (maybe_handle_interrupt, which clears IFF1 so the request cannot be
+%% serviced again) or dropped by clear_interrupt_request/1 at the pulse end, so
+%% no explicit reset is needed at the frame boundary — the sequence per frame
+%% is assert, then clear, never clear-then-assert.
 %% Physical overrun framing: the frame spans the nominal boundary interval
 %% (counter 0..FrameLen), so it closes when the counter reaches FrameLen,
 %% executing FrameLen - StartT new T-states; the overshoot StartT belongs to

@@ -5,7 +5,6 @@
 -export([
     init_state/5,
     step/1,
-    run/2,
     run_until_tstates/2,
     request_interrupt/2,
     clear_interrupt_request/1,
@@ -43,16 +42,9 @@ pc(#cpu_state{pc = Pc}) ->
 t_states(#cpu_state{t_states = TStates}) ->
     TStates.
 
-%% @doc Run a fixed number of CPU steps sequentially.
--spec run(#cpu_state{}, non_neg_integer()) -> #cpu_state{}.
-run(State, 0) ->
-    State;
-run(State, N) ->
-    run(step(State), N - 1).
-
 %% @doc Execute instructions until the accumulated T-state count reaches
 %% Target, then return the final CPU state (with t_states possibly overshooting
-%% Target, exactly like the old per-instruction machine loop). The loop stays
+%% Target, exactly like the per-instruction machine loop). The loop stays
 %% inside the CPU so the emulator does not rebuild the machine/ext_context
 %% records on every instruction.
 -spec run_until_tstates(#cpu_state{}, non_neg_integer()) -> #cpu_state{}.
@@ -62,13 +54,17 @@ run_until_tstates(#cpu_state{t_states = TStates} = State, Target)
 run_until_tstates(State, Target) ->
     run_until_tstates(step(State), Target).
 
-%% @doc Queue an interrupt request for the next CPU step.
+%% @doc Assert the external interrupt signal (int | nmi). The signal is owned
+%% by the emulator: the CPU only samples pending_interrupt in
+%% maybe_handle_interrupt and never modifies it. Deassertion is the
+%% emulator's clear_interrupt_request/1 (typically when the INT pulse ends).
 -spec request_interrupt(#cpu_state{}, int | nmi) -> #cpu_state{}.
 request_interrupt(#cpu_state{} = State, Type) ->
     State#cpu_state{pending_interrupt = Type}.
 
-%% @doc Clear a queued interrupt request (e.g. at the start of a frame so a
-%% request from the previous frame is not carried over).
+%% @doc Deassert a queued interrupt request (e.g. at the end of the INT pulse
+%% window so a request that was not serviced does not linger for the rest of
+%% the frame).
 -spec clear_interrupt_request(#cpu_state{}) -> #cpu_state{}.
 clear_interrupt_request(#cpu_state{} = State) ->
     State#cpu_state{pending_interrupt = none}.
@@ -87,17 +83,22 @@ step(#cpu_state{} = State) ->
             end
     end.
 
-%% @doc Logic to handle pending interrupts.
+%% @doc Sample the external interrupt request at an instruction boundary (the
+%% start of every step). An EI enables interrupts one instruction later, so the
+%% step immediately after EI still runs masked: ei_block counts down on every
+%% step whether or not a request is pending, hence the delay expires after
+%% exactly one instruction and an EI mid-frame cannot suppress a request that
+%% is asserted at a later frame boundary.
+maybe_handle_interrupt(State = #cpu_state{ei_block = EiBlock})
+  when EiBlock > 0 ->
+    {not_handled, State#cpu_state{ei_block = EiBlock - 1}};
+
 maybe_handle_interrupt(State = #cpu_state{pending_interrupt = none}) ->
     {not_handled, State};
 
 maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, iff1 = Iff1})
   when Iff1 =:= 0 ->
     {not_handled, State};
-
-maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, ei_block = EiBlock})
-  when EiBlock > 0 ->
-    {not_handled, State#cpu_state{ei_block = EiBlock - 1}}; 
 
 maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, im = Mode,
                                           bus_read_fun = BusReadFun}) ->
@@ -107,8 +108,7 @@ maybe_handle_interrupt(State = #cpu_state{pending_interrupt = int, im = Mode,
         iff2 = 0,
         halted = false,
         prefix = none,
-        displacement = undefined,
-        pending_interrupt = none
+        displacement = undefined
     },
     case Mode of
         0 ->
@@ -148,8 +148,7 @@ maybe_handle_interrupt(State = #cpu_state{pending_interrupt = nmi}) ->
         halted = false,
         prefix = none,
         displacement = undefined,
-        t_states = State1#cpu_state.t_states + 11,
-        pending_interrupt = none
+        t_states = State1#cpu_state.t_states + 11
     },
     {handled, State2}.
 
@@ -703,8 +702,11 @@ execute_exx(State) ->
     z80_cpu_helpers:advance_tstates(State1, 0).
 
 execute_di(State) ->
-    State#cpu_state{iff1 = 0, iff2 = 0, pending_interrupt = none}.
+    State#cpu_state{iff1 = 0, iff2 = 0}.
 
+%% EI: interrupts are enabled, but the instruction following EI still executes
+%% with interrupts masked (the one-instruction EI delay); ei_block is counted
+%% down on the next step (see maybe_handle_interrupt/1).
 execute_ei(State) ->
     State#cpu_state{iff1 = 1, iff2 = 1, ei_block = 1}.
 

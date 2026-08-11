@@ -148,8 +148,9 @@ run_frame_ei_after_pulse_with_tail_does_not_fire_test() ->
     %% window is [0, 32), so an EI whose boundary lands at counter >= 32 must
     %% not fire the stale request in this frame. (Regression: the drop point
     %% used to be StartT + IntPulse = 52, so an EI at counter 40 did fire.)
-    %% IFF1 is left 0 via the machine state, not a DI instruction — execute_di
-    %% cancels a pending request outright, so only this setup exercises the
+    %% IFF1 is left 0 via the machine state, not a DI instruction — the
+    %% request is set directly by the emulator at the frame boundary and
+    %% dropped at pulse end, so only this setup exercises the
     %% drop-at-pulse-end logic.
     Machine0 = init_machine(),
     %% NOP, NOP, NOP, NOP (boundaries 24/28/32/36), EI (40), NOP, HALT.
@@ -202,6 +203,37 @@ run_frame_int_fires_when_tail_lt_pulse_test() ->
     {F0, M3a} = ezx_emulator:read_byte(Machine3, 16#5C78),
     {F1, M3b} = ezx_emulator:read_byte(M3a, 16#5C79),
     {F2, _} = ezx_emulator:read_byte(M3b, 16#5C7A),
+    ?assertEqual(1, F0 + (F1 bsl 8) + (F2 bsl 16)).
+
+run_frame_ei_mid_frame_masks_only_next_instruction_test() ->
+    %% Real Z80: EI re-enables interrupts one instruction later, so an EI
+    %% executed mid-frame (no request pending) must not suppress the request
+    %% asserted at the next frame boundary. The frame closes mid-LDIR-loop with
+    %% a carried tail of 15 T-states (the crossing LDIR iteration overshoots to
+    %% counter 69903), so the frame-start boundary falls inside the pulse
+    %% (15 < 32) and the request is serviced at that boundary, before the first
+    %% instruction of the frame. If the EI delay lingered until a request was
+    %% pending, the sample would be pushed to the first instruction of the
+    %% frame (15 + 21 = 36 >= 32), the request would be dropped at the pulse
+    %% end and the frame's interrupt would be lost (the Beach Head II flicker).
+    Machine0 = init_machine(),
+    %% NOP*7 (cover the pulse with IFF1=0), EI, NOP (the one EI-delayed
+    %% instruction), then a long LDIR loop the frame boundary falls into.
+    Program = lists:duplicate(7, 16#00) ++ [16#FB, 16#00, 16#ED, 16#B0],
+    Machine1 = load_program(Machine0, 16#4000, Program),
+    Cpu0 = Machine1#machine_state.cpu,
+    Machine2 = Machine1#machine_state{
+        cpu = Cpu0#cpu_state{pc = 16#4000, iff1 = 0, iff2 = 0, im = 1,
+                             b = 16#80, c = 16#00,
+                             d = 16#50, e = 16#00,
+                             h = 16#60, l = 16#00},
+        t_states = 0},
+    Machine3 = ezx_emulator:run_frame(Machine2),
+    ?assertEqual(15, Machine3#machine_state.t_states),
+    Machine4 = ezx_emulator:run_frame(Machine3),
+    {F0, M5} = ezx_emulator:read_byte(Machine4, 16#5C78),
+    {F1, M6} = ezx_emulator:read_byte(M5, 16#5C79),
+    {F2, _} = ezx_emulator:read_byte(M6, 16#5C7A),
     ?assertEqual(1, F0 + (F1 bsl 8) + (F2 bsl 16)).
 
 run_frame_screen_changes_recorded_test() ->
