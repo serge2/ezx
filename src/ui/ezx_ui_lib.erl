@@ -53,6 +53,18 @@ init_virtual_machine('128k', Chip) ->
         _ ->
             {error, {rom_bad_size, <<"128K ROMs must be exactly 16384 bytes each">>}}
     end;
+init_virtual_machine('pentagon_128', Chip) ->
+    case catch read_roms("128-0.rom", "128-1.rom") of
+        {Rom0, Rom1} when byte_size(Rom0) =:= 16384, byte_size(Rom1) =:= 16384 ->
+            BaseModel = ?PENTAGON_128_MODEL,
+            Model = BaseModel#machine_model{ay_chip = ay_chip_value(Chip)},
+            M = ezx_emulator_128:init(Model, z80_cpu, ezx_memory_128_banks_tuples, ezx_keyboard, ezx_beeper2, ay_module(Chip), {Rom0, Rom1}),
+            {ok, ezx_emulator:set_render_screen(M, true)};
+        {'EXIT', _} ->
+            {error, {rom_not_found, <<"128K ROMs not found (128-0.rom, 128-1.rom)">>}};
+        _ ->
+            {error, {rom_bad_size, <<"128K ROMs must be exactly 16384 bytes each">>}}
+    end;
 init_virtual_machine('48k', Chip) ->
     case catch read_rom("48.rom") of
         Rom when byte_size(Rom) =:= 16384 ->
@@ -148,4 +160,5 @@ load_data(Mod, Machine0, Ext, Data) ->
 %% actual machine creation).
 -spec emulator_module(atom()) -> module().
 emulator_module('128k') -> ezx_emulator_128;
+emulator_module('pentagon_128') -> ezx_emulator_128;
 emulator_module(_)      -> ezx_emulator.

@@ -121,7 +121,7 @@ to_z80_header(#machine_state{cpu = Cpu, screen = Screen} = Machine) ->
                 mem = Mem,
                 pages = #{8 => Page8, 4 => Page4, 5 => Page5}
             };
-        '128k' ->
+        T when T =:= '128k'; T =:= 'pentagon_128' ->
             P7 = MemModule:get_p7ffd(Mem0) band 16#FF,
             Banks = [{B, MemModule:read_bank_block(Mem0, B)} || B <- lists:seq(0, 7)],
             HwMode = case Machine#machine_state.ay_module of
@@ -136,11 +136,15 @@ to_z80_header(#machine_state{cpu = Cpu, screen = Screen} = Machine) ->
             }
     end.
 
-%% @doc '48k' for a linear-memory machine, '128k' for a paged one (detected by
-%% the memory backend's read_bank_block/2 export).
--spec machine_type(#machine_state{}) -> '48k' | '128k'.
-machine_type(#machine_state{memory_module = MemModule}) ->
+%% @doc '48k' for a linear-memory machine, '128k' for a paged one with the
+%% 128K raster (detected by the memory backend's read_bank_block/2 export),
+%% 'pentagon_128' for a paged machine carrying the Pentagon 128 raster
+%% (224 × 320 = 71680 T-states per frame, the only model that differs from
+%% the base 128K timing).
+-spec machine_type(#machine_state{}) -> '48k' | '128k' | 'pentagon_128'.
+machine_type(#machine_state{model = Model, memory_module = MemModule}) ->
     case erlang:function_exported(MemModule, read_bank_block, 2) of
+        true when Model#machine_model.tstates_per_frame =:= 71680 -> 'pentagon_128';
         true -> '128k';
         false -> '48k'
     end.
@@ -248,6 +252,7 @@ save_machine_type(undefined, Path) ->
 save_machine_type(Meta, _Path) ->
     case maps:get("machine_type", Meta, undefined) of
         "128k" -> '128k';
+        "pentagon_128" -> 'pentagon_128';
         _ -> '48k'
     end.
 

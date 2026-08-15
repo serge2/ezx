@@ -205,6 +205,32 @@ run_frame_int_fires_when_tail_lt_pulse_test() ->
     {F2, _} = ezx_emulator:read_byte(M3b, 16#5C7A),
     ?assertEqual(1, F0 + (F1 bsl 8) + (F2 bsl 16)).
 
+run_frame_int_fires_with_pentagon_tail_in_pulse_window_test() ->
+    %% Regression: the fast path (execute_frame_cpu_loop) used to end the INT
+    %% pulse at a hardcoded 32 T-states instead of the model's int_pulse. The
+    %% 48K model has int_pulse = 32, so the bug was invisible there; on 128K/
+    %% Pentagon (int_pulse = 36) a carried tail in [32, 36) asserted the
+    %% request but then dropped it unserviced — run_until_tstates from t >= 32
+    %% ran zero instructions before clear_interrupt_request — so the frame's
+    %% interrupt was silently lost. That is why halving the Pentagon pulse
+    %% appeared to "fix" the Action demo: it shrank the asserted window below
+    %% 32, hiding the bug. Fuse's model (tstates < interrupt_length at the
+    %% frame-boundary sample point, libspectrum interrupt_length = 36 for the
+    %% Pentagon) services this interrupt, so the tail must fire it.
+    Machine0 = init_machine_pentagon(),
+    Machine1 = load_program(Machine0, 16#4000, [16#FB, 16#00, 16#76]),  %% EI; NOP; HALT
+    Cpu1 = Machine1#machine_state.cpu,
+    Machine2 = Machine1#machine_state{
+        cpu = Cpu1#cpu_state{pc = 16#4000, iff1 = 1, iff2 = 1, t_states = 34},
+        t_states = 34},
+    Machine3 = ezx_emulator:run_frame(Machine2),
+    Cpu2 = Machine3#machine_state.cpu,
+    ?assertEqual(none, Cpu2#cpu_state.pending_interrupt),
+    {F0, M3a} = ezx_emulator:read_byte(Machine3, 16#5C78),
+    {F1, M3b} = ezx_emulator:read_byte(M3a, 16#5C79),
+    {F2, _} = ezx_emulator:read_byte(M3b, 16#5C7A),
+    ?assertEqual(1, F0 + (F1 bsl 8) + (F2 bsl 16)).
+
 run_frame_ei_mid_frame_masks_only_next_instruction_test() ->
     %% Real Z80: EI re-enables interrupts one instruction later, so an EI
     %% executed mid-frame (no request pending) must not suppress the request
@@ -364,12 +390,21 @@ run_frame_border_stripes_test() ->
         {0, 215, 0}, {0, 215, 215}, {215, 215, 0}, {215, 215, 215}
     },
 
+    %% Each stripe's border change sits 7 T into its line (StartT = 0 here,
+    %% verified above via the uniform shift): pixel 14 in the left border
+    %% column. The renderer colors pixels before the change with the previous
+    %% color (the color carried into the line), pixels from the change onward
+    %% with the stripe's own color.
+    BorderChangePx = (7 + StartT) * 2,
     lists:foreach(fun(K) ->
         VisY = K * 18,
-        PX = 5,  %% X=5 -> pixel at column 5 in the row
-        Off = (VisY * 352 + PX) * 3,
-        <<_:Off/binary, R:8, G:8, B:8, _/binary>> = RGB,
         ExpectedColor = lists:nth(K + 1, ExpectedColors),
+        PrevColor = case K of 0 -> CB; _ -> lists:nth(K, ExpectedColors) end,
+        OffPrev = (VisY * 352 + (BorderChangePx - 1)) * 3,
+        <<_:OffPrev/binary, RP:8, GP:8, BP:8, _/binary>> = RGB,
+        ?assertEqual(element(PrevColor + 1, Palette), {RP, GP, BP}),
+        Off = (VisY * 352 + BorderChangePx) * 3,
+        <<_:Off/binary, R:8, G:8, B:8, _/binary>> = RGB,
         ?assertEqual(element(ExpectedColor + 1, Palette), {R, G, B})
     end, lists:seq(0, 15)).
 
@@ -456,25 +491,48 @@ machine_model_48k_defaults_test() ->
     Machine = init_machine(),
     ?assertEqual(#machine_model{cpu_clock = 3500000, base_cpu_clock = 3500000,
                                 tstates_per_frame = 69888,
-                                tstates_per_line = 224, int_pulse = 32},
+                                tstates_per_line = 224, int_pulse = 32,
+                                line_geometry = ?LINE_GEOMETRY_48K,
+                                frame_geometry = ?FRAME_GEOMETRY_48K},
                  Machine#machine_state.model).
 
 machine_model_128k_defaults_test() ->
     Machine = init_machine_128(),
     ?assertEqual(#machine_model{cpu_clock = 3546900, base_cpu_clock = 3546900,
                                 tstates_per_frame = 70908,
-                                tstates_per_line = 228, int_pulse = 36},
+                                tstates_per_line = 228, int_pulse = 36,
+                                line_geometry = ?LINE_GEOMETRY_48K,
+                                frame_geometry = ?FRAME_GEOMETRY_48K},
+                 Machine#machine_state.model).
+
+machine_model_pentagon_defaults_test() ->
+    %% Pentagon 128: 3.584 MHz, 224 T-states/line x 320 lines = 71680/frame
+    %% (exactly 50.00 Hz, unlike the 48K/128K rasters), INT pulse 36 T like the
+    %% 128K (libspectrum timings, as used by Fuse). The line is 32 T retrace +
+    %% 36 T left border + 128 T screen + 28 T right border, so the render
+    %% window covers the full 384 px visible line ({32, 224, 68, 196}) and the
+    %% frame its 304 visible lines ({16, 80, 304}).
+    Machine = init_machine_pentagon(),
+    ?assertEqual(#machine_model{cpu_clock = 3584000, base_cpu_clock = 3584000,
+                                tstates_per_frame = 71680,
+                                tstates_per_line = 224, int_pulse = 36,
+                                line_geometry = ?LINE_GEOMETRY_PENTAGON,
+                                frame_geometry = ?FRAME_GEOMETRY_PENTAGON},
                  Machine#machine_state.model).
 
 machine_model_frame_lengths_test() ->
     %% The 48K raster is 69888 T-states, the 128K raster 70908; the real frame
-    %% time is FrameLen / CpuClock (50.08 Hz vs 50.02 Hz).
+    %% time is FrameLen / CpuClock (50.08 Hz vs 50.02 Hz). The Pentagon raster
+    %% is 71680 T-states at 3.584 MHz — exactly 50.00 Hz.
     M48 = init_machine(),
     M128 = init_machine_128(),
+    MPent = init_machine_pentagon(),
     ?assertEqual(69888, (M48#machine_state.model)#machine_model.tstates_per_frame),
     ?assertEqual(70908, (M128#machine_state.model)#machine_model.tstates_per_frame),
+    ?assertEqual(71680, (MPent#machine_state.model)#machine_model.tstates_per_frame),
     ?assertEqual(880, ezx_emulator:samples_per_frame(M48)),
-    ?assertEqual(881, ezx_emulator:samples_per_frame(M128)).
+    ?assertEqual(881, ezx_emulator:samples_per_frame(M128)),
+    ?assertEqual(882, ezx_emulator:samples_per_frame(MPent)).
 
 set_cpu_frequency_scales_raster_keeps_frame_rate_test() ->
     Machine = init_machine(),
@@ -491,6 +549,7 @@ set_cpu_frequency_scales_raster_keeps_frame_rate_test() ->
     ?assertEqual(139776, Model1#machine_model.tstates_per_frame),
     ?assertEqual(448, Model1#machine_model.tstates_per_line),
     ?assertEqual(64, Model1#machine_model.int_pulse),
+    ?assertEqual({0, 352, 48, 304}, Model1#machine_model.line_geometry),
     ?assertEqual(BaseSamples, ezx_emulator:samples_per_frame(Machine1)),
     Machine2 = ezx_emulator:run_frame(Machine1),
     ?assertEqual(BaseSamples * 2, byte_size(Machine2#machine_state.beeper_pcm)),
@@ -499,8 +558,33 @@ set_cpu_frequency_scales_raster_keeps_frame_rate_test() ->
     Machine3 = ezx_emulator:set_cpu_frequency(Machine1, 3500000),
     ?assertEqual(#machine_model{cpu_clock = 3500000, base_cpu_clock = 3500000,
                                 tstates_per_frame = 69888,
-                                tstates_per_line = 224, int_pulse = 32},
+                                tstates_per_line = 224, int_pulse = 32,
+                                line_geometry = ?LINE_GEOMETRY_48K,
+                                frame_geometry = ?FRAME_GEOMETRY_48K},
                  Machine3#machine_state.model).
+
+%% CPU overclock is timing-only: the video raster stays base. A border change
+%% at scaled stamp 100 on an x2 machine folds back to base stamp 50 and must
+%% render byte-identically to an x1 machine carrying the change at stamp 50.
+overclocked_render_folds_border_stamps_to_base_domain_test() ->
+    Machine = init_machine(),
+    VB = ezx_memory_48_pages512_tuples:read_video_block(Machine#machine_state.memory),
+    CB = Machine#machine_state.screen_color,
+    RGB1 = ezx_screen:render_screen(VB, false, [{50, 2}], CB, ?TSTATES_PER_LINE),
+    MachineX2 = ezx_emulator:set_cpu_frequency(Machine, 7000000),
+    RGB2 = ezx_emulator:render_frame(
+             MachineX2#machine_state{screen_changes = [{100, 2}]}),
+    ?assertEqual(RGB1, RGB2).
+
+%% The rendered bitmap is base-sized at any CPU multiplier: the UI assumes the
+%% model's base geometry, so a scaled frame would scramble the display.
+overclocked_frame_renders_base_size_test() ->
+    Machine = init_machine(),
+    M1 = ezx_emulator:run_frame(ezx_emulator:set_render_screen(Machine, true)),
+    M2 = ezx_emulator:run_frame(ezx_emulator:set_render_screen(
+            ezx_emulator:set_cpu_frequency(Machine, 7000000), true)),
+    ?assertEqual(352 * 288 * 3, byte_size(M1#machine_state.screen_pixels)),
+    ?assertEqual(352 * 288 * 3, byte_size(M2#machine_state.screen_pixels)).
 
 %% --- Helpers ---
 
@@ -521,6 +605,15 @@ init_machine_128() ->
     end,
     {ok, Rom} = file:read_file(RomPath),
     ezx_emulator_128:init(?SPECTRUM_128_MODEL, z80_cpu, ezx_memory_128_banks_tuples, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom, Rom}).
+
+init_machine_pentagon() ->
+    RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
+    catch error:badarg ->
+        BeamDir = filename:dirname(code:which(?MODULE)),
+        filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
+    end,
+    {ok, Rom} = file:read_file(RomPath),
+    ezx_emulator_128:init(?PENTAGON_128_MODEL, z80_cpu, ezx_memory_128_banks_tuples, ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom, Rom}).
 
 %% --- AY chip selection plumbing ---
 

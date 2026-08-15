@@ -10,12 +10,9 @@
 -export([start/0, start_link/0, stop/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--define(DEFAULT_WIDTH, 352).
--define(DEFAULT_HEIGHT, 288).
 -define(SCREEN_WIDTH, 256).                          %% ZX Spectrum playfield, px
 -define(SCREEN_HEIGHT, 192).                         %% ZX Spectrum playfield, px
 -define(BORDER_FRAME, 8).                            %% border frame kept after crop, px per side
--define(BORDER_TRIM, (((?DEFAULT_WIDTH - ?SCREEN_WIDTH) div 2) - ?BORDER_FRAME)).
 -define(CROP_WIDTH, (?SCREEN_WIDTH + 2 * ?BORDER_FRAME)).
 -define(CROP_HEIGHT, (?SCREEN_HEIGHT + 2 * ?BORDER_FRAME)).
 -define(DEFAULT_SCALE, 2).
@@ -36,14 +33,15 @@
 -define(BEEPER_LPF_ALPHA, 0.090).  %% ~700 Hz low-pass (speaker/RC-circuit inertia)
 -define(BEEPER_HPF_ALPHA, 0.9887). %% ~80 Hz high-pass (DC / overshoot blocking)
 %% Process heap floor for the UI process (which runs the machine and renders
-%% the 352×288 frame in place). Per-frame garbage (screen bitmap, audio PCM)
+%% the frame in place, up to 384×304 for the Pentagon). Per-frame garbage
+%% (screen bitmap, audio PCM)
 %% would otherwise push the process over its heap threshold and land a full GC
 %% inside the ~20 ms frame budget, showing up as spikes in the render phase.
 -define(MIN_HEAP_WORDS, 250000).
 
 -record(state, {
     machine   :: #machine_state{} | undefined,
-    machine_type = '48k' :: '48k' | '128k',
+    machine_type = '48k' :: '48k' | '128k' | 'pentagon_128',
     current_file = undefined :: string() | undefined,
     frame     :: wxFrame:wxFrame(),
     panel     :: wxPanel:wxPanel(),
@@ -107,7 +105,8 @@ init(_Options) ->
     Cfg0 = ezx_config:load(),
     CropBorder0 = maps:get(crop_border, Cfg0, true),
     InitScale0 = maps:get(scale, Cfg0, ?DEFAULT_SCALE),
-    {InitW, InitH} = windowed_client_size(CropBorder0, InitScale0),
+    MachineType = maps:get(machine_type, Cfg0, '128k'),
+    {InitW, InitH} = windowed_client_size(MachineType, CropBorder0, InitScale0),
     Frame = wxFrame:new(wx:null(), -1, "ezx - ZX Spectrum emulator",
                         [{size, {InitW, InitH}},
                          {style, ?wxDEFAULT_FRAME_STYLE band (bnot ?wxRESIZE_BORDER)}]),
@@ -116,11 +115,11 @@ init(_Options) ->
     RecentFiles0 = ezx_recent_files:load(),
     FileMenu0 = ezx_recent_files:build_menu(RecentFiles0),
     wxMenuBar:append(MenuBar, FileMenu0, "File"),
-    MachineType = maps:get(machine_type, Cfg0, '128k'),
-    EmulatorMenu = wxMenu:new(),
-    wxMenu:appendRadioItem(EmulatorMenu, ?MENU_MACHINE_BASE + 0, "ZX Spectrum 48K"),
-    wxMenu:appendRadioItem(EmulatorMenu, ?MENU_MACHINE_BASE + 1, "ZX Spectrum 128K"),
-    wxMenuBar:append(MenuBar, EmulatorMenu, "Emulator"),
+    ModelMenu = wxMenu:new(),
+    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_BASE + 0, "ZX Spectrum 48K"),
+    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_BASE + 1, "ZX Spectrum 128K"),
+    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_BASE + 2, "Pentagon 128"),
+    wxMenuBar:append(MenuBar, ModelMenu, "Model"),
     ViewMenu = wxMenu:new(),
     wxMenu:append(ViewMenu, ?MENU_FULLSCREEN, "Fullscreen\tF11", [{help, "Toggle fullscreen mode"}]),
     wxMenu:appendSeparator(ViewMenu),
@@ -165,7 +164,7 @@ init(_Options) ->
     KempstonMouse = maps:get(kempston_mouse, Cfg0, false),
     MouseSwap = maps:get(mouse_swap_buttons, Cfg0, false),
     Mouse = ezx_ui_mouse:new(KempstonMouse, MouseSwap),
-    wxMenu:check(EmulatorMenu, ?MENU_MACHINE_BASE + machine_type_offset(MachineType), true),
+    wxMenu:check(ModelMenu, ?MENU_MACHINE_BASE + machine_type_offset(MachineType), true),
     wxMenu:check(ViewMenu, ?MENU_CROP, CropBorder),
     wxMenu:check(ViewMenu, ?MENU_CROP_EXACT, IntScaling),
     wxMenu:check(ViewMenu, ?MENU_SCALE_BASE + (InitScale0 - 1), true),
@@ -190,7 +189,7 @@ init(_Options) ->
     BlankCursor = wxCursor:new(?wxCURSOR_BLANK),
     wxFrame:connect(Frame, close_window),
     wxFrame:show(Frame),
-    {DefW, DefH} = windowed_client_size(CropBorder, InitScale0),
+    {DefW, DefH} = windowed_client_size(MachineType, CropBorder, InitScale0),
     wxWindow:setClientSize(Frame, DefW, DefH),
     wxWindow:setFocus(Panel),
 
@@ -682,7 +681,7 @@ handle_info(#wx{id = ?MENU_CROP, event = #wxCommand{type = command_menu_selected
         false ->
             Frame = NewState#state.frame,
             S = NewState#state.scale,
-            {W, H} = windowed_client_size(NewCrop, S),
+            {W, H} = windowed_client_size(NewState#state.machine_type, NewCrop, S),
             wxWindow:setClientSize(Frame, W, H),
             {noreply, NewState}
     end;
@@ -705,7 +704,8 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
         true  -> reenter_crop_fullscreen(NewState);
         false ->
             Frame = NewState#state.frame,
-            {W, H} = windowed_client_size(NewState#state.option_crop_border, NewScale),
+            {W, H} = windowed_client_size(NewState#state.machine_type,
+                                          NewState#state.option_crop_border, NewScale),
             wxWindow:setClientSize(Frame, W, H),
             {noreply, NewState}
     end;
@@ -793,7 +793,7 @@ handle_info(#wx{id = ?BTN_RENAME, event = #wxCommand{type = command_button_click
     end;
 
 handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
-            #state{machine_type = OldType} = State) when Id >= ?MENU_MACHINE_BASE, Id < ?MENU_MACHINE_BASE + 2 ->
+            #state{machine_type = OldType} = State) when Id >= ?MENU_MACHINE_BASE, Id < ?MENU_MACHINE_BASE + 3 ->
     NewType = machine_type_from_offset(Id - ?MENU_MACHINE_BASE),
     case NewType =/= OldType of
         true ->
@@ -817,12 +817,13 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                         mix_dc_l = new_mix_dc_filter(),
                         mix_dc_r = new_mix_dc_filter()
                     },
-                    save_config(NewState),
-                    {noreply, NewState};
+                    NewState1 = maybe_resize_for_machine(NewState),
+                    save_config(NewState1),
+                    {noreply, NewState1};
                 {error, {_Code, Detail}} ->
-                    EmulatorMenu = wxMenuBar:getMenu(State#state.menu_bar, 1),
-                    wxMenu:check(EmulatorMenu, Id, false),
-                    wxMenu:check(EmulatorMenu, ?MENU_MACHINE_BASE + machine_type_offset(OldType), true),
+                    ModelMenu = wxMenuBar:getMenu(State#state.menu_bar, 1),
+                    wxMenu:check(ModelMenu, Id, false),
+                    wxMenu:check(ModelMenu, ?MENU_MACHINE_BASE + machine_type_offset(OldType), true),
                     Dialog = wxMessageDialog:new(State#state.frame, binary_to_list(Detail),
                                                  [{caption, "ezx - cannot switch machine type"},
                                                   {style, ?wxOK bor ?wxICON_ERROR}]),
@@ -1163,8 +1164,9 @@ load_save(State, SavePath, MetaPath) ->
                 mix_dc_l = new_mix_dc_filter(),
                 mix_dc_r = new_mix_dc_filter()
             },
-            check_machine_type_menu(NewState),
-            {noreply, set_toast(NewState, load)};
+            NewState1 = maybe_resize_for_machine(NewState),
+            check_machine_type_menu(NewState1),
+            {noreply, set_toast(NewState1, load)};
         {error, _Code} = Err ->
             show_load_error(State#state.frame, SavePath, Err),
             {noreply, State}
@@ -1186,23 +1188,19 @@ meta_atom(Meta, Key, Default) ->
             end
     end.
 
-%% @doc Sync the Emulator menu radio with the machine type after a save
+%% @doc Sync the Model menu radio with the machine type after a save
 %% restored a different machine.
 check_machine_type_menu(#state{menu_bar = MenuBar, machine_type = MType}) ->
-    EmulatorMenu = wxMenuBar:getMenu(MenuBar, 1),
-    wxMenu:check(EmulatorMenu, ?MENU_MACHINE_BASE + machine_type_offset(MType), true),
+    ModelMenu = wxMenuBar:getMenu(MenuBar, 1),
+    wxMenu:check(ModelMenu, ?MENU_MACHINE_BASE + machine_type_offset(MType), true),
     ok.
 
 reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = State) ->
     wxFrame:showFullScreen(Frame, false),
     wxFrame:showFullScreen(Frame, true),
-    {NewScale, OffX, OffY} = calc_scale_offset(true, SW, SH),
+    {NewScale, OffX, OffY} = calc_scale_offset(State#state.machine_type, true, SW, SH),
     ExactScale = case State#state.option_integer_scaling of
-        true  ->
-            case SW / ?DEFAULT_WIDTH >= SH / ?DEFAULT_HEIGHT of
-                true  -> SH / ?CROP_HEIGHT;
-                false -> SW / ?CROP_WIDTH
-            end;
+        true  -> crop_exact_scale(State#state.machine_type, SW, SH);
         false -> 1.0
     end,
     {noreply, State#state{scale = NewScale, crop_off = {OffX, OffY},
@@ -1215,13 +1213,9 @@ toggle_fullscreen(#state{frame = Frame, fullscreen = false, scale = WindowedScal
     Display = wxDisplay:new(),
     {_, _, SW, SH} = wxDisplay:getGeometry(Display),
     wxDisplay:destroy(Display),
-    {NewScale, OffX, OffY} = calc_scale_offset(Crop, SW, SH),
+    {NewScale, OffX, OffY} = calc_scale_offset(State#state.machine_type, Crop, SW, SH),
     ExactScale = case Crop andalso State#state.option_integer_scaling of
-        true  ->
-            case SW / ?DEFAULT_WIDTH >= SH / ?DEFAULT_HEIGHT of
-                true  -> SH / ?CROP_HEIGHT;          %% wide screen: CROP_HEIGHT visible rows (8px border T+B)
-                false -> SW / ?CROP_WIDTH            %% tall screen: CROP_WIDTH visible cols (8px border L+R)
-            end;
+        true  -> crop_exact_scale(State#state.machine_type, SW, SH);
         false -> 1.0
     end,
     {noreply, State#state{fullscreen = true,
@@ -1240,32 +1234,99 @@ toggle_fullscreen(#state{frame = Frame, fullscreen = true, windowed_scale = Wind
                           fullscreen_size = undefined,
                           windowed_size = undefined}}.
 
-%% {Scale, OffX, OffY} for emulated coordinates (352×288).
-%% OffX/OffY in emulated pixels: visible window origin within the emulated frame.
-%% Multiply by Scale to get screen-pixel shift of the device origin.
-machine_type_offset('48k')  -> 0;
-machine_type_offset('128k') -> 1.
+%% --- Display geometry ---
+%%
+%% The emulator renders the machine's full emulated frame; the UI shows either
+%% that full frame or a centered 272×208 crop (8 px of border per side).  The
+%% 48K/128K full frame is the 352×288 line window (48 px border per side, the
+%% screen at 48..303 / 64..255); the Pentagon shows its ORIGINAL geometry —
+%% 384×304 (72 px left + 56 px right border, screen at 72..327 / 80..271).
+
+%% The model's {line_geometry, frame_geometry} pair for a machine type.
+display_geometry('48k')        -> {?LINE_GEOMETRY_48K, ?FRAME_GEOMETRY_48K};
+display_geometry('128k')       -> {?LINE_GEOMETRY_48K, ?FRAME_GEOMETRY_48K};
+display_geometry('pentagon_128')-> {?LINE_GEOMETRY_PENTAGON, ?FRAME_GEOMETRY_PENTAGON}.
+
+%% {Width, Height} of the full emulated frame the renderer produces.
+full_frame_size(Type) ->
+    {LineGeo, FrameGeo} = display_geometry(Type),
+    {WinStart, WinEnd, _, _} = LineGeo,
+    {_, _, WinHeight} = FrameGeo,
+    {(WinEnd - WinStart) * 2, WinHeight}.
+
+%% {X, Y} of the 256×192 playfield origin within the full frame.
+screen_origin(Type) ->
+    {LineGeo, FrameGeo} = display_geometry(Type),
+    {WinStart, _, ScreenStart, _} = LineGeo,
+    {WindowTop, ScreenLine, _} = FrameGeo,
+    {(ScreenStart - WinStart) * 2, ScreenLine - WindowTop}.
+
+%% Border columns/rows (px per side) trimmed off in crop mode: {Left, Right,
+%% Top, Bottom}. The crop window keeps 8 px of border on every side.
+crop_trims(Type) ->
+    {FullW, FullH} = full_frame_size(Type),
+    {ScreenX, ScreenY} = screen_origin(Type),
+    {ScreenX - ?BORDER_FRAME,
+     FullW - ScreenX - ?SCREEN_WIDTH - ?BORDER_FRAME,
+     ScreenY - ?BORDER_FRAME,
+     FullH - ScreenY - ?SCREEN_HEIGHT - ?BORDER_FRAME}.
+
+machine_type_offset('48k')       -> 0;
+machine_type_offset('128k')      -> 1;
+machine_type_offset('pentagon_128') -> 2.
 
 machine_type_from_offset(0) -> '48k';
-machine_type_from_offset(1) -> '128k'.
+machine_type_from_offset(1) -> '128k';
+machine_type_from_offset(2) -> 'pentagon_128'.
 
-calc_scale_offset(false, SW, SH) ->
-    S = max(1, min(SW div ?DEFAULT_WIDTH, SH div ?DEFAULT_HEIGHT)),
+%% The integer scale that fits the crop window to the display, in fullscreen
+%% crop + integer-scaling mode. The frame's aspect decides which dimension is
+%% the binding constraint.
+crop_exact_scale(Type, SW, SH) ->
+    {FW, FH} = full_frame_size(Type),
+    case SW / FW >= SH / FH of
+        true  -> SH / ?CROP_HEIGHT;      %% wide screen: CROP_HEIGHT visible rows (8px border T+B)
+        false -> SW / ?CROP_WIDTH        %% tall screen: CROP_WIDTH visible cols (8px border L+R)
+    end.
+
+%% {Scale, OffX, OffY} for the emulated frame of the given machine type.
+%% OffX/OffY in emulated pixels: the visible window origin within the frame.
+%% Multiply by Scale to get the screen-pixel shift of the device origin.
+%% In crop mode the offsets center the CROP window, not the frame: the crop
+%% keeps 8 px of border per side, and on the Pentagon the asymmetric borders
+%% push that window (L - R)/2 horizontally and (T - B)/2 vertically off the
+%% frame center, so the pan must be corrected by that much.
+calc_scale_offset(Type, false, SW, SH) ->
+    {FW, FH} = full_frame_size(Type),
+    S = max(1, min(SW div FW, SH div FH)),
     {S, 0, 0};
-calc_scale_offset(true, SW, SH) ->
-    S = max(1, max(SW div ?DEFAULT_WIDTH, SH div ?DEFAULT_HEIGHT)),
-    case SW / ?DEFAULT_WIDTH >= SH / ?DEFAULT_HEIGHT of
-        true  -> {S, 0, (288 * S - SH) div (2 * S)};
-        false -> {S, (352 * S - SW) div (2 * S), 0}
+calc_scale_offset(Type, true, SW, SH) ->
+    {FW, FH} = full_frame_size(Type),
+    {L, R, T, B} = crop_trims(Type),
+    S = max(1, max(SW div FW, SH div FH)),
+    case SW / FW >= SH / FH of
+        true  -> {S, (L - R) div 2, (FH * S - SH) div (2 * S) + (T - B) div 2};
+        false -> {S, (FW * S - SW) div (2 * S) + (L - R) div 2, (T - B) div 2}
     end.
 
 %% Client area size for windowed mode.
-windowed_client_size(Crop, S) ->
+windowed_client_size(Type, Crop, S) ->
     {TW, TH} = case Crop of
         true  -> {?CROP_WIDTH, ?CROP_HEIGHT};
-        false -> {?DEFAULT_WIDTH, ?DEFAULT_HEIGHT}
+        false -> full_frame_size(Type)
     end,
     {TW * S, TH * S}.
+
+%% @doc Resize the windowed client area to the machine's frame geometry after
+%% a machine-type switch or save load (Pentagon's 384×304 vs the 352×288 of
+%% the 48K/128K). No-op in fullscreen (the frame is scaled to the display).
+maybe_resize_for_machine(#state{fullscreen = true} = State) ->
+    State;
+maybe_resize_for_machine(#state{frame = Frame, machine_type = Type, scale = S,
+                                option_crop_border = Crop} = State) ->
+    {W, H} = windowed_client_size(Type, Crop, S),
+    wxWindow:setClientSize(Frame, W, H),
+    State.
 
 %% @doc Set the app icon on the main window (titlebar/taskbar). The icon file
 %% lives in priv/ (bundled into releases); a missing file is not an error.
@@ -1293,9 +1354,10 @@ icon_file() ->
 %% failure (no machine, unreadable frame) silently skips the screenshot.
 write_screenshot(Machine, Z80Path) when Machine =/= undefined ->
     try
+        Type = ezx_saves:machine_type(Machine),
         PngPath = ezx_saves:png_path(Z80Path),
         Image = wxImage:new(?SCREEN_WIDTH, ?SCREEN_HEIGHT,
-                            playfield_pixels(ezx_emulator:render_frame(Machine))),
+                            playfield_pixels(Type, ezx_emulator:render_frame(Machine))),
         _ = wxImage:saveFile(Image, PngPath, ?wxBITMAP_TYPE_PNG),
         wxImage:destroy(Image),
         ok
@@ -1303,23 +1365,28 @@ write_screenshot(Machine, Z80Path) when Machine =/= undefined ->
 write_screenshot(_Machine, _Z80Path) ->
     ok.
 
-%% @doc Crop the border off a 352x288 RGB frame, keeping the 256x192 playfield
-%% (48 border pixels per side).
-playfield_pixels(RGB) ->
+%% @doc Crop the border off the full RGB frame, keeping the 256x192 playfield.
+%% The frame size and playfield origin follow the machine type (48K/128K:
+%% 352x288 with a 48 px border per side; Pentagon: 384x304 with the screen at
+%% 72..327 / 64..255).
+playfield_pixels(Type, RGB) ->
+    {FW, _FH} = full_frame_size(Type),
+    {ScreenX, ScreenY} = screen_origin(Type),
     RowBytes = ?SCREEN_WIDTH * 3,
-    BorderCols = (?DEFAULT_WIDTH - ?SCREEN_WIDTH) div 2 * 3,
-    BorderRows = (?DEFAULT_HEIGHT - ?SCREEN_HEIGHT) div 2,
     iolist_to_binary(
-      [binary:part(RGB, (BorderRows + R) * (?DEFAULT_WIDTH * 3) + BorderCols, RowBytes)
+      [binary:part(RGB, (ScreenY + R) * (FW * 3) + ScreenX * 3, RowBytes)
        || R <- lists:seq(0, ?SCREEN_HEIGHT - 1)]).
 
-%% @doc Blit the 352x288 RGB frame onto the panel, honoring crop, scale and
-%% fullscreen mode. Used both for running frames and for the frozen display
+%% @doc Blit the machine's full RGB frame onto the panel, honoring crop, scale
+%% and fullscreen mode. Used both for running frames and for the frozen display
 %% while paused.
 draw_frame(State, RGB) ->
     Panel = State#state.panel,
     Scale = State#state.scale,
-    Image0 = wxImage:new(?DEFAULT_WIDTH, ?DEFAULT_HEIGHT, RGB),
+    Type = State#state.machine_type,
+    {FW, FH} = full_frame_size(Type),
+    {L, _R, T, _B} = crop_trims(Type),
+    Image0 = wxImage:new(FW, FH, RGB),
     ClientDC = wxClientDC:new(Panel),
     {PW0, PH0} = wxWindow:getClientSize(Panel),
     {PW, PH} = case State#state.fullscreen_size of
@@ -1335,31 +1402,30 @@ draw_frame(State, RGB) ->
     {Bmp, DX, DY, UseBmpScale} = case {UseExact, WindowedCrop} of
         {true, _} ->
             ES = State#state.crop_exact_scale,
+            {L, R, T, B} = crop_trims(Type),
             B = wxBitmap:new(Image0),
             wxImage:destroy(Image0),
-            BorderOff = round(?BORDER_TRIM * ES),
             {FSW, FSH} = State#state.fullscreen_size,
-            case FSW / ?DEFAULT_WIDTH >= FSH / ?DEFAULT_HEIGHT of
+            case FSW / FW >= FSH / FH of
                 true  ->
-                    DDX = (PW - round(?DEFAULT_WIDTH * ES)) div 2,
-                    {B, DDX, -BorderOff, ES};
+                    DDX = (PW - round(FW * ES)) div 2 - round((L - R) div 2 * ES),
+                    {B, DDX, -round(T * ES), ES};
                 false ->
-                    DDY = (PH - round(?DEFAULT_HEIGHT * ES)) div 2,
-                    {B, -BorderOff, DDY, ES}
+                    DDY = (PH - round(FH * ES)) div 2 - round((T - B) div 2 * ES),
+                    {B, -round(L * ES), DDY, ES}
             end;
         {_, true} ->
             B = wxBitmap:new(Image0),
             wxImage:destroy(Image0),
-            BorderOff = ?BORDER_TRIM * Scale,
-            DDX = max(0, (PW - ?CROP_WIDTH * Scale) div 2) - BorderOff,
-            DDY = max(0, (PH - ?CROP_HEIGHT * Scale) div 2) - BorderOff,
+            DDX = max(0, (PW - ?CROP_WIDTH * Scale) div 2) - L * Scale,
+            DDY = max(0, (PH - ?CROP_HEIGHT * Scale) div 2) - T * Scale,
             {B, DDX, DDY, Scale};
         {false, false} ->
             B = wxBitmap:new(Image0),
             wxImage:destroy(Image0),
             {OffX, OffY} = State#state.crop_off,
-            DDX = max(0, (PW - ?DEFAULT_WIDTH * Scale) div 2),
-            DDY = max(0, (PH - ?DEFAULT_HEIGHT * Scale) div 2),
+            DDX = max(0, (PW - FW * Scale) div 2),
+            DDY = max(0, (PH - FH * Scale) div 2),
             {B, DDX - OffX * Scale, DDY - OffY * Scale, Scale}
     end,
     wxDC:setDeviceOrigin(BufDC, DX, DY),

@@ -1,5 +1,7 @@
 -module(ezx_screen).
 
+-include("ezx_emulator.hrl").
+
 %% ZX Spectrum ULA screen device: border color changes + attribute flash.
 %% Also renders the frame into a flat RGB bitmap (pure, view-optional).
 %%
@@ -30,7 +32,7 @@
 %% and color, so render_frame/1 does not need to touch the device directly.
 
 -export([new/0, new/1, border_set/3, border_get/1, flash_on/1, frame_render/2]).
--export([init_helper_tables/0, render_screen/5]).
+-export([init_helper_tables/0, render_screen/5, render_screen/6]).
 
 -on_load(init_helper_tables/0).
 
@@ -117,16 +119,9 @@ color_after(Local, _InitColor) -> element(2, lists:last(Local)).
 %% prepends its chunks (per-char 24-byte lookup entries, border runs) straight
 %% into the same flat list — no per-line lists, no concatenation, no
 %% intermediate binaries — and a single lists:reverse + list_to_binary/1
-%% produces the 352×288 bitmap. Measured ~3.6x faster than the old per-char
-%% construction on a real boot frame and roughly halves the GC traffic.
-
--define(FULL_Y_OFFSET, 16).
--define(FULL_WIDTH, 352).
--define(FULL_HEIGHT, 288).
--define(BORDER_LEFT, 48).
--define(BORDER_RIGHT, 304).
--define(SCREEN_Y_MIN, 48).
--define(SCREEN_Y_MAX, 239).
+%% produces the bitmap (352×288 for the 48K/128K raster, 384×304 for the
+%% Pentagon). Measured ~3.6x faster than the old per-char construction on a
+%% real boot frame and roughly halves the GC traffic.
 
 -define(COLORS_NORMAL, {
     {0, 0, 0}, {0, 0, 215}, {215, 0, 0}, {215, 0, 215},
@@ -140,26 +135,84 @@ color_after(Local, _InitColor) -> element(2, lists:last(Local)).
 
 -define(TABLES_KEY, ezx_screen_tables).
 
+%% Rendered-frame geometry, precomputed from the model's line/frame geometry.
+-record(geo, {
+    win_start_t    :: pos_integer(),  %% visible window start T within the line
+    win_end_t      :: pos_integer(),  %% visible window end T within the line
+    screen_start_t :: pos_integer(),  %% screen start T within the line
+    screen_end_t   :: pos_integer(),  %% screen end T within the line
+    screen_x       :: pos_integer(),  %% screen x in px (within the window)
+    left_width     :: pos_integer(),  %% border px left of the screen
+    right_width    :: pos_integer(),  %% border px right of the screen
+    window_top     :: pos_integer(),  %% first rendered line of the frame
+    screen_y       :: pos_integer(),  %% first screen line (window-relative)
+    full_width     :: pos_integer(),  %% window width in px
+    full_height    :: pos_integer()   %% number of rendered lines
+}).
+
 init_helper_tables() ->
     Color8px = build_color_8px_table(),
     MaskTab = build_mask_table(),
     Lookup = build_lookup_table(Color8px, MaskTab),
-    Border48 = build_border_runs(?BORDER_LEFT),
-    Border352 = build_border_runs(?FULL_WIDTH),
+    BorderRuns = maps:from_list([{W, build_border_runs(W)} || W <- geometry_widths()]),
     %% Color8px and MaskTab are build-time inputs for Lookup only — the
     %% renderer never reads them, so only the runtime tables are stored.
-    persistent_term:put(?TABLES_KEY, {Lookup, Border48, Border352}),
+    persistent_term:put(?TABLES_KEY, {Lookup, BorderRuns}),
     ok.
 
+%% The border-run widths the canonical geometries need: full window + left and
+%% right border columns of each line geometry (48K/128K: 352/48/48, Pentagon:
+%% 384/72/56).
+geometry_widths() ->
+    lists:usort(lists:append([begin
+        {WinStart, WinEnd, ScreenStart, ScreenEnd} = LG,
+        [(WinEnd - WinStart) * 2, (ScreenStart - WinStart) * 2, (WinEnd - ScreenEnd) * 2]
+    end || LG <- [?LINE_GEOMETRY_48K, ?LINE_GEOMETRY_PENTAGON]])).
+
 %% @doc Render a frame to a flat RGB binary. TStatesPerLine is the horizontal
-%% scanline length in T-states (224 for the 48K raster, 228 for the 128K).
+%% scanline length in T-states (224 for the 48K/Pentagon raster, 228 for the
+%% 128K). Uses the 48K/128K geometry (352×288).
 -spec render_screen(binary(), boolean(), list(), non_neg_integer(), pos_integer()) -> binary().
 render_screen(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder, TStatesPerLine) ->
-    {Lookup, Border48, Border352} = persistent_term:get(?TABLES_KEY),
+    render_screen(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder,
+                  TStatesPerLine, {?LINE_GEOMETRY_48K, ?FRAME_GEOMETRY_48K}).
+
+%% @doc Render a frame to a flat RGB binary. TStatesPerLine is the horizontal
+%% scanline length in T-states (224 for the 48K/Pentagon raster, 228 for the
+%% 128K). Geometry is the model's {line_geometry, frame_geometry} pair (see
+%% ezx_emulator.hrl): the 48K/128K {0, 176, 24, 152} + {16, 64, 288} window
+%% (352×288, screen at pixels 48..303 / lines 64..255) or the Pentagon
+%% {32, 224, 68, 196} + {16, 80, 304} window (384×304 — the FULL Pentagon
+%% border, screen at pixels 72..327 / lines 80..271).
+-spec render_screen(binary(), boolean(), list(), non_neg_integer(), pos_integer(),
+                    {{pos_integer(), pos_integer(), pos_integer(), pos_integer()},
+                     {pos_integer(), pos_integer(), pos_integer()}}) -> binary().
+render_screen(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder,
+              TStatesPerLine, {LineGeometry, FrameGeometry}) ->
+    {Lookup, BorderRuns} = persistent_term:get(?TABLES_KEY),
     <<Bitmap:6144/binary, Attrs:768/binary>> = VideoBuffer,
-    Chunks = render_lines(Lookup, Border48, Border352, FlashOn, Bitmap, Attrs,
-                          SortedBorderChanges, CurrentBorder, TStatesPerLine, 0, []),
+    Geo = make_geo(LineGeometry, FrameGeometry),
+    Chunks = render_lines(Lookup, BorderRuns, FlashOn, Bitmap, Attrs,
+                          SortedBorderChanges, CurrentBorder, Geo,
+                          TStatesPerLine, 0, []),
     list_to_binary(lists:reverse(Chunks)).
+
+make_geo({WinStartT, WinEndT, ScreenStartT, ScreenEndT},
+         {WindowTop, ScreenStartLine, FullHeight}) ->
+    ScreenX = (ScreenStartT - WinStartT) * 2,
+    #geo{
+        win_start_t = WinStartT,
+        win_end_t = WinEndT,
+        screen_start_t = ScreenStartT,
+        screen_end_t = ScreenEndT,
+        screen_x = ScreenX,
+        left_width = ScreenX,
+        right_width = (WinEndT - ScreenEndT) * 2,
+        window_top = WindowTop,
+        screen_y = ScreenStartLine - WindowTop,
+        full_width = (WinEndT - WinStartT) * 2,
+        full_height = FullHeight
+    }.
 
 %% ============================================================================
 %% Line iteration
@@ -173,33 +226,40 @@ render_screen(VideoBuffer, FlashOn, SortedBorderChanges, CurrentBorder, TStatesP
 %% into the final bitmap.
 %% ============================================================================
 
-render_lines(_L, _B48, _B352, _FO, _BM, _AR, _SC, _AC, _TSL, ?FULL_HEIGHT, Acc) ->
+render_lines(_L, _BR, _FO, _BM, _AR, _SC, _AC, Geo, _TSL, Y, Acc) when Y >= Geo#geo.full_height ->
     Acc;
-render_lines(L, B48, B352, FO, BM, AR, SC, AC, TSL, Y, Acc) ->
-    {Acc1, SC1, NewAC} = render_line(L, B48, B352, FO, BM, AR, SC, AC, TSL, Y, Acc),
-    render_lines(L, B48, B352, FO, BM, AR, SC1, NewAC, TSL, Y + 1, Acc1).
+render_lines(L, BR, FO, BM, AR, SC, AC, Geo, TSL, Y, Acc) ->
+    {Acc1, SC1, NewAC} = render_line(L, BR, FO, BM, AR, SC, AC, Geo, TSL, Y, Acc),
+    render_lines(L, BR, FO, BM, AR, SC1, NewAC, Geo, TSL, Y + 1, Acc1).
 
-render_line(L, B48, _B352, FO, BM, AR, SC, AC, TSL, Y, Acc) when Y >= ?SCREEN_Y_MIN, Y =< ?SCREEN_Y_MAX ->
-    render_screen_line(L, B48, FO, BM, AR, SC, AC, TSL, Y, Acc);
-render_line(_L, _B48, B352, _FO, _BM, _AR, SC, AC, TSL, Y, Acc) ->
-    render_border_only_line(B352, SC, AC, TSL, Y, Acc).
+render_line(L, BR, FO, BM, AR, SC, AC, Geo, TSL, Y, Acc) when Y >= Geo#geo.screen_y, Y =< Geo#geo.screen_y + 191 ->
+    render_screen_line(L, BR, FO, BM, AR, SC, AC, Geo, TSL, Y, Acc);
+render_line(_L, BR, _FO, _BM, _AR, SC, AC, Geo, TSL, Y, Acc) ->
+    render_border_only_line(BR, SC, AC, Geo, TSL, Y, Acc).
 
 %% ============================================================================
 %% Border-only line: the whole line is one border run (shared binary) unless a
 %% border change falls inside, then build segments (rare).
 %% ============================================================================
 
-render_border_only_line(Border352, SC, ActiveColor, TStatesPerLine, Y, Acc) ->
-    LineT = (Y + ?FULL_Y_OFFSET) * TStatesPerLine,
-    EndT = LineT + 175,
-    {StartColor, LineChanges, SC1} = walk_line(SC, ActiveColor, LineT, EndT),
+render_border_only_line(BorderRuns, SC, ActiveColor, Geo, TStatesPerLine, Y, Acc) ->
+    LineT = (Y + Geo#geo.window_top) * TStatesPerLine,
+    VStart = Geo#geo.win_start_t,
+    EndT = LineT + Geo#geo.win_end_t - 1,
+    {ColorBefore, LineChanges, SC1} = walk_line(SC, ActiveColor, LineT, EndT),
     EndColor = case LineChanges of
-        [] -> StartColor;
+        [] -> ColorBefore;
         _ -> element(2, lists:last(LineChanges))
     end,
-    Acc1 = case LineChanges of
-        [] -> [element(StartColor + 1, Border352) | Acc];
-        _ -> prepend_all(build_segments(LineChanges, StartColor, 0, ?FULL_WIDTH, LineT, []), Acc)
+    %% The window base color is the color at the window start: changes in the
+    %% pre-window zone (Pentagon retrace, before VStart) set the border color
+    %% the visible window shows. Only the changes inside the visible window
+    %% become pixel offsets — the pre-window ones must not.
+    BaseColor = color_at_t(LineChanges, ColorBefore, LineT + VStart),
+    Changes = filter_range(LineChanges, LineT + VStart, EndT),
+    Acc1 = case Changes of
+        [] -> [border_run(BorderRuns, Geo#geo.full_width, BaseColor) | Acc];
+        _ -> prepend_all(build_segments(Changes, BaseColor, 0, Geo#geo.full_width, LineT, Geo, []), Acc)
     end,
     {Acc1, SC1, EndColor}.
 
@@ -209,18 +269,26 @@ render_border_only_line(Border352, SC, ActiveColor, TStatesPerLine, Y, Acc) ->
 %% render_screen_pixels, the border sides via prepend_all.
 %% ============================================================================
 
-render_screen_line(Lookup, Border48, FlashOn, Bitmap, Attrs, SC, ActiveColor, TStatesPerLine, Y, Acc) ->
-    LineT = (Y + ?FULL_Y_OFFSET) * TStatesPerLine,
-    EndT = LineT + 175,
-    {StartColor, LineChanges, SC1} = walk_line(SC, ActiveColor, LineT, EndT),
+render_screen_line(Lookup, BorderRuns, FlashOn, Bitmap, Attrs, SC, ActiveColor, Geo, TStatesPerLine, Y, Acc) ->
+    LineT = (Y + Geo#geo.window_top) * TStatesPerLine,
+    VStart = Geo#geo.win_start_t,
+    SS = Geo#geo.screen_start_t,
+    SE = Geo#geo.screen_end_t,
+    EndT = LineT + Geo#geo.win_end_t - 1,
+    {ColorBefore, LineChanges, SC1} = walk_line(SC, ActiveColor, LineT, EndT),
     EndColor = case LineChanges of
-        [] -> StartColor;
+        [] -> ColorBefore;
         _ -> element(2, lists:last(LineChanges))
     end,
 
-    Acc1 = prepend_all(border_side(LineChanges, StartColor, LineT, LineT, LineT + 23, 0, Border48), Acc),
+    %% The left side base color is the color at the visible window start:
+    %% changes before VStart (Pentagon retrace) still set the border color the
+    %% window shows.
+    LeftBaseColor = color_at_t(LineChanges, ColorBefore, LineT + VStart),
+    Acc1 = prepend_all(border_side(LineChanges, LeftBaseColor, LineT, LineT + VStart,
+                                   LineT + SS - 1, 0, Geo#geo.left_width, Geo, BorderRuns), Acc),
 
-    ScreenY = Y - ?SCREEN_Y_MIN,
+    ScreenY = Y - Geo#geo.screen_y,
     Third = ScreenY div 64,
     CharRowInThird = (ScreenY rem 64) div 8,
     PixelRow = ScreenY rem 8,
@@ -232,20 +300,29 @@ render_screen_line(Lookup, Border48, FlashOn, Bitmap, Attrs, SC, ActiveColor, TS
     <<_:AttrRowOffset/binary, AttrRow:32/binary, _/binary>> = Attrs,
     Acc2 = render_screen_pixels(Lookup, FlashMask, BitmapRow, AttrRow, Acc1),
 
-    RightBaseColor = color_at_t(LineChanges, StartColor, LineT + 151),
-    Acc3 = prepend_all(border_side(LineChanges, RightBaseColor, LineT, LineT + 152, LineT + 175,
-                                   ?BORDER_RIGHT, Border48), Acc2),
+    RightBaseColor = color_at_t(LineChanges, ColorBefore, LineT + SE - 1),
+    Acc3 = prepend_all(border_side(LineChanges, RightBaseColor, LineT, LineT + SE, EndT,
+                                   Geo#geo.screen_x + 256, Geo#geo.right_width, Geo, BorderRuns), Acc2),
     {Acc3, SC1, EndColor}.
 
 %% Border side of a screen line: a flat run of BaseColor (shared binary) unless
 %% a border change falls in [MinT, MaxT]; then build segments (rare). Returns
 %% the chunks in forward order — the caller threads them into the accumulator.
-border_side(LineChanges, BaseColor, LineT, MinT, MaxT, StartPx, Border48) ->
+border_side(LineChanges, BaseColor, LineT, MinT, MaxT, StartPx, Width, Geo, BorderRuns) ->
     Changes = filter_range(LineChanges, MinT, MaxT),
     case Changes of
-        [] -> [element(BaseColor + 1, Border48)];
-        _ -> build_segments(Changes, BaseColor, StartPx, StartPx + 48, LineT, [])
+        [] -> [border_run(BorderRuns, Width, BaseColor)];
+        _ -> build_segments(Changes, BaseColor, StartPx, StartPx + Width, LineT, Geo, [])
     end.
+
+%% Shared border run of the given width and color, from the cached runs when
+%% available (canonical widths) or built on the fly otherwise (rare).
+border_run(BorderRuns, Width, Color) ->
+    Runs = case maps:find(Width, BorderRuns) of
+        {ok, R} -> R;
+        error -> build_border_runs(Width)
+    end,
+    element(Color + 1, Runs).
 
 %% Prepend a forward-order chunk list into the reversed-frame accumulator.
 prepend_all([], Acc) -> Acc;
@@ -319,8 +396,8 @@ build_lookup_table(Color8px, MaskTab) ->
                Ink <- lists:seq(0, 15),
                Paper <- lists:seq(0, 15)]).
 
-%% A 48px (screen-line side) or full-width (border-only line) run of each of
-%% the 8 border colors — shared binaries, reused by every line.
+%% A run of each of the 8 border colors, Pixels wide — shared binaries,
+%% reused by every line.
 build_border_runs(Pixels) ->
     list_to_tuple([begin
         {R, G, B} = element(C + 1, ?COLORS_NORMAL),
@@ -340,31 +417,40 @@ color_at_t([{T, Color} | Rest], _Default, TState) when T =< TState ->
     color_at_t(Rest, Color, TState);
 color_at_t(_, Default, _T) -> Default.
 
-tstate_to_pixel(Offset) when Offset < 24 ->
-    Offset * 2;
-tstate_to_pixel(Offset) when Offset < 152 ->
-    48 + (Offset - 24) * 2;
-tstate_to_pixel(Offset) ->
-    304 + (Offset - 152) * 2.
+%% Map a T-state offset within a scanline to the window pixel column, given
+%% the line geometry (window/screen regions in #geo{}). The three regions are
+%% rendered at 2 px per T-state: the border before the screen, the 128-T
+%% screen itself, and the border after it.
+tstate_to_pixel(Offset, Geo) when Offset < Geo#geo.screen_start_t ->
+    (Offset - Geo#geo.win_start_t) * 2;
+tstate_to_pixel(Offset, Geo) when Offset < Geo#geo.screen_end_t ->
+    Geo#geo.screen_x + (Offset - Geo#geo.screen_start_t) * 2;
+tstate_to_pixel(Offset, Geo) ->
+    Geo#geo.screen_x + 256 + (Offset - Geo#geo.screen_end_t) * 2.
 
 filter_range(Changes, MinT, MaxT) ->
     [{T, C} || {T, C} <- Changes, T >= MinT, T =< MaxT].
 
-build_segments([], LastColor, Px, StopPx, _LineT, Acc) ->
+build_segments([], LastColor, Px, StopPx, _LineT, _Geo, Acc) ->
     Width = StopPx - Px,
     case Width > 0 of
         true -> lists:reverse([color_copy(LastColor, Width) | Acc]);
         false -> lists:reverse(Acc)
     end;
-build_segments([{T, NewColor} | Rest], CurColor, Px, StopPx, LineT, Acc) ->
-    ChangePx = tstate_to_pixel(T - LineT),
+build_segments([{T, NewColor} | Rest], CurColor, Px, StopPx, LineT, Geo, Acc) ->
+    ChangePx = tstate_to_pixel(T - LineT, Geo),
     Width = ChangePx - Px,
     NewAcc = case Width > 0 of
         true -> [color_copy(CurColor, Width) | Acc];
         false -> Acc
     end,
-    build_segments(Rest, NewColor, ChangePx, StopPx, LineT, NewAcc).
+    build_segments(Rest, NewColor, ChangePx, StopPx, LineT, Geo, NewAcc).
 
+%% Walk the sorted border changes across one scanline [LineT, EndT]. Returns
+%% {ColorBefore, LineChanges, SC1}: ColorBefore is the border color right
+%% before LineT (the color the line starts with, with all earlier changes
+%% applied), LineChanges the changes inside the line, and SC1 the remaining
+%% changes (carried into the next line).
 walk_line(SC, CB, LineT, EndT) ->
     walk_before(SC, CB, LineT, EndT).
 
@@ -372,14 +458,14 @@ walk_before([], CC, _LineT, _EndT) ->
     {CC, [], []};
 walk_before([{T, Color} | Rest], _CC, LineT, EndT) when T < LineT ->
     walk_before(Rest, Color, LineT, EndT);
-walk_before([{T, Color} | Rest], _CC, LineT, EndT) when T =< EndT ->
-    walk_in_line(Rest, Color, LineT, EndT, [{T, Color}]);
+walk_before([{T, Color} | Rest], CC, LineT, EndT) when T =< EndT ->
+    walk_in_line(Rest, Color, LineT, EndT, [{T, Color}], CC);
 walk_before(SC, CC, _LineT, _EndT) ->
     {CC, [], SC}.
 
-walk_in_line([], LastColor, _LineT, _EndT, Acc) ->
-    {LastColor, lists:reverse(Acc), []};
-walk_in_line([{T, Color} | Rest], _PrevColor, LineT, EndT, Acc) when T =< EndT ->
-    walk_in_line(Rest, Color, LineT, EndT, [{T, Color} | Acc]);
-walk_in_line(SC, LastColor, _LineT, _EndT, Acc) ->
-    {LastColor, lists:reverse(Acc), SC}.
+walk_in_line([], LastColor, _LineT, _EndT, Acc, ColorBefore) ->
+    {ColorBefore, lists:reverse(Acc), []};
+walk_in_line([{T, Color} | Rest], _PrevColor, LineT, EndT, Acc, ColorBefore) when T =< EndT ->
+    walk_in_line(Rest, Color, LineT, EndT, [{T, Color} | Acc], ColorBefore);
+walk_in_line(SC, LastColor, _LineT, _EndT, Acc, ColorBefore) ->
+    {ColorBefore, lists:reverse(Acc), SC}.

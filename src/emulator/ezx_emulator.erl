@@ -553,6 +553,7 @@ run_frame_execute(Machine) ->
 %% frame's interrupt is suppressed, exactly like real hardware.
 int_asserted(StartT, IntPulse) when StartT < IntPulse -> true;
 int_asserted(_StartT, _IntPulse) -> false.
+
 execute_frame(#machine_state{} = Machine) ->
     case Machine#machine_state.tape_blocks of
         [] ->
@@ -670,7 +671,7 @@ run_frame_render_ay(#machine_state{ay_module = AyModule} = Machine) ->
         Machine#machine_state{ay = AY1, ay_pcm = {ChA, ChB, ChC}}
     end).
 
-%% Phase: render the screen bitmap (352×288 RGB). Only when the render_screen
+%% Phase: render the screen bitmap (model geometry RGB). Only when the render_screen
 %% flag is set — the interactive UI enables it, headless consumers skip it.
 run_frame_render_screen_bitmap(#machine_state{render_screen = false} = Machine) ->
     {Machine#machine_state{screen_pixels = undefined}, 0};
@@ -742,21 +743,28 @@ set_cpu_frequency(#machine_state{model = Model} = Machine, Hz) when is_integer(H
 %% Scale the whole timing model to the given CPU-clock multiplier (>= 1).
 %% Idempotent: the current multiplier is derived from cpu_clock / base_cpu_clock
 %% and undone first, so the base raster is scaled exactly once (switching x2 ->
-%% x1 restores the exact base raster).
-scale_model(#machine_model{cpu_clock = Cur, base_cpu_clock = Base} = Model, Mult) ->
+%% x1 restores the exact base raster). The line geometry (T-state stamps within
+%% a line) scales with the clock; the frame geometry (line numbers) does not.
+%% The video renderer (render_frame_now) folds the scaled raster back to the
+%% base domain, so the produced bitmap never grows with the multiplier.
+scale_model(#machine_model{cpu_clock = Cur, base_cpu_clock = Base,
+                           line_geometry = {WS, WE, SS, SE}} = Model, Mult) ->
     CurMult = max(1, Cur div Base),
     Model#machine_model{
         cpu_clock = Base * Mult,
         tstates_per_frame = (Model#machine_model.tstates_per_frame div CurMult) * Mult,
         tstates_per_line = (Model#machine_model.tstates_per_line div CurMult) * Mult,
-        int_pulse = (Model#machine_model.int_pulse div CurMult) * Mult
+        int_pulse = (Model#machine_model.int_pulse div CurMult) * Mult,
+        line_geometry = {WS div CurMult * Mult, WE div CurMult * Mult,
+                         SS div CurMult * Mult, SE div CurMult * Mult}
     }.
 
 %% Frame length + per-frame sample count, used by the audio render phases.
 frame_audio_params(#machine_state{model = Model}) ->
     {Model#machine_model.tstates_per_frame, samples_per_frame(Model)}.
 
-%% @doc Render the last frame to a flat RGB binary (352×288×3 bytes).
+%% @doc Render the last frame to a flat RGB binary (model geometry, e.g.
+%% 352×288×3 for the 48K/128K raster, 384×304×3 for the Pentagon).
 %% Returns the bitmap produced inside run_frame/1 when render_screen is
 %% enabled; otherwise falls back to rendering on demand.
 -spec render_frame(#machine_state{}) -> binary().
@@ -780,8 +788,23 @@ render_frame_now(Machine) ->
         false -> MemModule:read_block(Mem, 16384, 6144 + 768)
     end,
     Model = Machine#machine_state.model,
-    ezx_screen:render_screen(Videobuffer, FlashOn, Changes, CB,
-                             Model#machine_model.tstates_per_line).
+    %% CPU overclock (set_cpu_frequency/2) is timing-only: the video raster
+    %% stays at its BASE geometry regardless of the multiplier, so the border
+    %% change stamps (in the scaled machine counter) are folded back to the
+    %% base domain along with the scanline length and the geometry. The bitmap
+    %% is therefore always base-sized (352×288 / 384×304) — the UI reads the
+    %% model's base geometry and must not see a scaled frame.
+    Mult = max(1, Model#machine_model.cpu_clock div Model#machine_model.base_cpu_clock),
+    ezx_screen:render_screen(Videobuffer, FlashOn,
+                             [{T div Mult, C} || {T, C} <- Changes], CB,
+                             Model#machine_model.tstates_per_line div Mult,
+                             {scale_tstate_geometry(Model#machine_model.line_geometry, Mult),
+                              Model#machine_model.frame_geometry}).
+
+%% Fold a scaled line geometry {WinStartT, WinEndT, ScreenStartT, ScreenEndT}
+%% back to the base domain (see render_frame_now).
+scale_tstate_geometry({WS, WE, SS, SE}, Mult) ->
+    {WS div Mult, WE div Mult, SS div Mult, SE div Mult}.
 
 %% @doc Beeper PCM (mono S16LE) produced by the last run_frame/1.
 -spec render_beeper(#machine_state{}) -> {binary(), #machine_state{}}.
