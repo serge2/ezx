@@ -43,6 +43,8 @@
     read_hl_mem/1,
     write_hl_mem/2,
     fetch_indexed_displacement/1,
+    indexed_timing_extra/1,
+    indexed_n_timing_extra/1,
     %% Prefix-aware register pair accessors
     get_reg_pair_prefixed/2,
     set_reg_pair_prefixed/3,
@@ -246,6 +248,28 @@ read_hl_mem(State) ->
     Addr = get_hl_mem_addr(State1),
     {Byte, State2} = read_byte(State1, Addr),
     {Byte, State2}.
+
+%% DD/FD indexed-operand timing overhead. (HL)-style memory ops charge +5
+%% T-states extra when a DD/FD prefix is active (the indexed-addressing
+%% penalty); the DD M1 fetch and the displacement operand fetch are charged
+%% by the prefix/operand machinery. Gives LD r,(HL)=7 vs LD r,(IX+d)=19,
+%% ADD A,(HL)=7 vs ADD A,(IX+d)=19, INC (HL)=11 vs INC (IX+d)=23, etc.
+indexed_timing_extra(State) ->
+    case ?GET_PREFIX(State) of
+        dd -> 5;
+        fd -> 5;
+        _ -> 0
+    end.
+
+%% LD (IX+d),n is the exception: its immediate operand fetch doubles as the
+%% indexed dummy-read cycle, so the overhead is only +2 (LD (HL),n=10 vs
+%% LD (IX+d),n=19).
+indexed_n_timing_extra(State) ->
+    case ?GET_PREFIX(State) of
+        dd -> 2;
+        fd -> 2;
+        _ -> 0
+    end.
 
 write_hl_mem(State, Val) ->
     State1 = fetch_indexed_displacement(State),

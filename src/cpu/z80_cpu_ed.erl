@@ -51,6 +51,18 @@ execute_ed_opcode(Opcode, State) ->
         16#5E ->
             execute_ed_im(State, 2);
 
+        %% IM 0* (undocumented, NMOS behaviour): ED 4E, 66, 6E - same as IM 0
+        Op when Op =:= 16#4E; Op =:= 16#66; Op =:= 16#6E ->
+            execute_ed_im(State, 0);
+
+        %% IM 1* (undocumented, NMOS behaviour): ED 76 - same as IM 1
+        16#76 ->
+            execute_ed_im(State, 1);
+
+        %% IM 2* (undocumented, NMOS behaviour): ED 7E - same as IM 2
+        16#7E ->
+            execute_ed_im(State, 2);
+
         %% NEG* (undocumented): same as NEG
         Op when Op =:= 16#4C; Op =:= 16#54; Op =:= 16#5C; Op =:= 16#64;
              Op =:= 16#6C; Op =:= 16#74; Op =:= 16#7C ->
@@ -362,7 +374,11 @@ execute_ldir(State) ->
             F_F5 = if V band 16#02 =/= 0 -> ?FLAG_F5; true -> 0 end,
             NewFlags = OldF bor F_PV bor F_F3 bor F_F5,
             PC = State2#cpu_state.pc,
-            NewPC =  PC - 2,       %% Repeat: 21 T-states (PC-2 to re-execute)
+            NewPC = case NewBC of
+                0 -> PC;
+                _ -> PC - 2       %% Repeat: 21 T-states (PC-2 to re-execute)
+            end,
+            TAdd = case NewBC of 0 -> 8; _ -> 13 end,
             State3 = State2#cpu_state{
                 pc = NewPC,
                 h = (NewHL bsr 8) band 16#FF, l = (NewHL band 16#FF),
@@ -370,7 +386,7 @@ execute_ldir(State) ->
                 b = (NewBC bsr 8) band 16#FF, c = (NewBC band 16#FF),
                 f = NewFlags
             },
-            z80_cpu_helpers:advance_tstates(State3, 13)
+            z80_cpu_helpers:advance_tstates(State3, TAdd)
     end.
 
 %% LDD: single iteration (16 T-states total = 8 base + 8)

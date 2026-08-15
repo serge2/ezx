@@ -626,22 +626,22 @@ execute_ld_r_mem_hl(State, Reg) ->
     %% DD/FD prefix only changes the address (HL)->(IX+d)/(IY+d), handled by read_hl_mem.
     %% The destination register stays as H/L (NOT IXH/IYL).
     State2 = z80_cpu_helpers:set_reg_byte(Reg, Byte, State1),
-    z80_cpu_helpers:advance_tstates(State2, 3).
+    z80_cpu_helpers:advance_tstates(State2, 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_ld_mem_hl_r(State, Reg) ->
     %% DD/FD prefix only changes the address (HL)->(IX+d)/(IY+d), handled by write_hl_mem.
     %% The source register stays as H/L (NOT IXH/IYL).
     Byte = z80_cpu_helpers:get_reg_byte(Reg, State),
     State1 = z80_cpu_helpers:write_hl_mem(State, Byte),
-    z80_cpu_helpers:advance_tstates(State1, 3).
+    z80_cpu_helpers:advance_tstates(State1, 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_ld_mem_hl_a(State) ->
     State1 = z80_cpu_helpers:write_hl_mem(State, State#cpu_state.a),
-    z80_cpu_helpers:advance_tstates(State1, 3).
+    z80_cpu_helpers:advance_tstates(State1, 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_ld_a_mem_hl(State) ->
     {Byte, State1} = z80_cpu_helpers:read_hl_mem(State),
-    z80_cpu_helpers:advance_tstates(State1#cpu_state{a = Byte}, 3).
+    z80_cpu_helpers:advance_tstates(State1#cpu_state{a = Byte}, 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_halt(State) ->
     State#cpu_state{halted = true}.
@@ -803,7 +803,7 @@ execute_inc_mem_hl(State) ->
     F_F3F5 = NewByte band (?FLAG_F3 bor ?FLAG_F5),
     NewF = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V bor F_F3F5,
     State3 = State2#cpu_state{f = NewF},
-    z80_cpu_helpers:advance_tstates(State3, 11).
+    z80_cpu_helpers:advance_tstates(State3, 7 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_dec_mem_hl(State) ->
     {Byte, State1} = z80_cpu_helpers:read_hl_mem(State),
@@ -818,7 +818,7 @@ execute_dec_mem_hl(State) ->
     F_F3F5 = NewByte band (?FLAG_F3 bor ?FLAG_F5),
     NewFlags = (Flags band ?FLAG_C) bor F_N bor F_Z bor F_S bor F_H bor F_V bor F_F3F5,
     State3 = State2#cpu_state{f = NewFlags},
-    z80_cpu_helpers:advance_tstates(State3, 11).
+    z80_cpu_helpers:advance_tstates(State3, 7 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_ld_mem_hl_n(State) ->
     %% For DD/FD prefix, byte order is: DD 36 dd n (displacement before immediate).
@@ -827,7 +827,7 @@ execute_ld_mem_hl_n(State) ->
     Addr = z80_cpu_helpers:get_hl_mem_addr(State1),
     {Value, State2} = z80_cpu_helpers:fetch_byte(State1),
     State3 = z80_cpu_helpers:write_byte(State2, Addr, Value band 16#FF),
-    z80_cpu_helpers:advance_tstates(State3, 10).
+    z80_cpu_helpers:advance_tstates(State3, 3 + z80_cpu_helpers:indexed_n_timing_extra(State)).
 
 execute_rla(State) ->
     A = State#cpu_state.a,
@@ -952,7 +952,7 @@ execute_add_a_l(State) ->
 
 execute_add_a_mem_hl(State) ->
     {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
-    z80_cpu_helpers:do_add(State1, Val).
+    z80_cpu_helpers:advance_tstates(z80_cpu_helpers:do_add(State1, Val), 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_add_a_a(State) ->
     z80_cpu_helpers:do_add(State, z80_cpu_helpers:get_reg_byte(a, State)).
@@ -978,7 +978,7 @@ execute_adc_a_l(State) ->
 
 execute_adc_a_mem_hl(State) ->
     {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
-    z80_cpu_helpers:do_adc(State1, Val).
+    z80_cpu_helpers:advance_tstates(z80_cpu_helpers:do_adc(State1, Val), 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_adc_a_a(State) ->
     z80_cpu_helpers:do_adc(State, z80_cpu_helpers:get_reg_byte(a, State)).
@@ -1004,7 +1004,7 @@ execute_sub_l(State) ->
 
 execute_sub_mem_hl(State) ->
     {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
-    z80_cpu_helpers:do_sub(State1, Val).
+    z80_cpu_helpers:advance_tstates(z80_cpu_helpers:do_sub(State1, Val), 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_sub_a(State) ->
     z80_cpu_helpers:do_sub(State, z80_cpu_helpers:get_reg_byte(a, State)).
@@ -1030,7 +1030,7 @@ execute_sbc_a_l(State) ->
 
 execute_sbc_a_mem_hl(State) ->
     {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
-    z80_cpu_helpers:do_sbc(State1, Val).
+    z80_cpu_helpers:advance_tstates(z80_cpu_helpers:do_sbc(State1, Val), 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_sbc_a_a(State) ->
     z80_cpu_helpers:do_sbc(State, z80_cpu_helpers:get_reg_byte(a, State)).
@@ -1056,7 +1056,7 @@ execute_and_l(State) ->
 
 execute_and_mem_hl(State) ->
     {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
-    z80_cpu_helpers:do_and(State1, Val).
+    z80_cpu_helpers:advance_tstates(z80_cpu_helpers:do_and(State1, Val), 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_and_a(State) ->
     z80_cpu_helpers:do_and(State, z80_cpu_helpers:get_reg_byte(a, State)).
@@ -1082,7 +1082,7 @@ execute_xor_l(State) ->
 
 execute_xor_mem_hl(State) ->
     {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
-    z80_cpu_helpers:do_xor(State1, Val).
+    z80_cpu_helpers:advance_tstates(z80_cpu_helpers:do_xor(State1, Val), 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_xor_a(State) ->
     z80_cpu_helpers:do_xor(State, z80_cpu_helpers:get_reg_byte(a, State)).
@@ -1108,7 +1108,7 @@ execute_or_l(State) ->
 
 execute_or_mem_hl(State) ->
     {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
-    z80_cpu_helpers:do_or(State1, Val).
+    z80_cpu_helpers:advance_tstates(z80_cpu_helpers:do_or(State1, Val), 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_or_a(State) ->
     z80_cpu_helpers:do_or(State, z80_cpu_helpers:get_reg_byte(a, State)).
@@ -1134,7 +1134,7 @@ execute_cp_l(State) ->
 
 execute_cp_mem_hl(State) ->
     {Val, State1} = z80_cpu_helpers:read_hl_mem(State),
-    z80_cpu_helpers:do_cp(State1, Val).
+    z80_cpu_helpers:advance_tstates(z80_cpu_helpers:do_cp(State1, Val), 3 + z80_cpu_helpers:indexed_timing_extra(State)).
 
 execute_cp_a(State) ->
     z80_cpu_helpers:do_cp(State, z80_cpu_helpers:get_reg_byte(a, State)).

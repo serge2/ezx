@@ -430,8 +430,14 @@ execute_cb_indexed_opcode(Opcode, Reg, State) ->
             State3
     end,
     
-    %% DD CB / FD CB takes 8 additional T-states (total 23)
-    z80_cpu_helpers:advance_tstates(State4, 8).
+    %% DD CB / FD CB body timing on top of the M1/d fetches (4 DD + 4 CB M1 +
+    %% 3 d): +8 for ROT/RES/SET (23 total), but only +5 for BIT y,(IX+d) —
+    %% BIT has no write-back cycle, so one memory cycle less (20 total).
+    Body = case X =:= 1 of
+        true -> 5;
+        false -> 8
+    end,
+    z80_cpu_helpers:advance_tstates(State4, Body).
 
 %% ROT operations for indexed (uses Y for rot type)
 execute_cb_rot(RotType, Byte, State) ->
