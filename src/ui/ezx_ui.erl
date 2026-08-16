@@ -1417,7 +1417,7 @@ draw_frame(State, RGB) ->
     {Bmp, DX, DY, UseBmpScale} = case {UseExact, WindowedCrop} of
         {true, _} ->
             ES = State#state.crop_exact_scale,
-            {L, R, T, B} = crop_trims(Type),
+            {L, R, T, B0} = crop_trims(Type),
             B = wxBitmap:new(Image0),
             wxImage:destroy(Image0),
             {FSW, FSH} = State#state.fullscreen_size,
@@ -1426,7 +1426,7 @@ draw_frame(State, RGB) ->
                     DDX = (PW - round(FW * ES)) div 2 - round((L - R) div 2 * ES),
                     {B, DDX, -round(T * ES), ES};
                 false ->
-                    DDY = (PH - round(FH * ES)) div 2 - round((T - B) div 2 * ES),
+                    DDY = (PH - round(FH * ES)) div 2 - round((T - B0) div 2 * ES),
                     {B, -round(L * ES), DDY, ES}
             end;
         {_, true} ->
