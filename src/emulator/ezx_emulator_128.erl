@@ -17,11 +17,7 @@
     release_key/2,
     run_until_tstates/2,
     samples_per_frame/1,
-    set_cpu_frequency/2,
-    %% 0x7FFD paging port handlers, referenced from this machine's port
-    %% dispatch table in init/7.
-    read_p7ffd/3,
-    write_p7ffd/4
+    set_cpu_frequency/2
 ]).
 
 -include("z80_records.hrl").
@@ -34,17 +30,17 @@
 %% timing model.
 -spec init(#machine_model{}, module(), module(), module(), module(), module(), {binary(), binary()}) -> #machine_state{}.
 init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, {Rom0, Rom1}) ->
-    MemReadFun = fun ezx_emulator:read_memory/3,
-    MemWriteFun = fun ezx_emulator:write_memory/4,
+    MemReadFun = fun read_memory/3,
+    MemWriteFun = fun write_memory/4,
     PortReadTable =
-        [{16#0001, 16#00FE, fun ezx_emulator:read_keyboard/3},
-         {16#0000, 16#FADB, fun ezx_emulator:read_kempston_mouse/3},
-         {16#8002, 16#0000, fun ezx_emulator_128:read_p7ffd/3},
-         {16#0002, 16#8001, fun ezx_emulator:read_ay/3}],
+        [{16#0001, 16#00FE, fun read_keyboard/3},
+         {16#0000, 16#FADB, fun read_kempston_mouse/3},
+         {16#8002, 16#0000, fun read_p7ffd/3},
+         {16#0002, 16#8001, fun read_ay/3}],
     PortWriteTable =
-        [{16#0001, 16#00FE, fun ezx_emulator:write_border_beeper/4},
-         {16#8002, 16#0000, fun ezx_emulator_128:write_p7ffd/4},
-         {16#0002, 16#8001, fun ezx_emulator:write_ay/4}],
+        [{16#0001, 16#00FE, fun write_border_beeper/4},
+         {16#8002, 16#0000, fun write_p7ffd/4},
+         {16#0002, 16#8001, fun write_ay/4}],
     PortReadFun =
         fun(ExtContext, TState, Port) ->
             ezx_emulator_lib:read_port(PortReadTable, ExtContext, TState, Port)
@@ -363,3 +359,88 @@ write_48k_dump(MemModule, Mem, Data) ->
             {Offset + 1, MemModule:write_byte(MemAcc, Addr, Byte)}
         end, {0, Mem}, MemList),
     M.
+
+%% --- Device port handlers ---
+%%
+%% A local copy of the handlers that also live in ezx_emulator, referenced
+%% directly from this machine's port dispatch table as
+%% {ZeroMask, OneMask, fun Handler/N} (local funs — both machines carry the
+%% same handlers so each references local funs). They read the configured
+%% device module from #ext_context (populated in step_normal), so a machine
+%% that lacks a device (AyModule = undefined) leaves the matching state
+%% field undefined and the handler declines with nomatch, falling through
+%% to the 0xFF read / ignore-write default.
+
+%% CPU memory access. Memory reads are pure (they never mutate the device
+%% context), so the handler returns just the byte — no {Byte, ExtContext}
+%% round trip on the read path.
+read_memory(#ext_context{memory = Memory, memory_module = MemModule}, _TState, Addr) ->
+    MemModule:read_byte(Memory, Addr).
+
+write_memory(#ext_context{memory = Memory, memory_module = MemModule} = ExtContext, _TState, Addr, Byte) ->
+    case MemModule:write_byte(Memory, Addr, Byte) of
+        Memory -> ExtContext;
+        Memory1 -> ExtContext#ext_context{memory = Memory1}
+    end.
+
+%% Keyboard read row (A0=0): the port low byte selects the half-row, the
+%% high byte is the (unused) "menu" bits; unused rows read as 1.
+read_keyboard(ExtContext, _TState, Port) ->
+    Keyboard = ExtContext#ext_context.keyboard,
+    KeyboardModule = ExtContext#ext_context.keyboard_module,
+    UpperByte = (Port bsr 8) band 16#FF,
+    Result = KeyboardModule:decode(Keyboard, UpperByte),
+    {Result bor 16#E0, ExtContext}.
+
+%% Border + beeper write row (A0=0): bits 0-2 border color, bit 4 beeper.
+write_border_beeper(ExtContext, TState, _Port, Byte) ->
+    BeeperModule = ExtContext#ext_context.beeper_module,
+    BeeperLevel = (Byte bsr 4) band 1,
+    Screen0 = ExtContext#ext_context.screen,
+    Screen1 = ezx_screen:border_set(Screen0, TState, Byte band 16#07),
+    Beeper0 = ExtContext#ext_context.beeper,
+    Beeper1 = BeeperModule:set_level(Beeper0, BeeperLevel, TState),
+    ExtContext#ext_context{screen = Screen1, beeper = Beeper1}.
+
+%% AY read row (A15=1, A1=0, A0=1; A14 is not decoded for reads, so both
+%% 0xFFFD and 0xBFFD return the latched register).
+read_ay(#ext_context{ay = undefined}, _TState, _Port) ->
+    nomatch;
+read_ay(#ext_context{ay = AY, ay_module = AyModule} = ExtContext, _TState, _Port) ->
+    {AyModule:read(AY), ExtContext}.
+
+%% AY write row (A15=1, A1=0, A0=1 — the only address bits the AY chip
+%% select decodes): a single row covers both 0xBFFD data register (A14=0)
+%% and 0xFFFD address latch (A14=1); the A14 bit (0x4000) selects which.
+write_ay(#ext_context{ay = undefined}, _TState, _Port, _Byte) ->
+    nomatch;
+write_ay(#ext_context{ay = AY, ay_module = AyModule} = ExtContext, TState, Port, Byte) ->
+    case Port band 16#4000 of
+        0 -> ExtContext#ext_context{ay = AyModule:write(AY, Byte, TState)};
+        _ -> ExtContext#ext_context{ay = AyModule:latch(AY, Byte)}
+    end.
+
+%% Kempston mouse port handler. The port → register mapping is owned by the
+%% emulator (kempston_mouse_register/1); the device module only exposes its
+%% registers. A machine with the mouse disabled keeps
+%% #ext_context.kempston_mouse as undefined, so the handler declines with
+%% nomatch and the port falls through to the 0xFF default.
+read_kempston_mouse(#ext_context{kempston_mouse = undefined}, _TState, _Port) ->
+    nomatch;
+read_kempston_mouse(#ext_context{kempston_mouse = Mouse} = ExtContext, _TState, Port) ->
+    case kempston_mouse_register(Port) of
+        nomatch -> nomatch;
+        Register -> {ezx_kempston_mouse:read(Mouse, Register), ExtContext}
+    end.
+
+%% Kempston mouse registers: buttons 0xFADF/0xFAFB, X 0xFBDF/0xFBFB,
+%% Y 0xFFDF/0xFFFB. The register is selected by A8 (0x0100) and A10
+%% (0x0400); A2/A5 are not decoded on the hardware, so each register
+%% answers on both low-byte variants.
+kempston_mouse_register(Port) ->
+    case Port band 16#0500 of
+        0 -> buttons;        %% A8 = 0, A10 = 0
+        16#0100 -> x;        %% A8 = 1, A10 = 0
+        16#0500 -> y;        %% A8 = 1, A10 = 1
+        _ -> nomatch         %% A8 = 0, A10 = 1: no such register
+    end.

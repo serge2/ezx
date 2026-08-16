@@ -31,16 +31,7 @@
     read_byte/2,
     write_byte/3,
     read_word/2,
-    write_word/3,
-    %% Shared device port handlers, referenced from both machines' port
-    %% dispatch tables (48K in init/7, 128K in ezx_emulator_128:init/7).
-    read_memory/3,
-    write_memory/4,
-    read_keyboard/3,
-    write_border_beeper/4,
-    read_ay/3,
-    write_ay/4,
-    read_kempston_mouse/3
+    write_word/3
 ]).
 
 %% ZX Spectrum frame length in T-states.
@@ -50,15 +41,15 @@
 %% using the given timing model.
 -spec init(#machine_model{}, module(), module(), module(), module(), module() | undefined, binary()) -> #machine_state{}.
 init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, Rom) ->
-    MemReadFun = fun ezx_emulator:read_memory/3,
-    MemWriteFun = fun ezx_emulator:write_memory/4,
+    MemReadFun = fun read_memory/3,
+    MemWriteFun = fun write_memory/4,
     PortReadTable =
-        [{16#0001, 16#00FE, fun ezx_emulator:read_keyboard/3},
-         {16#0000, 16#FADB, fun ezx_emulator:read_kempston_mouse/3},
-         {16#0002, 16#8001, fun ezx_emulator:read_ay/3}],
+        [{16#0001, 16#00FE, fun read_keyboard/3},
+         {16#0000, 16#FADB, fun read_kempston_mouse/3},
+         {16#0002, 16#8001, fun read_ay/3}],
     PortWriteTable =
-        [{16#0001, 16#00FE, fun ezx_emulator:write_border_beeper/4},
-         {16#0002, 16#8001, fun ezx_emulator:write_ay/4}],
+        [{16#0001, 16#00FE, fun write_border_beeper/4},
+         {16#0002, 16#8001, fun write_ay/4}],
     PortReadFun =
         fun(ExtContext, TState, Port) ->
             ezx_emulator_lib:read_port(PortReadTable, ExtContext, TState, Port)
@@ -832,13 +823,15 @@ run_until_tstates(Machine, Target) ->
 
 %% --- Internal ---
 
-%% --- Shared device port handlers ---
+%% --- Device port handlers ---
 %%
-%% These are referenced directly from the port dispatch tables of both
-%% machines as {ZeroMask, OneMask, fun Module:handler/N}. They read the
-%% configured device module from #ext_context (populated in step_normal),
-%% so a machine that lacks a device (AyModule = undefined) leaves the
-%% matching state field undefined and the handler declines with nomatch,
+%% A local copy of the handlers that also live in ezx_emulator_128,
+%% referenced directly from this machine's port dispatch table as
+%% {ZeroMask, OneMask, fun Handler/N} (local funs — both machines carry the
+%% same handlers so each references local funs). They read the configured
+%% device module from #ext_context (populated in step_normal), so a machine
+%% that lacks a device (AyModule = undefined) leaves the matching state
+%% field undefined and the handler declines with nomatch,
 %% falling through to the 0xFF read / ignore-write default.
 
 %% CPU memory access. Memory reads are pure (they never mutate the device
