@@ -116,9 +116,9 @@ init(_Options) ->
     FileMenu0 = ezx_recent_files:build_menu(RecentFiles0),
     wxMenuBar:append(MenuBar, FileMenu0, "File"),
     ModelMenu = wxMenu:new(),
-    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_BASE + 0, "ZX Spectrum 48K"),
-    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_BASE + 1, "ZX Spectrum 128K"),
-    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_BASE + 2, "Pentagon 128"),
+    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_48, "ZX Spectrum 48K"),
+    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_128, "ZX Spectrum 128K"),
+    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_PENTAGON, "Pentagon 128K"),
     wxMenuBar:append(MenuBar, ModelMenu, "Model"),
     ViewMenu = wxMenu:new(),
     wxMenu:append(ViewMenu, ?MENU_FULLSCREEN, "Fullscreen\tF11", [{help, "Toggle fullscreen mode"}]),
@@ -126,10 +126,10 @@ init(_Options) ->
     wxMenu:appendCheckItem(ViewMenu, ?MENU_CROP, "Crop borders", [{help, "Crop display borders"}]),
     wxMenu:appendCheckItem(ViewMenu, ?MENU_CROP_EXACT, "Integer scaling", [{help, "Use integer scale"}]),
     wxMenu:appendSeparator(ViewMenu),
-    wxMenu:appendRadioItem(ViewMenu, ?MENU_SCALE_BASE + 0, "Scale 1x"),
-    wxMenu:appendRadioItem(ViewMenu, ?MENU_SCALE_BASE + 1, "Scale 2x"),
-    wxMenu:appendRadioItem(ViewMenu, ?MENU_SCALE_BASE + 2, "Scale 3x"),
-    wxMenu:appendRadioItem(ViewMenu, ?MENU_SCALE_BASE + 3, "Scale 4x"),
+    wxMenu:appendRadioItem(ViewMenu, ?MENU_SCALE_1X, "Scale 1x"),
+    wxMenu:appendRadioItem(ViewMenu, ?MENU_SCALE_2X, "Scale 2x"),
+    wxMenu:appendRadioItem(ViewMenu, ?MENU_SCALE_3X, "Scale 3x"),
+    wxMenu:appendRadioItem(ViewMenu, ?MENU_SCALE_4X, "Scale 4x"),
     wxMenuBar:append(MenuBar, ViewMenu, "View"),
     SettingsMenu = wxMenu:new(),
     wxMenu:append(SettingsMenu, ?MENU_SETTINGS_SOUND, "Sound...", [{help, "Configure sound settings"}]),
@@ -164,10 +164,10 @@ init(_Options) ->
     KempstonMouse = maps:get(kempston_mouse, Cfg0, false),
     MouseSwap = maps:get(mouse_swap_buttons, Cfg0, false),
     Mouse = ezx_ui_mouse:new(KempstonMouse, MouseSwap),
-    wxMenu:check(ModelMenu, ?MENU_MACHINE_BASE + machine_type_offset(MachineType), true),
+    wxMenu:check(ModelMenu, machine_type_menu_id(MachineType), true),
     wxMenu:check(ViewMenu, ?MENU_CROP, CropBorder),
     wxMenu:check(ViewMenu, ?MENU_CROP_EXACT, IntScaling),
-    wxMenu:check(ViewMenu, ?MENU_SCALE_BASE + (InitScale0 - 1), true),
+    wxMenu:check(ViewMenu, scale_menu_id(InitScale0), true),
     wxMenu:check(ActionsMenu, ?MENU_MUTE, Muted),
     wxMenu:check(ActionsMenu, ?MENU_CPU_X1, true),
     wxMenu:check(DebugMenu, ?MENU_DEBUG_PERF, PerfReport),
@@ -696,8 +696,11 @@ handle_info(#wx{id = ?MENU_CROP_EXACT, event = #wxCommand{type = command_menu_se
     end;
 
 handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
-            State) when Id >= ?MENU_SCALE_BASE, Id < ?MENU_SCALE_BASE + 4 ->
-    NewScale = (Id - ?MENU_SCALE_BASE) + 1,
+            State) when Id =:= ?MENU_SCALE_1X;
+                        Id =:= ?MENU_SCALE_2X;
+                        Id =:= ?MENU_SCALE_3X;
+                        Id =:= ?MENU_SCALE_4X ->
+    NewScale = scale_from_menu_id(Id),
     NewState = State#state{scale = NewScale, mouse = ezx_ui_mouse:reset_baseline(State#state.mouse)},
     save_config(NewState),
     case NewState#state.fullscreen of
@@ -793,8 +796,10 @@ handle_info(#wx{id = ?BTN_RENAME, event = #wxCommand{type = command_button_click
     end;
 
 handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
-            #state{machine_type = OldType} = State) when Id >= ?MENU_MACHINE_BASE, Id < ?MENU_MACHINE_BASE + 3 ->
-    NewType = machine_type_from_offset(Id - ?MENU_MACHINE_BASE),
+            #state{machine_type = OldType} = State) when Id =:= ?MENU_MACHINE_48;
+                                                         Id =:= ?MENU_MACHINE_128;
+                                                         Id =:= ?MENU_MACHINE_PENTAGON ->
+    NewType = machine_type_from_menu_id(Id),
     case NewType =/= OldType of
         true ->
             case ezx_ui_lib:init_virtual_machine(NewType, State#state.ay_chip) of
@@ -823,7 +828,7 @@ handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
                 {error, {_Code, Detail}} ->
                     ModelMenu = wxMenuBar:getMenu(State#state.menu_bar, 1),
                     wxMenu:check(ModelMenu, Id, false),
-                    wxMenu:check(ModelMenu, ?MENU_MACHINE_BASE + machine_type_offset(OldType), true),
+                    wxMenu:check(ModelMenu, machine_type_menu_id(OldType), true),
                     Dialog = wxMessageDialog:new(State#state.frame, binary_to_list(Detail),
                                                  [{caption, "ezx - cannot switch machine type"},
                                                   {style, ?wxOK bor ?wxICON_ERROR}]),
@@ -1192,7 +1197,7 @@ meta_atom(Meta, Key, Default) ->
 %% restored a different machine.
 check_machine_type_menu(#state{menu_bar = MenuBar, machine_type = MType}) ->
     ModelMenu = wxMenuBar:getMenu(MenuBar, 1),
-    wxMenu:check(ModelMenu, ?MENU_MACHINE_BASE + machine_type_offset(MType), true),
+    wxMenu:check(ModelMenu, machine_type_menu_id(MType), true),
     ok.
 
 reenter_crop_fullscreen(#state{frame = Frame, fullscreen_size = {SW, SH}} = State) ->
@@ -1271,13 +1276,23 @@ crop_trims(Type) ->
      ScreenY - ?BORDER_FRAME,
      FullH - ScreenY - ?SCREEN_HEIGHT - ?BORDER_FRAME}.
 
-machine_type_offset('48k')       -> 0;
-machine_type_offset('128k')      -> 1;
-machine_type_offset('pentagon_128') -> 2.
+machine_type_menu_id('48k')         -> ?MENU_MACHINE_48;
+machine_type_menu_id('128k')        -> ?MENU_MACHINE_128;
+machine_type_menu_id('pentagon_128') -> ?MENU_MACHINE_PENTAGON.
 
-machine_type_from_offset(0) -> '48k';
-machine_type_from_offset(1) -> '128k';
-machine_type_from_offset(2) -> 'pentagon_128'.
+machine_type_from_menu_id(?MENU_MACHINE_48)      -> '48k';
+machine_type_from_menu_id(?MENU_MACHINE_128)     -> '128k';
+machine_type_from_menu_id(?MENU_MACHINE_PENTAGON) -> 'pentagon_128'.
+
+scale_menu_id(1) -> ?MENU_SCALE_1X;
+scale_menu_id(2) -> ?MENU_SCALE_2X;
+scale_menu_id(3) -> ?MENU_SCALE_3X;
+scale_menu_id(4) -> ?MENU_SCALE_4X.
+
+scale_from_menu_id(?MENU_SCALE_1X) -> 1;
+scale_from_menu_id(?MENU_SCALE_2X) -> 2;
+scale_from_menu_id(?MENU_SCALE_3X) -> 3;
+scale_from_menu_id(?MENU_SCALE_4X) -> 4.
 
 %% The integer scale that fits the crop window to the display, in fullscreen
 %% crop + integer-scaling mode. The frame's aspect decides which dimension is
