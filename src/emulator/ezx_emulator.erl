@@ -248,7 +248,15 @@ load_tap(Machine, Data) ->
         Blocks ->
             io:format("TAP: parsed ~p blocks~n", [length(Blocks)]),
             Q = make_load_queue(),
+            %% Arm the LD-BYTES pre-step hook on the CPU record: from now on
+            %% both execution loops consult it once per instruction, so the
+            %% fast per-frame CPU loop services the trap with no separate
+            %% slow machine path.
+            Cpu = (Machine#machine_state.cpu)#cpu_state{
+                pre_step_fun = fun tape_pre_step/1
+            },
             {ok, Machine#machine_state{
+                cpu = Cpu,
                 tape_blocks = Blocks,
                 keyboard_queue = Q
             }}
@@ -258,41 +266,94 @@ load_tap(Machine, Data) ->
                      iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
     end.
 
-%% --- Tape trap: intercept LD-BYTES at PC=0x0556 ---
+%% --- Tape trap (LD-BYTES fast load) ---
+%%
+%% The trap is an optional CPU pre-step hook (#cpu_state.pre_step_fun), so it
+%% rides the ordinary z80_cpu:step/1 entry that BOTH execution loops call.
+%% The hook receives the whole #cpu_state{}: the trap rewrites registers
+%% (IX/DE/AF/PC) — something a device-side read callback cannot do — and
+%% threads the remaining block list through #ext_context.tape_blocks.
+%%
+%% LD-BYTES entries: 0x0556 is the main ROM entry (used by LOAD "" and most
+%% loaders); 0x0563 is the continuation entry right after the flag-setup
+%% prologue that speedloaders jump to with IX/DE already prepared (e.g. the
+%% 128K Robin of the Wood loader pages the target bank, replicates the
+%% INC D; EX AF,AF'; DEC D; DI prologue, then JP 0x0563); 0x0562 is the ROM's
+%% start-of-block EAR-poll point (IN A,(0xFE)) that loaders enter with CALL to
+%% have the ROM read the next block (e.g. the Halaga loader preps IX/DE/A and
+%% the flag, replicates the prologue, then CALL 0x0562).  Intercepting all
+%% three lets the trap feed the TAP blocks to either kind of loader.
 
-tape_trap(#machine_state{cpu = Cpu, tape_blocks = [#tap_block{payload = Data} | RestBlocks]} = Machine,
-          MachineTStates) ->
-    IX = (Cpu#cpu_state.ixh bsl 8) bor Cpu#cpu_state.ixl,
-    DE = (Cpu#cpu_state.d bsl 8) bor Cpu#cpu_state.e,
-    DataList = binary:bin_to_list(Data),
-    WriteLen = min(DE, length(DataList)),
-    {WriteData, _} = lists:split(WriteLen, DataList),
-    Machine1 = write_block(Machine, IX, WriteData),
+tape_pre_step(#cpu_state{pc = 16#0556} = Cpu) ->
+    tape_trap_entry(Cpu, <<16#14, 16#08, 16#15>>);
+tape_pre_step(#cpu_state{pc = 16#0562} = Cpu) ->
+    tape_trap_entry(Cpu, <<16#DB, 16#FE>>);
+tape_pre_step(#cpu_state{pc = 16#0563} = Cpu) ->
+    tape_trap_entry(Cpu, <<16#FE, 16#1F>>);
+tape_pre_step(_Cpu) ->
+    continue.
+
+%% Signature gate: fire only when the bytes under PC are the real ROM 1
+%% prologue (INC D; EX AF,AF'; DEC D / IN A,(0xFE) / CP 1Fh). Any foreign
+%% image mapped at 0x0000 — TR-DOS overlay, service ROM, all-RAM bank, the
+%% 128K editor chip — carries other bytes there, so its code at those
+%% addresses runs unmolested while a TAP is pending.
+tape_trap_entry(#cpu_state{ext_context = #ext_context{
+                                memory = Mem, memory_module = MemModule,
+                                tape_blocks = [_ | _]}} = Cpu, Signature) ->
+    case read_probe(MemModule, Mem, Cpu#cpu_state.pc, byte_size(Signature)) of
+        Signature -> {handled, fire_tape_trap(Cpu)};
+        _Other -> continue
+    end;
+tape_trap_entry(_Cpu, _Signature) ->
+    continue.
+
+read_probe(_MemModule, _Mem, _Addr, 0) ->
+    <<>>;
+read_probe(MemModule, Mem, Addr, N) ->
+    Byte = MemModule:read_byte(Mem, Addr band 16#FFFF),
+    <<Byte, (read_probe(MemModule, Mem, Addr + 1, N - 1))/binary>>.
+
+fire_tape_trap(Cpu0) ->
+    ExtContext0 = Cpu0#cpu_state.ext_context,
+    #ext_context{memory = Mem0, memory_module = MemModule,
+                 tape_blocks = [#tap_block{payload = Data} | RestBlocks]} =
+        ExtContext0,
+    IX = z80_cpu:get_reg_pair(ix, Cpu0),
+    DE = z80_cpu:get_reg_pair(de, Cpu0),
+    WriteLen = min(DE, byte_size(Data)),
+    <<WriteData:WriteLen/binary, _/binary>> = Data,
+    Mem1 = write_block_mem(MemModule, Mem0, IX band 16#FFFF, WriteData),
+    ExtContext1 = ExtContext0#ext_context{memory = Mem1, tape_blocks = RestBlocks},
     NewIX = (IX + WriteLen) band 16#FFFF,
-    Cpu1 = Cpu#cpu_state{
+    Cpu1 = z80_cpu:set_reg_pair(ix, NewIX, Cpu0),
+    Cpu2 = z80_cpu:set_reg_pair(de, 0, Cpu1),
+    Cpu3 = Cpu2#cpu_state{
         pc = 16#05E2,
-        ixh = (NewIX bsr 8) band 16#FF,
-        ixl = NewIX band 16#FF,
-        d = 0, e = 0,
         b = 16#B0, a = 0,
         f = 1,  %% carry set = success
         halted = false,
-        prefix = none
+        prefix = none,
+        ext_context = ExtContext1,
+        t_states = Cpu2#cpu_state.t_states + 1000
     },
-    TStatesDelta = 1000,
-    NewMT = MachineTStates + TStatesDelta,
     io:format("Tape trap: ~p bytes at 0x~.16B (~p left)~n",
               [WriteLen, IX, length(RestBlocks)]),
-    Machine1#machine_state{
-        cpu = Cpu1#cpu_state{t_states = NewMT},
-        t_states = NewMT,
-        tape_blocks = RestBlocks
-    }.
+    disarm_when_done(RestBlocks, Cpu3).
 
-write_block(Machine, _Addr, []) -> Machine;
-write_block(Machine, Addr, [Byte | Rest]) ->
-    Machine1 = write_byte(Machine, Addr band 16#FFFF, Byte),
-    write_block(Machine1, (Addr + 1) band 16#FFFF, Rest).
+%% Last block served: unhook so no later PC coincidence can ever fire again
+%% until the next load_tap arms the trap afresh. The cleared fun reaches the
+%% machine through the normal cpu sync at frame end.
+disarm_when_done([], Cpu) -> Cpu#cpu_state{pre_step_fun = undefined};
+disarm_when_done(_Rest, Cpu) -> Cpu.
+
+write_block_mem(_MemModule, Mem, _Addr, <<>>) -> Mem;
+write_block_mem(MemModule, Mem, Addr, <<Byte, Rest/binary>>) ->
+    Mem1 = case MemModule:write_byte(Mem, Addr band 16#FFFF, Byte) of
+        Mem -> Mem;
+        MemX -> MemX
+    end,
+    write_block_mem(MemModule, Mem1, (Addr + 1) band 16#FFFF, Rest).
 
 %% --- Auto-typing keyboard queue for LOAD "" ---
 
@@ -411,25 +472,10 @@ write_word(Machine, Addr, Word) ->
     write_byte(Machine1, Addr + 1, (Word bsr 8) band 16#ff).
 
 
-%% @doc Execute one machine step by advancing the CPU once and updating machine time.
-%% LD-BYTES entries: 0x0556 is the main ROM entry (used by LOAD "" and most
-%% loaders); 0x0563 is the continuation entry right after the flag-setup
-%% prologue that speedloaders jump to with IX/DE already prepared (e.g. the
-%% 128K Robin of the Wood loader pages the target bank, replicates the
-%% INC D; EX AF,AF'; DEC D; DI prologue, then JP 0x0563); 0x0562 is the ROM's
-%% start-of-block EAR-poll point (IN A,(0xFE)) that loaders enter with CALL to
-%% have the ROM read the next block (e.g. the Halaga loader preps IX/DE/A and
-%% the flag, replicates the prologue, then CALL 0x0562).  Intercepting all
-%% three lets the trap feed the TAP blocks to either kind of loader.
+%% @doc Execute one machine step by advancing the CPU once and updating machine
+%% time. The LD-BYTES fast-load trap lives in the CPU pre-step hook (see
+%% tape_pre_step/1), so this is a plain pass-through.
 -spec step(#machine_state{}) -> #machine_state{}.
-step(#machine_state{t_states = MachineTStates, tape_blocks = [_ | _]} = Machine) ->
-    Cpu0 = Machine#machine_state.cpu,
-    case Cpu0#cpu_state.pc of
-        16#0556 -> tape_trap(Machine, MachineTStates);
-        16#0562 -> tape_trap(Machine, MachineTStates);
-        16#0563 -> tape_trap(Machine, MachineTStates);
-        _ -> step_normal(Machine)
-    end;
 step(Machine) ->
     step_normal(Machine).
 
@@ -445,7 +491,8 @@ step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
 %% keeps the same row usable for 48K and 128K.
 make_ext_context(#machine_state{memory = Memory0, screen = Screen0,
                                 keyboard = Keyboard0, beeper = Beeper0,
-                                ay = Ay0, kempston_mouse = KM0} = Machine) ->
+                                ay = Ay0, kempston_mouse = KM0,
+                                tape_blocks = TapeBlocks} = Machine) ->
     #ext_context{
         memory = Memory0,
         screen = Screen0,
@@ -453,6 +500,7 @@ make_ext_context(#machine_state{memory = Memory0, screen = Screen0,
         beeper = Beeper0,
         ay = Ay0,
         kempston_mouse = KM0,
+        tape_blocks = TapeBlocks,
         memory_module = Machine#machine_state.memory_module,
         keyboard_module = Machine#machine_state.keyboard_module,
         beeper_module = Machine#machine_state.beeper_module,
@@ -471,7 +519,8 @@ sync_from_cpu(#machine_state{} = Machine, Cpu, MachineTStates) ->
         screen = ExtCtx#ext_context.screen,
         beeper = ExtCtx#ext_context.beeper,
         ay = ExtCtx#ext_context.ay,
-        kempston_mouse = ExtCtx#ext_context.kempston_mouse
+        kempston_mouse = ExtCtx#ext_context.kempston_mouse,
+        tape_blocks = ExtCtx#ext_context.tape_blocks
     }.
 
 %% @doc Execute one complete frame (69888 T-states) and close it: run the
@@ -532,10 +581,10 @@ run_frame_execute(Machine) ->
 %% the next frame's span. Events recorded past FrameLen are the next frame's
 %% tail, carried over by the device frame_render (rebased by -FrameLen), so
 %% they land at the start of the next frame, where the ULA timeline puts them.
-%% When no TAP loading is in flight the whole frame runs as a CPU-internal
-%% instruction loop (run_frame_execute) so the machine/ext_context records are
-%% not rebuilt per instruction; the LD-BYTES tape trap lives in the machine
-%% step/1, so a TAP load falls back to the per-instruction machine loop.
+%% The whole frame runs as a CPU-internal instruction loop (run_frame_execute)
+%% so the machine/ext_context records are not rebuilt per instruction; the
+%% LD-BYTES tape trap rides that loop through the CPU pre-step hook
+%% (tape_pre_step/1), so TAP loading needs no separate slow path.
 %% Whether the frame's INT request should be asserted at the frame start. The
 %% real Z80 samples /INT only at instruction boundaries, and the frame starts
 %% at the instruction boundary that overshot it (variant A), StartT T-states
@@ -548,54 +597,7 @@ int_asserted(StartT, IntPulse) when StartT < IntPulse -> true;
 int_asserted(_StartT, _IntPulse) -> false.
 
 execute_frame(#machine_state{} = Machine) ->
-    case Machine#machine_state.tape_blocks of
-        [] ->
-            execute_frame_cpu_loop(Machine);
-        _ ->
-            execute_frame_machine_loop(Machine)
-    end.
-
-%% The TAP-loading path: the LD-BYTES trap needs the machine step/1 between
-%% instructions, so it keeps the original per-instruction loop.
-execute_frame_machine_loop(Machine0a) ->
-    Model = Machine0a#machine_state.model,
-    StartT = Machine0a#machine_state.t_states,
-    FrameLen = Model#machine_model.tstates_per_frame,
-    IntPulse = Model#machine_model.int_pulse,
-    Machine2b = case int_asserted(StartT, IntPulse) of
-        true ->
-            Cpu1 = Machine0a#machine_state.cpu,
-            Machine2 = Machine0a#machine_state{cpu = z80_cpu:request_interrupt(Cpu1, int)},
-            %% End of the INT pulse: the int_pulse-th T-state of the frame,
-            %% measured from the nominal frame boundary. The pulse is anchored
-            %% at that boundary (counter 0), so an unacknowledged request is
-            %% dropped at counter IntPulse — never at StartT + IntPulse, which
-            %% would stretch the pulse by the carried tail.
-            Machine2a = run_until_tstates(Machine2, IntPulse),
-            Cpu2a = Machine2a#machine_state.cpu,
-            Cpu2b = z80_cpu:clear_interrupt_request(Cpu2a),
-            Machine2a#machine_state{cpu = Cpu2b};
-        false ->
-            Machine0a
-    end,
-
-    %% Physical overrun framing: the tail (StartT) belongs to the next frame's
-    %% span, so the frame closes when the counter reaches FrameLen (the machine
-    %% executes FrameLen - StartT new T-states); events recorded past the
-    %% counter are the next frame's tail, carried over by the device
-    %% frame_render (rebased by -FrameLen).
-    Phase2End = FrameLen,
-    Machine3 = run_until_tstates(Machine2b, Phase2End),
-
-    Overshoot = Machine3#machine_state.t_states - Phase2End,
-
-    Cpu3 = Machine3#machine_state.cpu,
-    Cpu4 = Cpu3#cpu_state{t_states = Overshoot},
-
-    Machine3#machine_state{
-        cpu = Cpu4,
-        t_states = Overshoot
-    }.
+    execute_frame_cpu_loop(Machine).
 
 %% The fast path: inject the live device states into the CPU once, run the
 %% whole frame as one CPU-internal loop, and read the devices back once.

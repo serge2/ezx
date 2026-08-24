@@ -149,7 +149,13 @@ load_tap(Machine, Data) ->
                 {3, {set, [?KEY_ENTER]}},
                 {5, release}
             ],
+            %% Arm the LD-BYTES pre-step hook on the CPU record (same trap as
+            %% the 48K machine; see ezx_emulator:tape_pre_step/1).
+            Cpu = (Machine#machine_state.cpu)#cpu_state{
+                pre_step_fun = fun ezx_emulator:tape_pre_step/1
+            },
             {ok, Machine#machine_state{
+                cpu = Cpu,
                 tape_blocks = Blocks,
                 keyboard_queue = Q
             }}

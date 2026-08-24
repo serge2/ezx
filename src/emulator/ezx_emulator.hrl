@@ -188,6 +188,10 @@
     beeper = undefined,
     ay = undefined,
     kempston_mouse = undefined,
+    %% Pending TAP blocks for the LD-BYTES fast-load trap (mirrors
+    %% #machine_state.tape_blocks; the pre-step hook consumes it mutably and
+    %% sync_from_cpu/3 copies the rest back at step/frame boundaries).
+    tape_blocks = [],
     %% Device modules so the shared port handlers (ezx_emulator:read_* /
     %% write_*) can call the configured implementation (undefined = absent).
     memory_module = undefined,

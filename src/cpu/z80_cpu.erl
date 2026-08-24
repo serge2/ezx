@@ -96,7 +96,19 @@ clear_interrupt_request(#cpu_state{} = State) ->
     State#cpu_state{pending_interrupt = none}.
 
 
-step(#cpu_state{} = State) ->
+%% Pre-step trap hook: the machine may replace a whole step (fast-load
+%% traps rewrite registers and redirect PC, so they cannot be expressed as a
+%% device-side read). Consulted before interrupt sampling and halt handling —
+%% exactly where the old per-instruction machine loop checked PC.
+step(#cpu_state{pre_step_fun = undefined} = State) ->
+    step_1(State);
+step(State = #cpu_state{pre_step_fun = Fun}) ->
+    case Fun(State) of
+        {handled, State1} -> State1;
+        continue -> step_1(State)
+    end.
+
+step_1(#cpu_state{} = State) ->
     case maybe_handle_interrupt(State) of
         {handled, State1} -> State1;
         {not_handled, State1} ->

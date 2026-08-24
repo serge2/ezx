@@ -589,13 +589,19 @@ overclocked_frame_renders_base_size_test() ->
 %% --- Helpers ---
 
 init_machine() ->
-    RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
+    {ok, Rom} = file:read_file(test_rom_path()),
+    ezx_emulator:init(?SPECTRUM_48_MODEL, z80_cpu, ezx_memory_48_pages512_tuples, ezx_keyboard, ezx_beeper2, undefined, Rom).
+
+test_rom_binary() ->
+    {ok, Rom} = file:read_file(test_rom_path()),
+    Rom.
+
+test_rom_path() ->
+    try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
     catch error:badarg ->
         BeamDir = filename:dirname(code:which(?MODULE)),
         filename:join([filename:dirname(BeamDir), "priv", "roms", "48.rom"])
-    end,
-    {ok, Rom} = file:read_file(RomPath),
-    ezx_emulator:init(?SPECTRUM_48_MODEL, z80_cpu, ezx_memory_48_pages512_tuples, ezx_keyboard, ezx_beeper2, undefined, Rom).
+    end.
 
 init_machine_128() ->
     RomPath = try filename:join([code:priv_dir(ezx), "roms", "48.rom"])
@@ -863,6 +869,45 @@ tape_trap_short_block_test() ->
     Machine2 = set_pc(set_ix_de(Machine1, Dest, 100), 16#0563),
     Machine3 = ezx_emulator:step(Machine2),
     assert_trap_result(Machine3, Dest, Payload).
+
+tape_trap_signature_gate_miss_test() ->
+    %% A foreign image mapped at 0x0000 (TR-DOS overlay, service ROM,
+    %% all-RAM bank, editor chip) never carries the ROM 1 LD-BYTES prologue
+    %% under its own code at those addresses; the signature gate must leave
+    %% such code alone even with a TAP pending and PC on a trap entry.
+    %% The memory backend ignores writes to ROM, so the "foreign image" is
+    %% modelled by building the machine from a patched 48K ROM binary.
+    Rom = test_rom_binary(),
+    <<Head:16#0556/binary, _Prologue:3/binary, Tail/binary>> = Rom,
+    ForeignRom = <<Head/binary, 16#00, 16#00, 16#00, Tail/binary>>,
+    Machine0 = ezx_emulator:init(?SPECTRUM_48_MODEL, z80_cpu,
+                                 ezx_memory_48_pages512_tuples, ezx_keyboard,
+                                 ezx_beeper2, undefined, ForeignRom),
+    Payload = <<1, 2, 3>>,
+    {ok, Machine1} = ezx_emulator:load_tap(Machine0, build_tap([Payload])),
+    Machine2 = set_pc(set_ix_de(Machine1, 16#8000, byte_size(Payload)), 16#0556),
+    Machine3 = ezx_emulator:step(Machine2),
+    %% One NOP executed, no trap: the block is still pending.
+    ?assertEqual(16#0557, z80_cpu:pc(Machine3#machine_state.cpu)),
+    ?assertEqual(1, length(Machine3#machine_state.tape_blocks)).
+
+tape_trap_disarms_after_last_block_test() ->
+    %% After the last block is served the pre-step hook is cleared, so a
+    %% later PC hit on an entry address executes the real ROM instead of
+    %% re-firing on stale state.
+    Machine0 = init_machine(),
+    Payload = <<16#42>>,
+    {ok, Machine1} = ezx_emulator:load_tap(Machine0, build_tap([Payload])),
+    Machine2 = set_pc(set_ix_de(Machine1, 16#8000, byte_size(Payload)), 16#0556),
+    Machine3 = ezx_emulator:step(Machine2),
+    assert_trap_result(Machine3, 16#8000, Payload),
+    %% Step again at the entry: the trap is disarmed, the ROM instruction
+    %% runs (INC D at 0x0556 -> PC advances, D increments).
+    Machine4 = set_pc(Machine3, 16#0556),
+    Machine5 = ezx_emulator:step(Machine4),
+    ?assertEqual(16#0557, z80_cpu:pc(Machine5#machine_state.cpu)),
+    ?assertEqual(1, z80_cpu:get_reg_byte(d, Machine5#machine_state.cpu)),
+    ?assertEqual([], Machine5#machine_state.tape_blocks).
 
 set_ix_de(#machine_state{cpu = Cpu} = Machine, IX, DE) ->
     Cpu1 = Cpu#cpu_state{

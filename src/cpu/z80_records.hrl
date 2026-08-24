@@ -42,6 +42,12 @@
     %% fetches only, and may return {Byte, ExtContext1} to mutate device
     %% state (Pentagon Beta-interface magic window). Undefined = pure reads.
     opcode_read_fun = undefined,
+    %% Optional pre-step trap hook (machine-level fast-load traps): consulted
+    %% once per instruction before anything else, including interrupt handling.
+    %% Fun(#cpu_state{}) -> {handled, #cpu_state{}} (the whole step is replaced
+    %% — no instruction executes) | continue. Undefined = no traps, the step
+    %% body runs directly with no fun call.
+    pre_step_fun = undefined,
     mem_write_fun = undefined,
     port_read_fun = undefined,
     port_write_fun = undefined,
