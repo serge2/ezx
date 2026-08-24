@@ -38,6 +38,10 @@
     displacement = undefined :: integer(),  % Signed displacement for DD CB / FD CB
     ext_context = undefined,
     mem_read_fun = undefined,
+    %% Optional M1-cycle read: called instead of mem_read_fun for opcode
+    %% fetches only, and may return {Byte, ExtContext1} to mutate device
+    %% state (Pentagon Beta-interface magic window). Undefined = pure reads.
+    opcode_read_fun = undefined,
     mem_write_fun = undefined,
     port_read_fun = undefined,
     port_write_fun = undefined,

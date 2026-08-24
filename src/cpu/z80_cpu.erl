@@ -3,7 +3,7 @@
 -include("z80_records.hrl").
 
 -export([
-    init_state/5,
+    init_state/6,
     step/1,
     run_until_tstates/2,
     request_interrupt/2,
@@ -21,15 +21,29 @@
 
 -export_type([state/0]).
 
-%% @doc Create a fresh CPU state with all callback functions.
--spec init_state(function(), function(), function(), function(), function()) -> state().
-init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun) ->
+%% Stuck-loop guard for run_until_tstates/2: a legal frame is ~72k T-states
+%% at a minimum of 4 T per instruction (<= ~18k steps), so this bound is
+%% ~160x the worst legal case. Exceeding it means the CPU can never reach
+%% its target — an emulator bug — and the loop aborts with a state dump
+%% instead of hanging the machine process forever.
+-define(MAX_STUCK_STEPS, 3000000).
+
+%% @doc Create a fresh CPU state with all callback functions. OpcodeReadFun
+%% is optional (undefined = opcode fetches use MemReadFun like any read);
+%% when set, it is consulted on every M1 cycle instead of the plain read and
+%% may return {Byte, ExtContext1} to mutate device state (Pentagon
+%% Beta-interface magic window).
+-spec init_state(function(), function(), function(), function(),
+                 function(), function() | undefined) -> state().
+init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun,
+           OpcodeReadFun) ->
     #cpu_state{
         mem_read_fun = MemReadFun,
         mem_write_fun = MemWriteFun,
         port_read_fun = PortReadFun,
         port_write_fun = PortWriteFun,
-        bus_read_fun = BusReadFun
+        bus_read_fun = BusReadFun,
+        opcode_read_fun = OpcodeReadFun
     }.
 
 %% @doc Return the current program counter from the machine state.
@@ -48,11 +62,23 @@ t_states(#cpu_state{t_states = TStates}) ->
 %% inside the CPU so the emulator does not rebuild the machine/ext_context
 %% records on every instruction.
 -spec run_until_tstates(#cpu_state{}, non_neg_integer()) -> #cpu_state{}.
-run_until_tstates(#cpu_state{t_states = TStates} = State, Target)
+run_until_tstates(State, Target) ->
+    run_until_tstates3(State, Target, 0).
+
+run_until_tstates3(#cpu_state{t_states = TStates} = State, Target, _N)
   when TStates >= Target ->
     State;
-run_until_tstates(State, Target) ->
-    run_until_tstates(step(State), Target).
+run_until_tstates3(#cpu_state{t_states = TStates} = State, Target, N)
+  when N > ?MAX_STUCK_STEPS ->
+    erlang:error({stuck_in_run_until_tstates,
+                  #{pc => State#cpu_state.pc, t_states => TStates,
+                    target => Target, im => State#cpu_state.im,
+                    halted => State#cpu_state.halted,
+                    iff1 => State#cpu_state.iff1,
+                    pending => State#cpu_state.pending_interrupt,
+                    ei_block => State#cpu_state.ei_block}});
+run_until_tstates3(State, Target, N) ->
+    run_until_tstates3(step(State), Target, N + 1).
 
 %% @doc Assert the external interrupt signal (int | nmi). The signal is owned
 %% by the emulator: the CPU only samples pending_interrupt in

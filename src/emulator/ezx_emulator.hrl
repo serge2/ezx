@@ -97,6 +97,9 @@
     line_geometry = ?LINE_GEOMETRY_48K,
     frame_geometry = ?FRAME_GEOMETRY_48K}).
 
+%% Pentagon 512K / 1024K share the Pentagon 128 raster exactly — the models
+%% differ only in how much RAM the memory backend wires (the memory module is
+%% built with 32 / 64 banks; see ezx_memory_pentagon).
 -define(PENTAGON_128_MODEL, #machine_model{
     cpu_clock = 3584000,
     base_cpu_clock = 3584000,
@@ -105,6 +108,9 @@
     int_pulse = 36,
     line_geometry = ?LINE_GEOMETRY_PENTAGON,
     frame_geometry = ?FRAME_GEOMETRY_PENTAGON}).
+
+-define(PENTAGON_512_MODEL, ?PENTAGON_128_MODEL).
+-define(PENTAGON_1024_MODEL, ?PENTAGON_128_MODEL).
 
 %% Per-frame timing accumulators collected by run_frame/1 so the UI can report
 %% where time actually goes. cpu = keyboard + execution,
@@ -123,6 +129,10 @@
 -record(machine_state, {
     %% Machine timing model (CPU clock + raster geometry).
     model :: #machine_model{},
+    %% Machine identity ('48k' | '128k' | 'pentagon_128' | 'pentagon_512' |
+    %% 'pentagon_1024'), set at creation — the save paths (ezx_saves) read it
+    %% instead of guessing the type from memory-module capabilities.
+    machine_type :: atom(),
     cpu_module :: module(),
     cpu,
     memory_module :: module(),

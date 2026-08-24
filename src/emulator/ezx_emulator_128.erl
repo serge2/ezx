@@ -50,9 +50,11 @@ init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, {Rom0,
             ezx_emulator_lib:write_port(PortWriteTable, ExtContext, TState, Port, Byte)
         end,
     BusReadFun = fun() -> 16#FF end,
-    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun),
+    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun,
+                                PortWriteFun, BusReadFun, undefined),
     #machine_state{
         model = Model,
+        machine_type = '128k',
         cpu_module = CPUModule,
         memory_module = MemModule,
         keyboard_module = KeyboardModule,

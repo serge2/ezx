@@ -56,13 +56,22 @@
 ]).
 
 %% M1 cycle: opcode fetch (increments R register, adds 4 T-states)
-fetch_opcode(State) ->
+fetch_opcode(State = #cpu_state{opcode_read_fun = undefined}) ->
     Address = ?GET_PC(State),
     {Byte, State1} = read_byte(State, Address),
-    R = ?GET_R(State1),
-    State2 = ?SET_R(State1, (R band 16#80) bor ((R + 1) band 16#7F)), 
-    State3 = ?SET_PC(State2, (Address + 1) band 16#ffff),
-    {Byte, advance_tstates(State3, 4)}.
+    advance_opcode_fetch(Byte, State1, Address);
+fetch_opcode(State = #cpu_state{opcode_read_fun = Fun, ext_context = ExtContext,
+                                t_states = TState}) ->
+    Address = ?GET_PC(State),
+    {Byte, ExtContext1} = Fun(ExtContext, TState, Address band 16#ffff),
+    State1 = maybe_update_ext_context(State, ExtContext, ExtContext1),
+    advance_opcode_fetch(Byte, State1, Address).
+
+advance_opcode_fetch(Byte, State, Address) ->
+    R = ?GET_R(State),
+    State1 = ?SET_R(State, (R band 16#80) bor ((R + 1) band 16#7F)),
+    State2 = ?SET_PC(State1, (Address + 1) band 16#ffff),
+    {Byte, advance_tstates(State2, 4)}.
 
 %% Regular byte fetch: operands, addresses (does NOT increment R, adds 3 T-states)
 fetch_byte(State) ->

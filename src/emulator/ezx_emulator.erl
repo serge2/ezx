@@ -59,9 +59,11 @@ init(Model, CPUModule, MemModule, KeyboardModule, BeeperModule, AyModule, Rom) -
             ezx_emulator_lib:write_port(PortWriteTable, ExtContext, TState, Port, Byte)
         end,
     BusReadFun = fun() -> 16#FF end,
-    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun),
+    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun,
+                                PortWriteFun, BusReadFun, undefined),
     #machine_state{
         model = Model,
+        machine_type = '48k',
         cpu_module = CPUModule,
         memory_module = MemModule,
         keyboard_module = KeyboardModule,
@@ -877,10 +879,15 @@ read_ay(#ext_context{ay = AY, ay_module = AyModule} = ExtContext, _TState, _Port
 %% and 0xFFFD address latch (A14=1); the A14 bit (0x4000) selects which.
 write_ay(#ext_context{ay = undefined}, _TState, _Port, _Byte) ->
     nomatch;
-write_ay(#ext_context{ay = AY, ay_module = AyModule} = ExtContext, TState, Port, Byte) ->
+write_ay(#ext_context{ay = AY, ay_module = AyModule} = ExtContext,
+         TState, Port, Byte) ->
     case Port band 16#4000 of
-        0 -> ExtContext#ext_context{ay = AyModule:write(AY, Byte, TState)};
-        _ -> ExtContext#ext_context{ay = AyModule:latch(AY, Byte)}
+        0 ->
+            %% Data register write.
+            ExtContext#ext_context{ay = AyModule:write(AY, Byte, TState)};
+        _ ->
+            %% Register latch.
+            ExtContext#ext_context{ay = AyModule:latch(AY, Byte)}
     end.
 
 %% Kempston mouse port handler. The port → register mapping is owned by the

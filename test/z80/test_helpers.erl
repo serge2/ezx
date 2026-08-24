@@ -22,7 +22,8 @@ init_cpu() ->
     PortReadFun = fun(ExtContext, _TState, _Port) -> {16#FF, ExtContext} end,
     PortWriteFun = fun(ExtContext, _TState, _Port, _Byte) -> ExtContext end,
     BusReadFun = fun() -> 16#FF end,
-    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun, PortWriteFun, BusReadFun),
+    Cpu0 = z80_cpu:init_state(MemReadFun, MemWriteFun, PortReadFun,
+                                PortWriteFun, BusReadFun, undefined),
     Cpu0#cpu_state{
         ext_context = #ext_context{memory = Mem}
     }.
