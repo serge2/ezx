@@ -141,7 +141,9 @@ new() ->
 new(Chip) when Chip =:= ay; Chip =:= ym ->
     #ay_state{
         chip = Chip,
-        regs = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+        %% Registers 14/15 are the I/O ports: their pins are inputs on reset
+        %% and float high when nothing drives them (no keypad attached).
+        regs = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,16#FF,16#FF},
         latch = 0,
         active = true,
         tone_phase_a = 0,

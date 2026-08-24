@@ -169,7 +169,10 @@ new() ->
 %% See the module header for the behavioural differences between the two.
 -spec new(ay | ym) -> state().
 new(Chip) when Chip =:= ay; Chip =:= ym ->
-    InitRegs = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    %% Registers 14/15 are the I/O ports: their pins are inputs on reset and
+    %% float high when nothing drives them (no keypad attached), so they
+    %% read back as set, unlike the sound registers which reset to zero.
+    InitRegs = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,16#FF,16#FF},
     #ay_state_seg{
         chip = Chip,
         regs = InitRegs,
