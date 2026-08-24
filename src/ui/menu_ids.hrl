@@ -7,9 +7,16 @@
 -define(MENU_SCALE_4X, 7053).
 -define(MENU_MACHINE_48, 7100).
 -define(MENU_MACHINE_128, 7101).
--define(MENU_MACHINE_PENTAGON, 7102).
+-define(MENU_MACHINE_PENTAGON, 7102).        %% Pentagon 128K
+-define(MENU_MACHINE_PENTAGON_512, 7103).    %% Pentagon 512K
+-define(MENU_MACHINE_PENTAGON_1024, 7104).   %% Pentagon 1024K
 -define(MENU_SETTINGS_SOUND, 7200).
 -define(MENU_SETTINGS_MOUSE, 7201).
+-define(MENU_SETTINGS_ROMS, 7202).
+%% ROMs-dialog browse buttons: one id per (machine type, slot), encoded as
+%% base + type_index * 8 + slot (see ezx_roms_dialog:browse_id/2).
+-define(BTN_ROM_BROWSE_BASE, 8100).
+-define(BTN_ROM_RESET, 8150).  %% ROMs dialog: reset shown type's paths to defaults
 -define(MENU_DEBUG_PERF, 7300).
 -define(MENU_ABOUT, 7500).
 -define(MENU_CPU_X1, 7601).  %% CPU Clock x1 (session-only, not persisted)

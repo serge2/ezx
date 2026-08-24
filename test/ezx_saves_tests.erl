@@ -127,12 +127,15 @@ machine_type_128k_test() ->
     ?assertEqual('128k', ezx_saves:machine_type(init_machine_128())).
 
 machine_type_pentagon_test() ->
-    ?assertEqual('pentagon_128', ezx_saves:machine_type(init_machine_pentagon())).
+    ?assertEqual('pentagon_128', ezx_saves:machine_type(init_machine_pentagon('pentagon_128'))),
+    ?assertEqual('pentagon_512', ezx_saves:machine_type(init_machine_pentagon('pentagon_512'))),
+    ?assertEqual('pentagon_1024', ezx_saves:machine_type(init_machine_pentagon('pentagon_1024'))).
 
-%% Pentagon is a 128K machine with its own raster, so it serializes as an
-%% extended Z80 (hw_mode 3 with the AY) and loads back through the 128K module.
+%% A Pentagon machine serializes as an extended Z80 (hw_mode 3 with the AY)
+%% — banks 0-7 + p7FFD, the same layout as the 128K — and loads back keeping
+%% its explicit machine type.
 z80_pentagon_round_trip_test() ->
-    M0 = init_machine_pentagon(),
+    M0 = init_machine_pentagon(pentagon_128),
     MemModule = M0#machine_state.memory_module,
     Mem1 = MemModule:write_port_7ffd(M0#machine_state.memory, 16#07),
     Cpu = M0#machine_state.cpu,
@@ -142,7 +145,7 @@ z80_pentagon_round_trip_test() ->
     {ok, Z80} = ezx_saves:serialize_z80(M1),
     ?assert(byte_size(Z80) < 30 + 2 + 23 + 8 * 16387),
 
-    {ok, Loaded} = ezx_emulator_128:load_z80(init_machine_pentagon(), Z80),
+    {ok, Loaded} = ezx_emulator_pentagon:load_z80(init_machine_pentagon(pentagon_128), Z80),
     Cpu2 = Loaded#machine_state.cpu,
     ?assertEqual(16#5678, Cpu2#cpu_state.pc),
     ?assertEqual(16#1234, Cpu2#cpu_state.sp),
@@ -486,11 +489,12 @@ init_machine_128() ->
     ezx_emulator_128:init(?SPECTRUM_128_MODEL, z80_cpu, ezx_memory_128_banks_tuples,
                           ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom, Rom}).
 
-init_machine_pentagon() ->
+init_machine_pentagon(MachineType) ->
     RomPath = rom_path("48.rom"),
     {ok, Rom} = file:read_file(RomPath),
-    ezx_emulator_128:init(?PENTAGON_128_MODEL, z80_cpu, ezx_memory_128_banks_tuples,
-                          ezx_keyboard, ezx_beeper2, ezx_ay38912_seg, {Rom, Rom}).
+    ezx_emulator_pentagon:init(?PENTAGON_128_MODEL, z80_cpu, ezx_memory_pentagon,
+                               ezx_keyboard, ezx_beeper2, ezx_ay38912_seg,
+                               {Rom, Rom, undefined, MachineType}).
 
 rom_path(File) ->
     try filename:join([code:priv_dir(ezx), "roms", File])

@@ -41,7 +41,7 @@
 
 -record(state, {
     machine   :: #machine_state{} | undefined,
-    machine_type = '48k' :: '48k' | '128k' | 'pentagon_128',
+    machine_type = '48k' :: '48k' | '128k' | 'pentagon_128' | 'pentagon_512' | 'pentagon_1024',
     current_file = undefined :: string() | undefined,
     frame     :: wxFrame:wxFrame(),
     panel     :: wxPanel:wxPanel(),
@@ -74,6 +74,8 @@
     mix_dc_r = undefined :: ezx_audio_filter:state() | undefined,
     sound_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxSlider:wxSlider(), wxSlider:wxSlider(), wxChoice:wxChoice(), wxChoice:wxChoice()}} | undefined,
     mouse_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxCheckBox:wxCheckBox(), wxCheckBox:wxCheckBox()}} | undefined,
+    roms_dialog_refs = undefined :: {wxDialog:wxDialog(), {wxChoice:wxChoice(), wxPanel:wxPanel(),
+                                                           #{non_neg_integer() => wxTextCtrl:wxTextCtrl()}, atom()}} | undefined,
     file_dialog_dir = undefined :: string() | undefined,
     saves_dialog_refs = undefined :: {wxDialog:wxDialog(), wxListCtrl:wxListCtrl(),
                                       wxButton:wxButton(), wxButton:wxButton(), wxButton:wxButton(),
@@ -119,6 +121,8 @@ init(_Options) ->
     wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_48, "ZX Spectrum 48K"),
     wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_128, "ZX Spectrum 128K"),
     wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_PENTAGON, "Pentagon 128K"),
+    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_PENTAGON_512, "Pentagon 512K"),
+    wxMenu:appendRadioItem(ModelMenu, ?MENU_MACHINE_PENTAGON_1024, "Pentagon 1024K"),
     wxMenuBar:append(MenuBar, ModelMenu, "Model"),
     ViewMenu = wxMenu:new(),
     wxMenu:append(ViewMenu, ?MENU_FULLSCREEN, "Fullscreen\tF11", [{help, "Toggle fullscreen mode"}]),
@@ -134,6 +138,7 @@ init(_Options) ->
     SettingsMenu = wxMenu:new(),
     wxMenu:append(SettingsMenu, ?MENU_SETTINGS_SOUND, "Sound...", [{help, "Configure sound settings"}]),
     wxMenu:append(SettingsMenu, ?MENU_SETTINGS_MOUSE, "Mouse...", [{help, "Configure the Kempston mouse"}]),
+    wxMenu:append(SettingsMenu, ?MENU_SETTINGS_ROMS, "ROMs...", [{help, "Configure the ROM files used by each machine type"}]),
     wxMenuBar:append(MenuBar, SettingsMenu, "Settings"),
     ActionsMenu = wxMenu:new(),
     wxMenu:append(ActionsMenu, ?MENU_RESET, "Reset\tF7", [{help, "Reset the emulator"}]),
@@ -719,6 +724,80 @@ handle_info(#wx{id = ?MENU_SETTINGS_SOUND, event = #wxCommand{type = command_men
     Refs = ezx_sound_dialog:open(Frame, BV, AV, Mode, Chip),
     {noreply, State#state{sound_dialog_refs = Refs}};
 
+handle_info(#wx{id = ?MENU_SETTINGS_ROMS, event = #wxCommand{type = command_menu_selected}},
+            #state{frame = Frame, machine_type = Type} = State) ->
+    case State#state.roms_dialog_refs of
+        undefined ->
+            Refs = ezx_roms_dialog:open(Frame, Type),
+            {noreply, State#state{roms_dialog_refs = Refs}};
+        _ ->
+            {noreply, State}
+    end;
+
+%% ROMs dialog OK: persist the shown type's paths (empty field = bundled
+%% default) and rebuild the machine so the new ROMs load (like a reset).
+%% The obj check keeps these clauses from consuming other dialogs' buttons.
+handle_info(#wx{id = ?wxID_OK, obj = Obj, event = #wxCommand{type = command_button_clicked}},
+            #state{roms_dialog_refs = {Dialog, _} = Refs} = State) when Obj =:= Dialog ->
+    Type = ezx_roms_dialog:current_type(Refs),
+    Paths = ezx_roms_dialog:collect(Refs),
+    wxDialog:destroy(Dialog),
+    wxWindow:update(State#state.frame),
+    ezx_ui_lib:set_rom_paths(Type, Paths),
+    recreate_machine(State#state{roms_dialog_refs = undefined});
+
+handle_info(#wx{id = ?wxID_CANCEL, obj = Obj, event = #wxCommand{type = command_button_clicked}},
+            #state{roms_dialog_refs = {Dialog, _}} = State) when Obj =:= Dialog ->
+    wxDialog:destroy(Dialog),
+    {noreply, State#state{roms_dialog_refs = undefined}};
+
+%% ROMs dialog "Reset to defaults": refill the shown type's fields with the
+%% bundled defaults (empty for the optional slots). Nothing is persisted until
+%% OK applies them like any edited paths.
+handle_info(#wx{id = ?BTN_ROM_RESET, obj = Obj, event = #wxCommand{type = command_button_clicked}},
+            #state{roms_dialog_refs = {Dialog, {_, _, Rows, Type}}} = State) when Obj =:= Dialog ->
+    lists:foreach(fun({Slot, Text}) ->
+        wxTextCtrl:setValue(Text, ezx_ui_lib:default_rom_path(Type, Slot))
+    end, maps:to_list(Rows)),
+    {noreply, State};
+
+%% ROMs dialog Browse button: open a file picker and fill its text row.
+handle_info(#wx{id = Id, obj = Obj, event = #wxCommand{type = command_button_clicked}},
+            #state{roms_dialog_refs = {Dialog, {_Choice, _Panel, Rows, _}},
+                   frame = Frame} = State) when Obj =:= Dialog ->
+    case ezx_roms_dialog:browse_decode(Id) of
+        error ->
+            {noreply, State};
+        {_Type, Slot} ->
+            Options = [{message, "Select ROM file"},
+                       {wildCard, "ROM files (*.rom)|*.rom|All files (*)|*"},
+                       {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}],
+            FileDialog = wxFileDialog:new(Frame, Options),
+            case wxDialog:showModal(FileDialog) of
+                ?wxID_OK ->
+                    Path = wxFileDialog:getPath(FileDialog),
+                    wxFileDialog:destroy(FileDialog),
+                    wxTextCtrl:setValue(maps:get(Slot, Rows), Path);
+                _ ->
+                    wxFileDialog:destroy(FileDialog)
+            end,
+            {noreply, State}
+    end;
+
+%% ROMs dialog type switch: rebuild the rows for the newly chosen machine
+%% type (the choice id is compared in the body — it is not a constant).
+handle_info(#wx{id = Id, obj = Obj,
+                event = #wxCommand{type = command_choice_selected, commandInt = Index}},
+            #state{roms_dialog_refs = {Dialog, {Choice, _, _, _}}} = State) when Obj =:= Dialog ->
+    case wxWindow:getId(Choice) of
+        Id ->
+            NewType = ezx_roms_dialog:type_from_index(Index),
+            Refs1 = ezx_roms_dialog:rebuild(State#state.roms_dialog_refs, NewType),
+            {noreply, State#state{roms_dialog_refs = Refs1}};
+        _ ->
+            {noreply, State}
+    end;
+
 handle_info(#wx{id = ?wxID_OK, event = #wxCommand{type = command_button_clicked}},
             #state{sound_dialog_refs = {Dialog, {BeeperSlider, AySlider, ModeChoice, ChipChoice}}} = State) ->
     BV = wxSlider:getValue(BeeperSlider),
@@ -798,7 +877,9 @@ handle_info(#wx{id = ?BTN_RENAME, event = #wxCommand{type = command_button_click
 handle_info(#wx{id = Id, event = #wxCommand{type = command_menu_selected}},
             #state{machine_type = OldType} = State) when Id =:= ?MENU_MACHINE_48;
                                                          Id =:= ?MENU_MACHINE_128;
-                                                         Id =:= ?MENU_MACHINE_PENTAGON ->
+                                                         Id =:= ?MENU_MACHINE_PENTAGON;
+                                                         Id =:= ?MENU_MACHINE_PENTAGON_512;
+                                                         Id =:= ?MENU_MACHINE_PENTAGON_1024 ->
     NewType = machine_type_from_menu_id(Id),
     case NewType =/= OldType of
         true ->
@@ -1250,7 +1331,9 @@ toggle_fullscreen(#state{frame = Frame, fullscreen = true, windowed_scale = Wind
 %% The model's {line_geometry, frame_geometry} pair for a machine type.
 display_geometry('48k')        -> {?LINE_GEOMETRY_48K, ?FRAME_GEOMETRY_48K};
 display_geometry('128k')       -> {?LINE_GEOMETRY_48K, ?FRAME_GEOMETRY_48K};
-display_geometry('pentagon_128')-> {?LINE_GEOMETRY_PENTAGON, ?FRAME_GEOMETRY_PENTAGON}.
+display_geometry(Type) when Type =:= 'pentagon_128'; Type =:= 'pentagon_512';
+                            Type =:= 'pentagon_1024' ->
+    {?LINE_GEOMETRY_PENTAGON, ?FRAME_GEOMETRY_PENTAGON}.
 
 %% {Width, Height} of the full emulated frame the renderer produces.
 full_frame_size(Type) ->
@@ -1278,11 +1361,15 @@ crop_trims(Type) ->
 
 machine_type_menu_id('48k')         -> ?MENU_MACHINE_48;
 machine_type_menu_id('128k')        -> ?MENU_MACHINE_128;
-machine_type_menu_id('pentagon_128') -> ?MENU_MACHINE_PENTAGON.
+machine_type_menu_id('pentagon_128') -> ?MENU_MACHINE_PENTAGON;
+machine_type_menu_id('pentagon_512') -> ?MENU_MACHINE_PENTAGON_512;
+machine_type_menu_id('pentagon_1024') -> ?MENU_MACHINE_PENTAGON_1024.
 
 machine_type_from_menu_id(?MENU_MACHINE_48)      -> '48k';
 machine_type_from_menu_id(?MENU_MACHINE_128)     -> '128k';
-machine_type_from_menu_id(?MENU_MACHINE_PENTAGON) -> 'pentagon_128'.
+machine_type_from_menu_id(?MENU_MACHINE_PENTAGON) -> 'pentagon_128';
+machine_type_from_menu_id(?MENU_MACHINE_PENTAGON_512) -> 'pentagon_512';
+machine_type_from_menu_id(?MENU_MACHINE_PENTAGON_1024) -> 'pentagon_1024'.
 
 scale_menu_id(1) -> ?MENU_SCALE_1X;
 scale_menu_id(2) -> ?MENU_SCALE_2X;
@@ -1578,13 +1665,16 @@ save_config(#state{machine_type = MType, option_crop_border = Crop, option_integ
                    muted = Muted, scale = Scale, beeper_vol = BV, ay_master_vol = AV,
                    ay_stereo_mode = Mode, ay_chip = Chip,
                    perf_report = PerfReport, mouse = Mouse}) ->
-    ezx_config:save(#{machine_type => MType, crop_border => Crop, integer_scaling => Exact,
-                       muted => Muted, scale => Scale,
-                       beeper_vol => BV, ay_master_vol => AV, ay_stereo_mode => Mode,
-                       ay_chip => Chip,
-                       perf_report => PerfReport,
-                       kempston_mouse => ezx_ui_mouse:enabled(Mouse),
-                       mouse_swap_buttons => ezx_ui_mouse:swap_buttons(Mouse)}).
+    %% Merge over the full loaded config: keys this function does not own
+    %% (the per-machine-type ROM paths written by the ROMs dialog) survive.
+    Base = ezx_config:load(),
+    ezx_config:save(Base#{machine_type => MType, crop_border => Crop, integer_scaling => Exact,
+                          muted => Muted, scale => Scale,
+                          beeper_vol => BV, ay_master_vol => AV, ay_stereo_mode => Mode,
+                          ay_chip => Chip,
+                          perf_report => PerfReport,
+                          kempston_mouse => ezx_ui_mouse:enabled(Mouse),
+                          mouse_swap_buttons => ezx_ui_mouse:swap_buttons(Mouse)}).
 
 %% @doc Update the Kempston button mask from a host mouse button event.
 %% Buttons are active-low: pressed = bit cleared. Note: motion events
@@ -1704,10 +1794,11 @@ mix_samples(<<B:16/little-signed, BR/binary>>,
 %% @doc Destroy any dialogs still open (the main window is closing).
 -spec cleanup_dialogs(#state{}) -> ok.
 cleanup_dialogs(#state{sound_dialog_refs = Sound, mouse_dialog_refs = Mouse,
-                       saves_dialog_refs = Saves}) ->
+                       saves_dialog_refs = Saves, roms_dialog_refs = Roms}) ->
     destroy_dialog(Sound),
     destroy_dialog(Mouse),
-    destroy_dialog(Saves).
+    destroy_dialog(Saves),
+    destroy_dialog(Roms).
 
 %% @doc Destroy a single open dialog ref ({Dialog, Controls}). `undefined'
 %% means no dialog is open.
@@ -1728,6 +1819,9 @@ close_dialog(Obj, #state{mouse_dialog_refs = {Dialog, _}} = State) when Obj =:= 
 close_dialog(Obj, #state{saves_dialog_refs = {Dialog, _, _, _, _, _}} = State) when Obj =:= Dialog ->
     wxDialog:destroy(Obj),
     State#state{saves_dialog_refs = undefined, saves_entries = []};
+close_dialog(Obj, #state{roms_dialog_refs = {Dialog, _}} = State) when Obj =:= Dialog ->
+    wxDialog:destroy(Obj),
+    State#state{roms_dialog_refs = undefined};
 close_dialog(_Obj, State) ->
     State.
 
