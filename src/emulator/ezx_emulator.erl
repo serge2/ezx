@@ -479,17 +479,15 @@ write_word(Machine, Addr, Word) ->
 
 %% @doc Execute one machine step by advancing the CPU once and updating machine
 %% time. The LD-BYTES fast-load trap lives in the CPU pre-step hook (see
-%% tape_pre_step/1), so this is a plain pass-through.
+%% tape_pre_step/1), so traps fire identically here and in the frame loop.
+%% One instruction = one ext_context build + one sync back; this is a
+%% human-pace API (debug tools and tests), never the per-frame path.
 -spec step(#machine_state{}) -> #machine_state{}.
-step(Machine) ->
-    step_normal(Machine).
-
-step_normal(#machine_state{t_states = MachineTStates} = Machine) ->
+step(#machine_state{t_states = MachineTStates} = Machine) ->
     Cpu0 = Machine#machine_state.cpu,
     ExtContext0 = make_ext_context(Machine),
     Cpu1 = z80_cpu:step(Cpu0#cpu_state{ext_context = ExtContext0, t_states = MachineTStates}),
-    Ticks = Cpu1#cpu_state.t_states - MachineTStates,
-    sync_from_cpu(Machine, Cpu1, MachineTStates + Ticks).
+    sync_from_cpu(Machine, Cpu1, Cpu1#cpu_state.t_states).
 
 %% Build the device #ext_context{} handed to the CPU for one frame (or one
 %% step for the debugger). Reading the configured module names from the machine
@@ -820,13 +818,24 @@ render_ay_channels(#machine_state{ay_pcm = {ChA, ChB, ChC}} = Machine) ->
 
 
 %% @doc Advance the machine until the accumulated T-state budget is reached.
+%% The device context is built once for the whole run (the frame-loop shape),
+%% so debug-tool stepping loops do not pay a rebuild per instruction; armed
+%% pre-step traps are serviced inside z80_cpu:run_until_tstates/2 like
+%% anywhere else, and one sync at the end publishes every device change.
 -spec run_until_tstates(#machine_state{}, non_neg_integer()) -> #machine_state{}.
 run_until_tstates(Machine, Target) when is_integer(Target), Target =< 0 ->
     Machine;
-run_until_tstates(Machine, Target) ->
-    case Machine#machine_state.t_states >= Target of
-        true -> Machine;
-        false -> run_until_tstates(step(Machine), Target)
+run_until_tstates(#machine_state{t_states = StartT} = Machine, Target) ->
+    case StartT >= Target of
+        true ->
+            Machine;
+        false ->
+            Cpu0 = Machine#machine_state.cpu,
+            ExtContext0 = make_ext_context(Machine),
+            Cpu1 = z80_cpu:run_until_tstates(
+                     Cpu0#cpu_state{ext_context = ExtContext0, t_states = StartT},
+                     Target),
+            sync_from_cpu(Machine, Cpu1, Cpu1#cpu_state.t_states)
     end.
 
 
@@ -838,7 +847,7 @@ run_until_tstates(Machine, Target) ->
 %% referenced directly from this machine's port dispatch table as
 %% {ZeroMask, OneMask, fun Handler/N} (local funs — both machines carry the
 %% same handlers so each references local funs). They read the configured
-%% device module from #ext_context (populated in step_normal), so a machine
+%% device module from #ext_context (populated by make_ext_context), so a machine
 %% that lacks a device (AyModule = undefined) leaves the matching state
 %% field undefined and the handler declines with nomatch,
 %% falling through to the 0xFF read / ignore-write default.

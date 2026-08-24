@@ -369,7 +369,7 @@ write_48k_dump(MemModule, Mem, Data) ->
 %% directly from this machine's port dispatch table as
 %% {ZeroMask, OneMask, fun Handler/N} (local funs — both machines carry the
 %% same handlers so each references local funs). They read the configured
-%% device module from #ext_context (populated in step_normal), so a machine
+%% device module from #ext_context (populated by make_ext_context), so a machine
 %% that lacks a device (AyModule = undefined) leaves the matching state
 %% field undefined and the handler declines with nomatch, falling through
 %% to the 0xFF read / ignore-write default.
