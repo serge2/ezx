@@ -31,7 +31,8 @@
     read_byte/2,
     write_byte/3,
     read_word/2,
-    write_word/3
+    write_word/3,
+    arm_tape_trap/1
 ]).
 
 %% ZX Spectrum frame length in T-states.
@@ -248,23 +249,27 @@ load_tap(Machine, Data) ->
         Blocks ->
             io:format("TAP: parsed ~p blocks~n", [length(Blocks)]),
             Q = make_load_queue(),
-            %% Arm the LD-BYTES pre-step hook on the CPU record: from now on
-            %% both execution loops consult it once per instruction, so the
-            %% fast per-frame CPU loop services the trap with no separate
-            %% slow machine path.
-            Cpu = (Machine#machine_state.cpu)#cpu_state{
-                pre_step_fun = fun tape_pre_step/1
-            },
-            {ok, Machine#machine_state{
-                cpu = Cpu,
+            {ok, arm_tape_trap(Machine#machine_state{
                 tape_blocks = Blocks,
                 keyboard_queue = Q
-            }}
+            })}
     catch
         C:E:_S ->
             {error, {bad_tap_data,
                      iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
     end.
+
+%% @doc Arm the LD-BYTES pre-step hook on the machine's CPU record. Exported
+%% for the 128K loader (which builds its own keyboard queue); from now on both
+%% execution loops consult the trap once per instruction, so the fast
+%% per-frame CPU loop services it with no separate slow machine path. The fun
+%% itself stays private — machines must not reach into the CPU record.
+-spec arm_tape_trap(#machine_state{}) -> #machine_state{}.
+arm_tape_trap(Machine) ->
+    Cpu = (Machine#machine_state.cpu)#cpu_state{
+        pre_step_fun = fun tape_pre_step/1
+    },
+    Machine#machine_state{cpu = Cpu}.
 
 %% --- Tape trap (LD-BYTES fast load) ---
 %%
