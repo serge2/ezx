@@ -53,6 +53,7 @@
     write_port_1ffd/2,
     write_port_eff7/2,
     get_eff7/1,
+    get_dos_rom/1,
     set_dos_rom/2,
     ram_banks/1,
     write_bank_block/3
@@ -187,6 +188,9 @@ write_port_eff7(#pmem{} = State, Value) ->
 
 -spec get_eff7(state()) -> byte().
 get_eff7(#pmem{eff7 = Eff7}) -> Eff7.
+
+-spec get_dos_rom(state()) -> boolean().
+get_dos_rom(#pmem{dos_rom = DosRom}) -> DosRom.
 
 %% @doc Drive the (stubbed) Beta disk interface: while enabled and p7FFD bit 4
 %% is clear, the TR-DOS ROM occupies the bottom 16K.

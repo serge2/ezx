@@ -154,6 +154,187 @@ z80_pentagon_round_trip_test() ->
     ?assertEqual(16#07, MemModule:get_p7ffd(Loaded#machine_state.memory)),
     ?assertEqual('pentagon_128', ezx_saves:machine_type(Loaded)).
 
+%% --- .ezs state container (Pentagon 512K / 1024K) ---
+
+%% A pentagon_1024 machine serializes as the EZS container and loads back
+%% with everything: the CPU, border, the whole AY register file (including
+%% the latched register), all 64 RAM banks, #EFF7 and the TR-DOS latch.
+ezs_pentagon_1024_round_trip_test() ->
+    Root = temp_root(),
+    file:del_dir_r(Root),
+    try
+        M0 = init_machine_pentagon('pentagon_1024'),
+        MemModule = M0#machine_state.memory_module,
+        Mem1 = MemModule:write_port_eff7(M0#machine_state.memory, 16#08),
+        Mem2 = MemModule:set_dos_rom(Mem1, true),
+        BankWrites = [{9, fill(16#A9)}, {31, fill(16#B1)}, {63, fill(16#C3)},
+                      {5, fill(16#E5)}],
+        Mem3 = lists:foldl(fun({B, D}, Acc) ->
+            MemModule:write_bank_block(Acc, B, D)
+        end, Mem2, BankWrites),
+        AyModule = M0#machine_state.ay_module,
+        AyRegs = [N * 16 || N <- lists:seq(0, 15)],
+        Ay1 = AyModule:set_regs(M0#machine_state.ay, AyRegs),
+        Ay2 = AyModule:latch(Ay1, 7),
+        Screen1 = ezx_screen:border_set(M0#machine_state.screen, 0, 3),
+        Cpu = M0#machine_state.cpu,
+        Cpu1 = Cpu#cpu_state{pc = 16#5678, sp = 16#1234, a = 16#AB, iff1 = 1},
+        Machine = M0#machine_state{memory = Mem3, cpu = Cpu1, ay = Ay2,
+                                   screen = Screen1},
+
+        {ok, Path} = ezx_saves:save_history(Machine, Root, "g.tap", "big"),
+        %% The container extension follows the machine type; the meta rides
+        %% along unchanged.
+        ?assertEqual(".ezs", filename:extension(Path)),
+        [{Stamp, "big", _, SnapPath, MetaPath} | _] = ezx_saves:list_history(Root),
+        ?assertEqual(Path, SnapPath),
+
+        {ok, Loaded, Meta} = ezx_saves:load_save(SnapPath, MetaPath, ay),
+        ?assertEqual("pentagon_1024", maps:get("machine_type", Meta)),
+        ?assertEqual('pentagon_1024', ezx_saves:machine_type(Loaded)),
+        Cpu2 = Loaded#machine_state.cpu,
+        ?assertEqual(16#5678, Cpu2#cpu_state.pc),
+        ?assertEqual(16#1234, Cpu2#cpu_state.sp),
+        ?assertEqual(16#AB, Cpu2#cpu_state.a),
+        LMemModule = Loaded#machine_state.memory_module,
+        LMem = Loaded#machine_state.memory,
+        ?assertEqual(16#08, LMemModule:get_eff7(LMem)),
+        ?assertEqual(true, LMemModule:get_dos_rom(LMem)),
+        [ ?assertEqual(D, LMemModule:read_bank_block(LMem, B))
+          || {B, D} <- BankWrites ],
+        ?assertEqual(64, LMemModule:ram_banks(LMem)),
+        LAyModule = Loaded#machine_state.ay_module,
+        LAy = Loaded#machine_state.ay,
+        ?assertEqual(AyRegs, LAyModule:regs(LAy)),
+        ?assertEqual(7, LAyModule:selected(LAy)),
+        ?assertEqual(3, ezx_screen:border_get(Loaded#machine_state.screen)),
+        _ = Stamp
+    after
+        file:del_dir_r(Root)
+    end.
+
+%% The container carries an explicit no-AY marker; a chip-less machine saves
+%% "ay_chip=off" in its meta, and the load path rebuilds it without an AY.
+ezs_chipless_round_trip_test() ->
+    Root = temp_root(),
+    file:del_dir_r(Root),
+    try
+        Machine0 = init_machine_pentagon('pentagon_512'),
+        Machine = Machine0#machine_state{ay = undefined, ay_module = undefined},
+        {ok, SnapPath} = ezx_saves:save_history(Machine, Root, "g.tap", "quiet"),
+        {ok, Loaded, Meta} = ezx_saves:load_save(
+            SnapPath, filename:rootname(SnapPath) ++ ".meta", ay),
+        ?assertEqual("off", maps:get("ay_chip", Meta)),
+        ?assertEqual(undefined, Loaded#machine_state.ay_module)
+    after
+        file:del_dir_r(Root)
+    end.
+
+%% A bare Z80 save of a >128K Pentagon (the old behaviour) still loads when
+%% the meta names the machine type: banks 0-7 come back, the extra banks
+%% reset to zeros — documented truncation, not an error.
+old_z80_pentagon_save_still_loads_test() ->
+    Root = temp_root(),
+    file:del_dir_r(Root),
+    try
+        filelib:ensure_dir(filename:join(Root, "dummy")),
+        M0 = init_machine_pentagon('pentagon_512'),
+        MemModule = M0#machine_state.memory_module,
+        Mem1 = MemModule:write_bank_block(M0#machine_state.memory, 20, fill(16#DD)),
+        Cpu = M0#machine_state.cpu,
+        Machine = M0#machine_state{memory = Mem1,
+                                   cpu = Cpu#cpu_state{pc = 16#8000}},
+        {ok, Z80} = ezx_saves:serialize_z80(Machine),
+        Path = filename:join(Root, "old.z80"),
+        ok = file:write_file(Path, Z80),
+        MetaPath = filename:rootname(Path) ++ ".meta",
+        ok = file:write_file(MetaPath,
+                             ezx_saves:meta_to_iodata(#{"machine_type" => "pentagon_512"})),
+        {ok, Loaded, Meta} = ezx_saves:load_save(Path, MetaPath, ay),
+        ?assertEqual("pentagon_512", maps:get("machine_type", Meta)),
+        LMemModule = Loaded#machine_state.memory_module,
+        LMem = Loaded#machine_state.memory,
+        ?assertEqual(16#8000, (Loaded#machine_state.cpu)#cpu_state.pc),
+        ?assertEqual(<<0:16384/unit:8>>, LMemModule:read_bank_block(LMem, 20))
+    after
+        file:del_dir_r(Root)
+    end.
+
+%% A save without a sidecar is still identified by its container header.
+ezs_machine_type_without_meta_test() ->
+    Root = temp_root(),
+    file:del_dir_r(Root),
+    try
+        filelib:ensure_dir(filename:join(Root, "dummy")),
+        Machine = init_machine_pentagon('pentagon_512'),
+        {ok, Snap} = ezx_saves:serialize(Machine),
+        Path = filename:join(Root, "nometa.ezs"),
+        ok = file:write_file(Path, Snap),
+        {ok, Loaded, Meta} = ezx_saves:load_save(
+            Path, filename:rootname(Path) ++ ".meta", ym),
+        ?assertEqual("pentagon_512", maps:get("machine_type", Meta)),
+        ?assertEqual('pentagon_512', ezx_saves:machine_type(Loaded))
+    after
+        file:del_dir_r(Root)
+    end.
+
+%% --- mixed extensions in one saves root ---
+
+list_history_mixed_extensions_test() ->
+    Root = temp_root(),
+    file:del_dir_r(Root),
+    try
+        {ok, _} = ezx_saves:save_history(init_machine(), Root, "g.tap", "forty"),
+        {ok, _} = ezx_saves:save_history(
+            init_machine_pentagon('pentagon_1024'), Root, "g.tap", "kilo"),
+        Entries = ezx_saves:list_history(Root),
+        Names = lists:sort([N || {_, N, _, _, _} <- Entries]),
+        ?assertEqual(["forty", "kilo"], Names),
+        Exts = lists:sort([filename:extension(P) || {_, _, _, P, _} <- Entries]),
+        ?assertEqual([".ezs", ".z80"], Exts),
+
+        %% Rename preserves the container extension.
+        {KiloStamp, _, _, _, _} = lists:keyfind("kilo", 2, Entries),
+        ok = ezx_saves:rename_history(Root, KiloStamp, "kilobyte"),
+        Entries1 = ezx_saves:list_history(Root),
+        {_, "kilobyte", _, KilobytePath, _} = lists:keyfind("kilobyte", 2, Entries1),
+        ?assertEqual(".ezs", filename:extension(KilobytePath)),
+        ?assert(filelib:is_regular(KilobytePath)),
+
+        %% Delete removes the snapshot pair of that base only.
+        {FortyStamp, _, _, FortyPath, FortyMeta} = lists:keyfind("forty", 2, Entries1),
+        ok = ezx_saves:delete_history(Root, filename:rootname(filename:basename(FortyPath))),
+        ?assertNot(filelib:is_regular(FortyPath)),
+        ?assertNot(filelib:is_regular(FortyMeta)),
+        ?assertMatch([{_, "kilobyte", _, _, _}], ezx_saves:list_history(Root))
+    after
+        file:del_dir_r(Root)
+    end.
+
+%% The fixed quick slot follows the last saved machine type's extension, and
+%% quick_path resolves whichever file exists (the newest on ties).
+quick_slot_extension_test() ->
+    Root = temp_root(),
+    file:del_dir_r(Root),
+    try
+        ?assertEqual(none, ezx_saves:quick_path(Root)),
+        {ok, _} = ezx_saves:quick_save(init_machine(), Root, "g.tap"),
+        {ok, Z80Slot, _} = ezx_saves:quick_path(Root),
+        ?assertEqual(".z80", filename:extension(Z80Slot)),
+        {ok, _} = ezx_saves:quick_save(
+            init_machine_pentagon('pentagon_1024'), Root, "g.tap"),
+        {ok, EzsSlot, EzsMeta} = ezx_saves:quick_path(Root),
+        ?assertEqual(".ezs", filename:extension(EzsSlot)),
+        ?assert(filelib:is_regular(EzsMeta)),
+        %% Both slot files coexist; the listing shows ONE quick entry.
+        History = ezx_saves:list_history(Root),
+        QuickEntries = [E || E = {B, _, _, _, _} <- History,
+                             B =:= "Last Quicksave"],
+        ?assertMatch([_], QuickEntries)
+    after
+        file:del_dir_r(Root)
+    end.
+
 %% --- meta sidecar ---
 
 meta_round_trip_test() ->

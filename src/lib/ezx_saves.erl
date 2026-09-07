@@ -3,11 +3,15 @@
 %% @doc Quick save / load and save-history support for the ezx emulator.
 %%
 %% A save is a pair of files with a shared base name:
-%%   - a `.z80` snapshot binary (Fuse-compatible), and
-%%   - a `.meta` sidecar (key=value text, one entry per line) that stores the
-%%     state the Z80 format cannot represent: the beeper level, the AY
-%%     registers, the machine type, the sound chip, the source game file, and
-%%     the save timestamp.
+%%   - a `.z80` snapshot binary (Fuse-compatible) — or, for the machines whose
+%%     state exceeds the Z80 format (Pentagon 512K / 1024K), an `.ezs` state
+%%     container: the emulator's own, fully self-contained format holding
+%%     CPU, border, AY registers, every wired RAM bank and the paging/audio
+%%     latches (see ezx_ezs) — and
+%%   - a `.meta` sidecar (key=value text, one entry per line) that stores
+%%     what the binary does not: the beeper level, the machine type, the
+%%     sound chip, the source game file, and the save timestamp (for .z80
+%%     saves also the AY registers, which Z80 cannot carry).
 %%
 %% The `.meta` file is optional on load: the Z80 binary alone restores the
 %% CPU (PC, IFF1/IFF2, IM included), RAM, paging, border colour and screen.
@@ -41,15 +45,20 @@
 %% identity. F2 named saves are `<Name>-<stamp>` files (the name sanitized to
 %% a filesystem-safe form, the stamp keeping them unique), carrying the full
 %% human `name` in the meta (shown by the manager dialog). list_history/1
-%% lists every `.z80` save in the root, newest first (the fixed quick slot
-%% sorts to the top); older `.sna` saves are ignored.
+%% lists every `.z80`/`.ezs` save in the root, newest first (the fixed quick
+%% slot sorts to the top); older `.sna` saves are ignored.
 %%
 %% All filesystem functions take the saves root explicitly so tests can point
 %% them at a temporary directory; the UI passes ezx_ui_lib:app_dir()/saves.
 
 -export([
+    serialize/1,
     serialize_z80/1,
     to_z80_header/1,
+    serialize_ezs/1,
+    to_ezs_container/1,
+    apply_container/2,
+    load_container/2,
     machine_type/1,
     build_meta/2,
     meta_to_iodata/1,
@@ -61,7 +70,7 @@
     is_quick_slot/1,
     quick_save/3,
     quick_path/1,
-    archive_path/2,
+    archive_path/3,
     save_history/4,
     list_history/1,
     delete_history/2,
@@ -76,8 +85,211 @@
 
 -define(QUICK_STAMP, "Last Quicksave").
 -define(SAVE_EXT, ".z80").
+-define(STATE_EXT, ".ezs").
+%% Snapshot extensions understood on disk; the extension of a NEW save file
+%% follows the machine type (save_ext/1).
+-define(SAVE_EXTS, [".z80", ?STATE_EXT]).
 -define(DEFAULT_PROGRAM, "Basic").
 -define(NAME_MAX_LEN, 60).
+
+%% @doc Serialize a machine for a save: the Z80 format where it suffices, the
+%% ezx state container for the Pentagon models with RAM beyond banks 0-7.
+-spec serialize(#machine_state{}) -> {ok, binary()}.
+serialize(Machine) ->
+    case machine_type(Machine) of
+        T when T =:= 'pentagon_512'; T =:= 'pentagon_1024' -> serialize_ezs(Machine);
+        _ -> serialize_z80(Machine)
+    end.
+
+%% @doc Build an .ezs state container: the emulator's own, fully
+%% self-contained snapshot (see ezx_ezs) — CPU, border, the whole AY register
+%% file, every wired RAM bank and the #7FFD / #EFF7 / TR-DOS latches.
+-spec serialize_ezs(#machine_state{}) -> {ok, binary()}.
+serialize_ezs(Machine) ->
+    {ok, ezx_ezs:compose(to_ezs_container(Machine))}.
+
+%% @doc Capture a machine state as an .ezs container map, ready for
+%% ezx_ezs:compose/1.
+-spec to_ezs_container(#machine_state{}) -> ezx_ezs:container().
+to_ezs_container(Machine) ->
+    #{type => machine_type(Machine),
+      p7ffd => p7ffd_or_zero(Machine),
+      eff7 => eff7_or_zero(Machine),
+      dos_rom => case dos_rom_or_false(Machine) of true -> 1; false -> 0 end,
+      border => ezx_screen:border_get(Machine#machine_state.screen),
+      cpu => cpu_map(Machine),
+      ay => ay_map(Machine),
+      banks => ezs_banks(Machine)}.
+
+p7ffd_or_zero(Machine) ->
+    case machine_type(Machine) of
+        '48k' -> 0;
+        _ -> (Machine#machine_state.memory_module):get_p7ffd(
+               Machine#machine_state.memory)
+    end.
+
+eff7_or_zero(Machine) ->
+    case machine_type(Machine) of
+        T when T =:= 'pentagon_512'; T =:= 'pentagon_1024' ->
+            (Machine#machine_state.memory_module):get_eff7(
+              Machine#machine_state.memory);
+        _ -> 0
+    end.
+
+dos_rom_or_false(Machine) ->
+    case machine_type(Machine) of
+        T when T =:= 'pentagon_128'; T =:= 'pentagon_512'; T =:= 'pentagon_1024' ->
+            (Machine#machine_state.memory_module):get_dos_rom(
+              Machine#machine_state.memory);
+        _ -> false
+    end.
+
+cpu_map(#machine_state{cpu = C}) ->
+    #{a => C#cpu_state.a, f => C#cpu_state.f,
+      b => C#cpu_state.b, c => C#cpu_state.c,
+      d => C#cpu_state.d, e => C#cpu_state.e,
+      h => C#cpu_state.h, l => C#cpu_state.l,
+      a_alt => C#cpu_state.a_alt, f_alt => C#cpu_state.f_alt,
+      b_alt => C#cpu_state.b_alt, c_alt => C#cpu_state.c_alt,
+      d_alt => C#cpu_state.d_alt, e_alt => C#cpu_state.e_alt,
+      h_alt => C#cpu_state.h_alt, l_alt => C#cpu_state.l_alt,
+      i => C#cpu_state.i, r => C#cpu_state.r,
+      ixh => C#cpu_state.ixh, ixl => C#cpu_state.ixl,
+      iyh => C#cpu_state.iyh, iyl => C#cpu_state.iyl,
+      sp => C#cpu_state.sp, pc => C#cpu_state.pc,
+      iff1 => C#cpu_state.iff1, iff2 => C#cpu_state.iff2,
+      im => C#cpu_state.im,
+      halted => case C#cpu_state.halted of true -> 1; false -> 0 end}.
+
+ay_map(#machine_state{ay_module = undefined}) ->
+    undefined;
+ay_map(#machine_state{ay_module = AyModule, ay = Ay}) ->
+    #{selected => AyModule:selected(Ay),
+      regs => list_to_binary(AyModule:regs(Ay))}.
+
+%% The bank order matches ezx_ezs:banks_for_type/1: the flat 48K space is
+%% stored as its three RAM pages in address order; every other type stores
+%% its wired banks 0 upward.
+ezs_banks(#machine_state{memory_module = MemModule, memory = Mem} = Machine) ->
+    case machine_type(Machine) of
+        '48k' ->
+            <<P4000:16384/binary, P8000:16384/binary, PC000:16384/binary>> =
+                MemModule:read_block(Mem, 16#4000, 49152),
+            [P4000, P8000, PC000];
+        T ->
+            [MemModule:read_bank_block(Mem, B)
+             || B <- lists:seq(0, ezx_ezs:banks_for_type(T) - 1)]
+    end.
+
+%% @doc Load an .ezs file into a fresh machine: parse plus error mapping
+%% around apply_container/2. This is the shared implementation behind the
+%% emulators' load_ezs/2 capability.
+-spec load_container(#machine_state{}, binary()) ->
+    {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
+    Error :: unsupported_format | unsupported_version | bad_ezs.
+load_container(Machine0, Data) ->
+    case ezx_ezs:parse(Data) of
+        {ok, Container} ->
+            apply_container(Machine0, Container);
+        {error, {bad_magic, _}} ->
+            {error, {unsupported_format, <<"not an EZS container">>}};
+        {error, {unsupported_version, Detail}} ->
+            {error, {unsupported_version, Detail}};
+        {error, {bad_size, Detail}} ->
+            {error, {bad_ezs, Detail}}
+    end.
+
+%% @doc Restore a fresh machine of the container's type from a parsed .ezs
+%% container map (the inverse of to_ezs_container/1). Banks beyond the
+%% model's wired RAM would be ignored by write_bank_block, but a mismatch
+%% cannot arise anyway: the loader builds the machine from the container's
+%% own type code.
+-spec apply_container(#machine_state{}, ezx_ezs:container()) ->
+    {ok, #machine_state{}} | {error, {bad_ezs, binary()}}.
+apply_container(Machine0, #{type := Type} = Container) ->
+    case machine_type(Machine0) of
+        Type ->
+            Memory = apply_memory(Machine0, Container),
+            Screen = ezx_screen:new(maps:get(border, Container)),
+            Cpu = apply_cpu(Container, Machine0#machine_state.cpu),
+            Machine1 = Machine0#machine_state{
+                memory = Memory,
+                screen = Screen,
+                cpu = Cpu,
+                t_states = 0,
+                beeper_pcm = <<>>,
+                ay = apply_ay_state(Machine0, maps:get(ay, Container))},
+            {ok, Machine1};
+        Other ->
+            {error, {bad_ezs, iolist_to_binary(
+                ["container is for ", atom_to_binary(Type),
+                 ", machine is ", atom_to_binary(Other)])}}
+    end.
+
+apply_memory(Machine0, #{type := Type, p7ffd := P7ffd, eff7 := Eff7,
+                         dos_rom := DosRom, banks := Banks}) ->
+    MemModule = Machine0#machine_state.memory_module,
+    Mem = Machine0#machine_state.memory,
+    case Type of
+        '48k' ->
+            [P4000, P8000, PC000] = Banks,
+            M1 = write_flat(MemModule, Mem, 16#4000, P4000),
+            M2 = write_flat(MemModule, M1, 16#8000, P8000),
+            write_flat(MemModule, M2, 16#C000, PC000);
+        T ->
+            Banked = lists:foldl(
+                fun({Bank, BankBin}, Acc) ->
+                    MemModule:write_bank_block(Acc, Bank, BankBin)
+                end, Mem, lists:zip(lists:seq(0, length(Banks) - 1), Banks)),
+            case T of
+                '128k' ->
+                    MemModule:write_port_7ffd(Banked, P7ffd);
+                'pentagon_128' ->
+                    M1 = MemModule:set_dos_rom(Banked, DosRom =:= 1),
+                    MemModule:write_port_7ffd(M1, P7ffd);
+                Pent when Pent =:= 'pentagon_512'; Pent =:= 'pentagon_1024' ->
+                    %% Latches first, #7FFD last: the routing rebuild it
+                    %% triggers must see the final #EFF7 value (the D5 page
+                    %% bit only counts in 1MB mode).
+                    M1 = MemModule:set_dos_rom(Banked, DosRom =:= 1),
+                    M2 = MemModule:write_port_eff7(M1, Eff7),
+                    MemModule:write_port_7ffd(M2, P7ffd)
+            end
+    end.
+
+write_flat(MemModule, Mem, Base, Bin) ->
+    {_, MemFinal} = lists:foldl(
+        fun(Byte, {Offset, Acc}) ->
+            {Offset + 1, MemModule:write_byte(Acc, Base + Offset, Byte)}
+        end, {0, Mem}, binary:bin_to_list(Bin)),
+    MemFinal.
+
+apply_cpu(#{cpu := Map}, Cpu) ->
+    Cpu#cpu_state{
+        a = m(a, Map), f = m(f, Map), b = m(b, Map), c = m(c, Map),
+        d = m(d, Map), e = m(e, Map), h = m(h, Map), l = m(l, Map),
+        a_alt = m(a_alt, Map), f_alt = m(f_alt, Map),
+        b_alt = m(b_alt, Map), c_alt = m(c_alt, Map),
+        d_alt = m(d_alt, Map), e_alt = m(e_alt, Map),
+        h_alt = m(h_alt, Map), l_alt = m(l_alt, Map),
+        i = m(i, Map), r = m(r, Map),
+        ixh = m(ixh, Map), ixl = m(ixl, Map),
+        iyh = m(iyh, Map), iyl = m(iyl, Map),
+        sp = m(sp, Map), pc = m(pc, Map),
+        iff1 = m(iff1, Map), iff2 = m(iff2, Map), im = m(im, Map),
+        halted = m(halted, Map) =:= 1,
+        pending_interrupt = none}.
+
+m(Key, Map) -> maps:get(Key, Map).
+
+apply_ay_state(#machine_state{ay_module = undefined}, _AyMap) ->
+    undefined;
+apply_ay_state(_Machine, undefined) ->
+    undefined;
+apply_ay_state(#machine_state{ay_module = AyModule, ay = Ay},
+               #{selected := Selected, regs := Regs}) ->
+    AyModule:latch(AyModule:set_regs(Ay, binary_to_list(Regs)), Selected).
+
 
 %% @doc Build a Fuse-compatible Z80 binary from a machine state (the format
 %% used for saves). Unlike SNA there is no error case: the Z80 format stores
@@ -237,14 +449,15 @@ complete_meta(Meta, TargetType, Chip) ->
           "ay_chip" => atom_to_list(Chip)}.
 
 %% @doc Machine type for a save: the meta is authoritative. The fallback for a
-%% save without a meta sidecar parses the snapshot itself — a Z80 file is
-%% detected by its extended header's hw_mode, a SNA file by its size (a 48K
-%% SNA is exactly 27 + 49152 bytes; anything larger is a 128K snapshot),
-%% matching libspectrum's identify_machine.
+%% save without a meta sidecar reads the snapshot itself — an .ezs container
+%% declares its type in the header, a Z80 file is detected by its extended
+%% header's hw_mode, a SNA file by its size (a 48K SNA is exactly
+%% 27 + 49152 bytes; anything larger is a 128K snapshot), matching
+%% libspectrum's identify_machine.
 save_machine_type(undefined, Path) ->
-    case filename:extension(Path) of
-        ".z80" -> z80_machine_type(Path);
-        _ -> sna_machine_type(Path)
+    case file:read_file(Path) of
+        {ok, Data} -> data_machine_type(Data, filename:extension(Path));
+        _ -> '48k'
     end;
 save_machine_type(Meta, _Path) ->
     case maps:get("machine_type", Meta, undefined) of
@@ -255,23 +468,30 @@ save_machine_type(Meta, _Path) ->
         _ -> '48k'
     end.
 
-z80_machine_type(Path) ->
-    case file:read_file(Path) of
-        {ok, Data} ->
-            try ezx_z80:parse(Data) of
-                #z80_header{is_128k = true} -> '128k';
+data_machine_type(Data, Ext) ->
+    case ezx_ezs:is_container(Data) of
+        true ->
+            case ezx_ezs:parse(Data) of
+                {ok, #{type := Type}} -> Type;
                 _ -> '48k'
-            catch
-                _:_ -> '48k'
             end;
-        _ -> '48k'
+        false ->
+            case string:lowercase(Ext) of
+                ".z80" -> z80_data_type(Data);
+                _ -> sna_data_type(Data)
+            end
     end.
 
-sna_machine_type(Path) ->
-    case file:read_file(Path) of
-        {ok, Data} when byte_size(Data) > 27 + 49152 -> '128k';
+z80_data_type(Data) ->
+    try ezx_z80:parse(Data) of
+        #z80_header{is_128k = true} -> '128k';
         _ -> '48k'
+    catch
+        _:_ -> '48k'
     end.
+
+sna_data_type(Data) when byte_size(Data) > 27 + 49152 -> '128k';
+sna_data_type(_Data) -> '48k'.
 
 %% @doc The chip a save was written with, read from the meta as-is: "ym" -> ym,
 %% "ay" -> ay, "off" -> off (a machine with no AY device). The default applies
@@ -305,8 +525,8 @@ is_quick_slot(Stamp) ->
     Stamp =:= ?QUICK_STAMP.
 
 %% @doc Quick save (F5): overwrite the fixed `Last Quicksave` slot and write
-%% an archive copy named <Program>-quicksave-<stamp>. The Z80 serializer has
-%% no failure case (PC is stored explicitly). The slot keeps the plain machine
+%% an archive copy named <Program>-quicksave-<stamp>. The serializers have no
+%% failure case (PC is stored explicitly). The slot keeps the plain machine
 %% meta (its fixed file name is its identity, shown by the manager dialog);
 %% only the archive copy carries the human name `<Program> - Quicksave`.
 %% Returns the path of the archive copy actually written, so the caller can
@@ -315,11 +535,12 @@ is_quick_slot(Stamp) ->
 -spec quick_save(#machine_state{}, string(), string()) ->
     {ok, string()} | {error, term()}.
 quick_save(Machine, SavesRoot, Source) ->
+    Ext = save_ext(Machine),
     SlotMeta = build_meta(Machine, Source),
     ArchiveMeta = SlotMeta#{"name" => quick_name(Source)},
-    case write_save(quick_path_z80(SavesRoot), Machine, SlotMeta) of
+    case write_save(snapshot_path(SavesRoot, ?QUICK_STAMP, Ext), Machine, SlotMeta) of
         ok ->
-            Archive = archive_path(SavesRoot, Source),
+            Archive = archive_path(SavesRoot, Source, Ext),
             filelib:ensure_dir(filename:join(SavesRoot, "dummy")),
             case write_two(Archive, meta_path(Archive), Machine, ArchiveMeta) of
                 ok -> {ok, Archive};
@@ -333,72 +554,118 @@ quick_save(Machine, SavesRoot, Source) ->
 quick_name(Source) ->
     program_name(Source) ++ " - Quicksave".
 
-%% @doc Paths for the fixed quick slot, or `none' when no quick save exists yet.
+%% @doc Paths for the fixed quick slot, or `none' when no quick save exists
+%% yet. The slot may exist in either snapshot extension (it follows the last
+%% saved machine type); the newest file wins.
 -spec quick_path(string()) -> {ok, string(), string()} | none.
 quick_path(SavesRoot) ->
-    Z80Path = quick_path_z80(SavesRoot),
-    case filelib:is_regular(Z80Path) of
-        true -> {ok, Z80Path, meta_path(Z80Path)};
-        false -> none
+    Candidates = [filename:join(SavesRoot, ?QUICK_STAMP ++ Ext)
+                  || Ext <- ?SAVE_EXTS, filelib:is_regular(filename:join(SavesRoot,
+                                                                          ?QUICK_STAMP ++ Ext))],
+    case Candidates of
+        [] -> none;
+        _ ->
+            SnapPath = latest_snapshot(Candidates),
+            {ok, SnapPath, meta_path(SnapPath)}
     end.
 
-%% @doc Append a history entry. The file is named `<name>-<stamp>.z80` (the
-%% name sanitized to a filesystem-safe form) so it can be found on disk; the
-%% stamp suffix keeps names unique. An empty name falls back to `<stamp>.z80`.
+%% @doc The newest of the existing snapshot paths by modification time; on
+%% equal times the later candidate wins (the candidates are ordered .z80
+%% before .ezs, so the richer container is preferred deterministically).
+latest_snapshot([Best | Rest]) ->
+    latest_snapshot(Rest, Best).
+
+latest_snapshot([], Best) ->
+    Best;
+latest_snapshot([Path | Rest], Best) ->
+    case mtime(Path) >= mtime(Best) of
+        true -> latest_snapshot(Rest, Path);
+        false -> latest_snapshot(Rest, Best)
+    end.
+
+mtime(Path) ->
+    case file:read_file_info(Path) of
+        {ok, Info} -> Info#file_info.mtime;
+        _ -> {{0, 0, 0}, {0, 0, 0}}
+    end.
+
+%% @doc Append a history entry. The file is named `<name>-<stamp><ext>` (the
+%% name sanitized to a filesystem-safe form, the extension following the
+%% machine type) so it can be found on disk; the stamp suffix keeps names
+%% unique. An empty name falls back to `<stamp><ext>`.
 %% The human name is also kept in the meta, where the manager dialog reads it.
 -spec save_history(#machine_state{}, string(), string(), string()) ->
     {ok, string()} | {error, term()}.
 save_history(Machine, SavesRoot, Source, Name) ->
     filelib:ensure_dir(filename:join(SavesRoot, "dummy")),
     Stamp = stamp_now(),
-    Z80Path = history_path(SavesRoot, Name, Stamp),
+    SnapPath = history_path(SavesRoot, Name, Stamp, save_ext(Machine)),
     Meta0 = build_meta(Machine, Source),
     Meta = (Meta0#{"name" => case sanitize_filename(Name) of
         "" -> Stamp;
         _ -> Name
     end})#{"timestamp" => Stamp},
-    case write_two(Z80Path, meta_path(Z80Path), Machine, Meta) of
-        ok -> {ok, Z80Path};
+    case write_two(SnapPath, meta_path(SnapPath), Machine, Meta) of
+        ok -> {ok, SnapPath};
         {error, _} = Err -> Err
     end.
 
 %% @doc Every save in the root, newest first (sorted by file modification
 %% time as a proxy for creation time); the fixed quick slot is always listed
-%% first. Entries are [{Base, Name, Timestamp, Z80Path, MetaPath}] where Base
+%% first. Entries are [{Base, Name, Timestamp, SnapPath, MetaPath}] where Base
 %% is the file base (`<name>-<stamp>' for named saves) used to address the
 %% files, and Name/Timestamp are the display fields from the save's meta.
-%% Only `.z80` saves are listed; older `.sna` saves are ignored.
+%% Both `.z80` and `.ezs` saves are listed; when a base exists in both
+%% extensions (a quick slot saved from different machine types), only the
+%% newest file is listed. Older `.sna` saves are ignored.
 -spec list_history(string()) ->
     [{string(), string(), string(), string(), string()}].
 list_history(SavesRoot) ->
     case file:list_dir(SavesRoot) of
         {ok, Names} ->
-            Z80s = [N || N <- Names, filename:extension(N) =:= ".z80"],
-            Stamps = [filename:basename(N, ".z80") || N <- Z80s],
-            Sorted = sort_by_mtime(SavesRoot, Stamps),
-            [history_entry(St, history_meta(SavesRoot, St), SavesRoot) || St <- Sorted];
+            Snaps = [N || N <- Names,
+                          lists:member(filename:extension(N), ?SAVE_EXTS)],
+            Best = newest_per_base(SavesRoot, lists:sort(Snaps)),
+            Sorted = sort_newest_first(SavesRoot, Best),
+            [history_entry(filename:join(SavesRoot, N)) || N <- Sorted];
         {error, enoent} -> []
     end.
 
-%% @doc Delete a save (both files).
+%% @doc One file per base name: when both extensions exist for a base, keep
+%% the newest (ties resolved deterministically by name order).
+newest_per_base(SavesRoot, Snaps) ->
+    Fold = fun(N, Acc) ->
+        Base = filename:rootname(N),
+        case Acc of
+            #{Base := Old} ->
+                case newer(SavesRoot, N, Old) of
+                    true -> Acc#{Base => N};
+                    false -> Acc
+                end;
+            _ -> Acc#{Base => N}
+        end
+    end,
+    maps:values(lists:foldl(Fold, #{}, Snaps)).
+
+newer(SavesRoot, A, B) ->
+    {mtime_name(SavesRoot, A), A} > {mtime_name(SavesRoot, B), B}.
+
+%% @doc Delete a save (the snapshot in either extension, plus its sidecars).
 -spec delete_history(string(), string()) -> ok | {error, term()}.
 delete_history(SavesRoot, Stamp) ->
-    Z80 = filename:join(SavesRoot, Stamp ++ ".z80"),
-    R1 = file:delete(Z80),
-    R2 = file:delete(meta_path(Z80)),
-    R3 = file:delete(png_path(Z80)),
-    case {R1, R2, R3} of
-        {ok, ok, _} -> ok;
-        {ok, {error, enoent}, _} -> ok;
-        {{error, enoent}, ok, _} -> ok;
-        {_, {error, R}, _} -> {error, R};
-        {{error, R}, _, _} -> {error, R}
+    SnapPaths = [filename:join(SavesRoot, Stamp ++ Ext) || Ext <- ?SAVE_EXTS],
+    MetaPath = filename:join(SavesRoot, Stamp ++ ".meta"),
+    PngPath = png_path(hd(SnapPaths)),
+    Results = [file:delete(P) || P <- SnapPaths ++ [MetaPath, PngPath]],
+    case [R || R <- Results, R =/= ok, R =/= {error, enoent}] of
+        [] -> ok;
+        [{error, Reason} | _] -> {error, Reason}
     end.
 
-%% @doc Rename a save: the `.z80`/`.meta` pair is moved to the new
-%% `<name>-<stamp>.z80` base (same stamp, so the save's identity survives)
-%% and the meta `name' field is rewritten. Renaming to the same name only
-%% updates the meta.
+%% @doc Rename a save: the snapshot (in whatever extension it lives) and its
+%% `.meta` pair are moved to the new `<name>-<stamp><ext>` base (same stamp,
+%% so the save's identity survives) and the meta `name' field is rewritten.
+%% Renaming to the same name only updates the meta.
 -spec rename_history(string(), string(), string()) -> ok | {error, term()}.
 rename_history(SavesRoot, Stamp, NewName) ->
     MetaPath = filename:join(SavesRoot, Stamp ++ ".meta"),
@@ -406,32 +673,38 @@ rename_history(SavesRoot, Stamp, NewName) ->
         undefined ->
             {error, enoent};
         Meta ->
-            OldZ80 = filename:join(SavesRoot, Stamp ++ ".z80"),
-            Timestamp = maps:get("timestamp", Meta, Stamp),
-            Meta1 = Meta#{"name" => case NewName of
-                "" -> Timestamp;
-                _ -> NewName
-            end},
-            NewBase = history_base(NewName, Timestamp),
-            case NewBase of
-                Stamp ->
-                    file:write_file(MetaPath, meta_to_iodata(Meta1));
-                _ ->
-                    NewZ80 = available_path(
-                        filename:join(SavesRoot, NewBase ++ ?SAVE_EXT), 0),
-                    case file:rename(OldZ80, NewZ80) of
-                        ok ->
-                            file:write_file(meta_path(NewZ80),
-                                            meta_to_iodata(Meta1)),
-                            file:delete(MetaPath),
-                            _ = case filelib:is_regular(png_path(OldZ80)) of
-                                true -> file:rename(png_path(OldZ80), png_path(NewZ80));
-                                false -> ok
-                            end,
-                            ok;
-                        {error, _} = Err -> Err
-                    end
+            case newest_snapshot(SavesRoot, Stamp) of
+                undefined ->
+                    {error, enoent};
+                OldSnap ->
+                    Timestamp = maps:get("timestamp", Meta, Stamp),
+                    Meta1 = Meta#{"name" => case NewName of
+                        "" -> Timestamp;
+                        _ -> NewName
+                    end},
+                    OldBase = filename:rootname(filename:basename(OldSnap)),
+                    rename_snapshot(OldSnap, OldBase,
+                                    history_base(NewName, Timestamp), Meta1)
             end
+    end.
+
+%% Same base: only the meta changes.
+rename_snapshot(SnapPath, Base, Base, Meta1) ->
+    file:write_file(meta_path(SnapPath), meta_to_iodata(Meta1));
+rename_snapshot(SnapPath, _OldBase, NewBase, Meta1) ->
+    SavesRoot = filename:dirname(SnapPath),
+    Ext = filename:extension(SnapPath),
+    NewSnap = available_path(filename:join(SavesRoot, NewBase), Ext, 0),
+    case file:rename(SnapPath, NewSnap) of
+        ok ->
+            file:write_file(meta_path(NewSnap), meta_to_iodata(Meta1)),
+            file:delete(meta_path(SnapPath)),
+            _ = case filelib:is_regular(png_path(SnapPath)) of
+                true -> file:rename(png_path(SnapPath), png_path(NewSnap));
+                false -> ok
+            end,
+            ok;
+        {error, _} = Err -> Err
     end.
 
 %% --- internal ---
@@ -526,30 +799,45 @@ write_save(Z80Path, Machine, Meta) ->
     filelib:ensure_dir(filename:join(filename:dirname(Z80Path), "dummy")),
     write_two(Z80Path, meta_path(Z80Path), Machine, Meta).
 
-write_two(Z80Path, MetaPath, Machine, Meta) ->
-    {ok, Z80} = serialize_z80(Machine),
-    case file:write_file(Z80Path, Z80) of
-        ok -> file:write_file(MetaPath, meta_to_iodata(Meta));
+write_two(SnapPath, MetaPath, Machine, Meta) ->
+    {ok, Snap} = serialize(Machine),
+    %% The .ezs container carries the AY register file itself, so its meta
+    %% does not duplicate it (a stale-looking copy would also be re-applied
+    %% on load and clobber the container's latched register).
+    Meta1 = case save_ext(Machine) of
+        ?STATE_EXT -> maps:remove("ay_regs", Meta);
+        _ -> Meta
+    end,
+    case file:write_file(SnapPath, Snap) of
+        ok -> file:write_file(MetaPath, meta_to_iodata(Meta1));
         {error, _} = Err -> Err
     end.
 
 meta_path(Z80Path) ->
     filename:rootname(Z80Path) ++ ".meta".
 
+%% @doc The extension a NEW save of this machine gets: the .ezs container for
+%% the machines Z80 cannot fully represent, plain .z80 otherwise.
+save_ext(Machine) ->
+    case machine_type(Machine) of
+        T when T =:= 'pentagon_512'; T =:= 'pentagon_1024' -> ?STATE_EXT;
+        _ -> ?SAVE_EXT
+    end.
+
+snapshot_path(SavesRoot, Base, Ext) ->
+    filename:join(SavesRoot, Base ++ Ext).
+
+archive_path(SavesRoot, Source, Ext) ->
+    Stamp = stamp_now(),
+    Base = filename:join(SavesRoot,
+                         program_name(Source) ++ "-quicksave-" ++ Stamp),
+    available_path(Base, Ext, 0).
+
 %% @doc The screenshot sidecar for a save: same base as the `.z80`, with a
 %% `.png` extension. The file is written by the UI at save time (best-effort);
 %% older saves may not have one, so consumers must fall back to a placeholder.
 png_path(Z80Path) ->
     filename:rootname(Z80Path) ++ ".png".
-
-quick_path_z80(SavesRoot) ->
-    filename:join(SavesRoot, ?QUICK_STAMP ++ ?SAVE_EXT).
-
-archive_path(SavesRoot, Source) ->
-    Stamp = stamp_now(),
-    available_path(filename:join(SavesRoot,
-                                 program_name(Source) ++ "-quicksave-" ++ Stamp ++ ?SAVE_EXT),
-                   0).
 
 %% @doc The file base for a named save: `<sanitized name>-<stamp>`, or just
 %% `<stamp>` when the name is empty or sanitizes to nothing.
@@ -559,50 +847,55 @@ history_base(Name, Stamp) ->
         Clean -> Clean ++ "-" ++ Stamp
     end.
 
-%% @doc The `.z80` path for a new named save, uniquified if a file with the
-%% same base already exists (same-second saves with the same name).
-history_path(SavesRoot, Name, Stamp) ->
-    available_path(filename:join(SavesRoot,
-                                 history_base(Name, Stamp) ++ ?SAVE_EXT), 0).
+%% @doc The snapshot path for a new named save, uniquified if a file with the
+%% same base and extension already exists (same-second saves, same name).
+history_path(SavesRoot, Name, Stamp, Ext) ->
+    Base = filename:join(SavesRoot, history_base(Name, Stamp)),
+    available_path(Base, Ext, 0).
 
-available_path(Z80, N) ->
-    case filelib:is_regular(Z80) of
-        false -> Z80;
-        true ->
-            Base = filename:rootname(filename:basename(Z80)),
-            available_path(filename:join(filename:dirname(Z80),
-                                         Base ++ "-" ++ integer_to_list(N + 1) ++ ?SAVE_EXT),
-                           N + 1)
+available_path(PathBase, Ext, N) ->
+    %% PathBase carries no extension; the uniquifier suffix grows with N.
+    Candidate = PathBase ++ suffix(N) ++ Ext,
+    case filelib:is_regular(Candidate) of
+        false -> Candidate;
+        true -> available_path(PathBase, Ext, N + 1)
     end.
 
-%% @doc The display fields for a history entry, read from its meta sidecar:
-%% the human name and the save timestamp ("" when the sidecar is missing).
-history_meta(SavesRoot, Stamp) ->
-    case read_meta(filename:join(SavesRoot, Stamp ++ ".meta")) of
+suffix(0) -> [];
+suffix(N) -> lists:flatten(["-", integer_to_list(N)]).
+
+%% @doc The newest existing snapshot for a base (both extensions considered);
+%% `undefined' when none exists.
+newest_snapshot(SavesRoot, Base) ->
+    Existing = [filename:join(SavesRoot, Base ++ Ext)
+                || Ext <- ?SAVE_EXTS,
+                   filelib:is_regular(filename:join(SavesRoot, Base ++ Ext))],
+    case Existing of
+        [] -> undefined;
+        _ -> latest_snapshot(Existing)
+    end.
+
+history_entry(SnapPath) ->
+    Base = filename:rootname(filename:basename(SnapPath)),
+    {Name, Timestamp} = case read_meta(meta_path(SnapPath)) of
         undefined -> {"", ""};
         Meta -> {maps:get("name", Meta, ""), maps:get("timestamp", Meta, "")}
+    end,
+    {Base, Name, Timestamp, SnapPath, meta_path(SnapPath)}.
+
+%% @doc Snapshot file names newest first by modification time, with the fixed
+%% quick slot pinned to the front.
+sort_newest_first(SavesRoot, Names) ->
+    Timed = [{mtime_name(SavesRoot, N), N} || N <- Names],
+    Sorted = [N || {_, N} <- lists:reverse(lists:keysort(1, Timed))],
+    case lists:splitwith(fun(N) -> filename:rootname(N) =/= ?QUICK_STAMP end,
+                         Sorted) of
+        {_, []} -> Sorted;
+        {Before, [Quick | After]} -> [Quick | Before] ++ After
     end.
 
-history_entry(Stamp, {Name, Timestamp}, SavesRoot) ->
-    {Stamp, Name, Timestamp,
-     filename:join(SavesRoot, Stamp ++ ".z80"),
-     filename:join(SavesRoot, Stamp ++ ".meta")}.
-
-%% @doc Stamps newest first by modification time, with the fixed quick slot
-%% pinned to the front.
-sort_by_mtime(SavesRoot, Stamps) ->
-    Timed = [{mtime(SavesRoot, St), St} || St <- Stamps],
-    Sorted = [St || {_, St} <- lists:reverse(lists:keysort(1, Timed))],
-    case lists:delete(?QUICK_STAMP, Sorted) of
-        Sorted -> Sorted;
-        Rest -> [?QUICK_STAMP | Rest]
-    end.
-
-mtime(SavesRoot, Stamp) ->
-    case file:read_file_info(filename:join(SavesRoot, Stamp ++ ".z80")) of
-        {ok, Info} -> Info#file_info.mtime;
-        _ -> {{0, 0, 0}, {0, 0, 0}}
-    end.
+mtime_name(SavesRoot, Name) ->
+    mtime(filename:join(SavesRoot, Name)).
 
 stamp_now() ->
     {{Y, Mo, D}, {H, Mi, S}} = calendar:local_time(),

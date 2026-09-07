@@ -13,6 +13,7 @@
     load_sna/2,
     load_z80/2,
     load_tap/2,
+    load_ezs/2,
     press_key/2,
     release_key/2,
     run_until_tstates/2,
@@ -105,6 +106,11 @@ load_sna(Machine, Data) -> ezx_emulator_128:load_sna(Machine, Data).
 -spec load_tap(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
     Error :: bad_tap_data.
 load_tap(Machine, Data) -> ezx_emulator_128:load_tap(Machine, Data).
+
+%% @doc Load an .ezs state container.
+-spec load_ezs(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
+    Error :: unsupported_format | unsupported_version | bad_ezs.
+load_ezs(Machine, Data) -> ezx_emulator_128:load_ezs(Machine, Data).
 
 %% @doc Drive the stubbed Beta disk interface: map the TR-DOS ROM into the
 %% bottom 16K (it stays subject to p7FFD bit 4, like MAME's pentagon model).

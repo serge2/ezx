@@ -58,8 +58,8 @@ init_virtual_machine('128k', Chip) ->
     end;
 %% Pentagon 128K/512K/1024K share one timing model and one emulator module;
 %% they differ in the wired RAM size (8/32/64 banks) and the ROM set: the two
-%% BASICs are required, the TR-DOS and reset service ROMs are optional extras
-%% mapped through the Pentagon paging (ezx_memory_pentagon).
+%% BASICs are required, the TR-DOS ROM is an optional extra mapped through the
+%% Pentagon paging (ezx_memory_pentagon).
 init_virtual_machine(Type, Chip) when Type =:= 'pentagon_128';
                                       Type =:= 'pentagon_512';
                                       Type =:= 'pentagon_1024' ->
@@ -243,11 +243,15 @@ priv_dir() ->
 -spec load_emulator_file(string(), atom(), ay | ym | off) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
     Error :: file_not_found | unsupported_format | rom_not_found | rom_bad_size | bad_machine_type |
         bad_sna_header | unsupported_version | sna_load_failed | bad_z80_header | z80_load_failed |
-        bad_tap_data.
-load_emulator_file(FilePath, MachineType, Chip) ->
-    Mod = emulator_module(MachineType),
+        bad_ezs | bad_tap_data.
+load_emulator_file(FilePath, RequestedType, Chip) ->
     case file:read_file(FilePath) of
         {ok, Data} ->
+            %% An .ezs container declares its machine type in the header —
+            %% it wins over whatever type the caller guessed (e.g. from a
+            %% missing meta sidecar).
+            MachineType = ezs_machine_type(Data, RequestedType),
+            Mod = emulator_module(MachineType),
             case init_virtual_machine(MachineType, Chip) of
                 {ok, Machine0} ->
                     load_data(Mod, Machine0, string:lowercase(filename:extension(FilePath)), Data);
@@ -259,16 +263,30 @@ load_emulator_file(FilePath, MachineType, Chip) ->
             {error, {file_not_found, Detail}}
     end.
 
+%% @doc The machine type an .ezs container carries, or RequestedType for any
+%% other file (or an unreadable container, whose loader reports the error).
+ezs_machine_type(Data, RequestedType) ->
+    case ezx_ezs:is_container(Data) of
+        true ->
+            case ezx_ezs:parse(Data) of
+                {ok, #{type := Type}} -> Type;
+                _ -> RequestedType
+            end;
+        false ->
+            RequestedType
+    end.
+
 %% @doc Load a snapshot/TAP file into a fresh machine, dispatching on the file
 %% extension; the per-format loaders decide the actual error codes.
 -spec load_data(module(), #machine_state{}, string(), binary()) ->
     {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
     Error :: unsupported_format | bad_sna_header | unsupported_version | sna_load_failed |
-        bad_z80_header | z80_load_failed | bad_tap_data.
+        bad_z80_header | z80_load_failed | bad_ezs | bad_tap_data.
 load_data(Mod, Machine0, Ext, Data) ->
     case Ext of
         ".sna" -> Mod:load_sna(Machine0, Data);
         ".z80" -> Mod:load_z80(Machine0, Data);
+        ".ezs" -> Mod:load_ezs(Machine0, Data);
         ".tap" -> Mod:load_tap(Machine0, Data);
         _ ->
             Detail = iolist_to_binary(Ext),

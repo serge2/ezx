@@ -100,7 +100,7 @@
 %%      frame renders from.  Nothing is ever dropped.
 %% =============================================================================
 
--export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, render_channels/4, regs/1, set_regs/2, silent_frame/2]).
+-export([new/0, new/1, latch/2, write/3, read/1, chip/1, render_channels/3, render_channels/4, regs/1, set_regs/2, selected/1, silent_frame/2]).
 
 -define(REG_TONE_A_FINE,    0).
 -define(REG_TONE_A_COARSE,  1).
@@ -260,6 +260,11 @@ mask_read(ay, _Latch) -> 16#FF.
 %% @doc Read all 16 registers as a list of bytes (for snapshot save).
 -spec regs(state()) -> [byte()].
 regs(#ay_state_seg{regs = Regs}) -> tuple_to_list(Regs).
+
+%% @doc The register index the chip is latched to (snapshot save: restores
+%% what a subsequent IN #FFFD would read back).
+-spec selected(state()) -> byte().
+selected(#ay_state_seg{latch = Latch}) -> Latch.
 
 %% @doc Overwrite all 16 registers from a list of 16 bytes (snapshot load).
 %% The latch is reset and the running envelope/noise phases are left as-is;

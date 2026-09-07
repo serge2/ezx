@@ -1066,7 +1066,7 @@ recreate_machine(State) ->
 -spec handle_open_file(#state{}) -> {noreply, #state{}}.
 handle_open_file(#state{frame = Frame, file_dialog_dir = Dir} = State) ->
     Options = [{message, "Load snapshot or tape"},
-               {wildCard, "ZX Spectrum files (*.sna,*.z80,*.tap)|*.sna;*.z80;*.tap|SNA files (*.sna)|*.sna|Z80 files (*.z80)|*.z80|TAP files (*.tap)|*.tap"},
+                {wildCard, "ZX Spectrum files (*.sna,*.z80,*.ezs,*.tap)|*.sna;*.z80;*.ezs;*.tap|SNA files (*.sna)|*.sna|Z80 files (*.z80)|*.z80|EZS saves (*.ezs)|*.ezs|TAP files (*.tap)|*.tap"},
                {style, ?wxFD_OPEN bor ?wxFD_FILE_MUST_EXIST}],
     Options1 = case Dir of
                    undefined -> Options;
@@ -1716,6 +1716,7 @@ show_load_error(Frame, File, {error, {Code, Detail}}) ->
         sna_load_failed      => "Unexpected error while loading SNA snapshot.",
         bad_z80_header       => "Invalid or corrupted Z80 snapshot.",
         z80_load_failed      => "Unexpected error while loading Z80 snapshot.",
+        bad_ezs              => "Invalid or corrupted EZS snapshot.",
         bad_tap_data         => "Invalid or corrupted TAP file.",
         tap_load_failed      => "Unexpected error while loading TAP file."
     }, "Unknown error."),

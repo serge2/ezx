@@ -20,6 +20,7 @@
     load_sna/2,
     load_z80/2,
     load_tap/2,
+    load_ezs/2,
     press_key/2,
     release_key/2,
     run_until_tstates/2,
@@ -259,6 +260,12 @@ load_tap(Machine, Data) ->
                      iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
     end.
 
+%% @doc Load an .ezs state container — pure format parsed by ezx_ezs,
+%% machine application delegated to the shared bridge in ezx_saves.
+-spec load_ezs(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
+    Error :: unsupported_format | unsupported_version | bad_ezs.
+load_ezs(Machine, Data) -> ezx_saves:load_container(Machine, Data).
+
 %% @doc Arm the LD-BYTES pre-step hook on the machine's CPU record. Exported
 %% for the 128K loader (which builds its own keyboard queue); from now on both
 %% execution loops consult the trap once per instruction, so the fast
@@ -300,9 +307,9 @@ tape_pre_step(_Cpu) ->
 
 %% Signature gate: fire only when the bytes under PC are the real ROM 1
 %% prologue (INC D; EX AF,AF'; DEC D / IN A,(0xFE) / CP 1Fh). Any foreign
-%% image mapped at 0x0000 — TR-DOS overlay, service ROM, all-RAM bank, the
-%% 128K editor chip — carries other bytes there, so its code at those
-%% addresses runs unmolested while a TAP is pending.
+%% image mapped at 0x0000 — TR-DOS overlay, all-RAM bank, the 128K editor
+%% chip — carries other bytes there, so its code at those addresses runs
+%% unmolested while a TAP is pending.
 tape_trap_entry(#cpu_state{ext_context = #ext_context{
                                 memory = Mem, memory_module = MemModule,
                                 tape_blocks = [_ | _]}} = Cpu, Signature) ->

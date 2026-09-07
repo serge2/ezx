@@ -13,6 +13,7 @@
     load_sna/2,
     load_z80/2,
     load_tap/2,
+    load_ezs/2,
     press_key/2,
     release_key/2,
     run_until_tstates/2,
@@ -158,6 +159,12 @@ load_tap(Machine, Data) ->
         C:E:_S ->
             {error, {bad_tap_data, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}
     end.
+
+%% @doc Load an .ezs state container — pure format parsed by ezx_ezs,
+%% machine application delegated to the shared bridge in ezx_saves.
+-spec load_ezs(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when
+    Error :: unsupported_format | unsupported_version | bad_ezs.
+load_ezs(Machine, Data) -> ezx_saves:load_container(Machine, Data).
 
 %% @doc Load a .sna snapshot (48K or 128K extended).
 -spec load_sna(#machine_state{}, binary()) -> {ok, #machine_state{}} | {error, {Error, Details::binary()}} when

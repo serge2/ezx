@@ -871,8 +871,8 @@ tape_trap_short_block_test() ->
     assert_trap_result(Machine3, Dest, Payload).
 
 tape_trap_signature_gate_miss_test() ->
-    %% A foreign image mapped at 0x0000 (TR-DOS overlay, service ROM,
-    %% all-RAM bank, editor chip) never carries the ROM 1 LD-BYTES prologue
+    %% A foreign image mapped at 0x0000 (TR-DOS overlay, all-RAM bank,
+    %% editor chip) never carries the ROM 1 LD-BYTES prologue
     %% under its own code at those addresses; the signature gate must leave
     %% such code alone even with a TAP pending and PC on a trap entry.
     %% The memory backend ignores writes to ROM, so the "foreign image" is
