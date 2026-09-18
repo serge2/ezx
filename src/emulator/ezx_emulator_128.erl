@@ -151,10 +151,7 @@ load_tap(Machine, Data) ->
                 {5, release}
             ],
             %% Arm the LD-BYTES pre-step hook (same trap as the 48K machine).
-            {ok, ezx_emulator:arm_tape_trap(Machine#machine_state{
-                tape_blocks = Blocks,
-                keyboard_queue = Q
-            })}
+            {ok, ezx_emulator:arm_tape_trap(Machine, Blocks, Q)}
     catch
         C:E:_S ->
             {error, {bad_tap_data, iolist_to_binary(io_lib:format("~p:~p", [C, E]))}}

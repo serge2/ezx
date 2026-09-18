@@ -33,7 +33,7 @@
     write_byte/3,
     read_word/2,
     write_word/3,
-    arm_tape_trap/1
+    arm_tape_trap/3
 ]).
 
 %% ZX Spectrum frame length in T-states.
@@ -249,11 +249,7 @@ load_tap(Machine, Data) ->
     try ezx_tap:parse_blocks(Data) of
         Blocks ->
             io:format("TAP: parsed ~p blocks~n", [length(Blocks)]),
-            Q = make_load_queue(),
-            {ok, arm_tape_trap(Machine#machine_state{
-                tape_blocks = Blocks,
-                keyboard_queue = Q
-            })}
+            {ok, arm_tape_trap(Machine, Blocks, make_load_queue())}
     catch
         C:E:_S ->
             {error, {bad_tap_data,
@@ -266,17 +262,22 @@ load_tap(Machine, Data) ->
     Error :: unsupported_format | unsupported_version | bad_ezs.
 load_ezs(Machine, Data) -> ezx_saves:load_container(Machine, Data).
 
-%% @doc Arm the LD-BYTES pre-step hook on the machine's CPU record. Exported
-%% for the 128K loader (which builds its own keyboard queue); from now on both
-%% execution loops consult the trap once per instruction, so the fast
-%% per-frame CPU loop services it with no separate slow machine path. The fun
-%% itself stays private — machines must not reach into the CPU record.
--spec arm_tape_trap(#machine_state{}) -> #machine_state{}.
-arm_tape_trap(Machine) ->
-    Cpu = (Machine#machine_state.cpu)#cpu_state{
+%% @doc Arm the LD-BYTES pre-step hook on the machine's CPU record and insert
+%% the TAP block list plus the auto-typing keyboard queue into the machine
+%% state. Exported for the 128K loader (which builds its own keyboard queue);
+%% from now on both execution loops consult the trap once per instruction, so
+%% the fast per-frame CPU loop services it with no separate slow machine path.
+%% The fun itself stays private — machines must not reach into the CPU record.
+-spec arm_tape_trap(#machine_state{}, ezx_tap:tap_blocks(), [term()]) -> #machine_state{}.
+arm_tape_trap(Machine, Blocks, KeyboardQueue) ->
+    Machine1 = Machine#machine_state{
+        tape_blocks = Blocks,
+        keyboard_queue = KeyboardQueue
+    },
+    Cpu = (Machine1#machine_state.cpu)#cpu_state{
         pre_step_fun = fun tape_pre_step/1
     },
-    Machine#machine_state{cpu = Cpu}.
+    Machine1#machine_state{cpu = Cpu}.
 
 %% --- Tape trap (LD-BYTES fast load) ---
 %%
